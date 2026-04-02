@@ -505,6 +505,11 @@ scan_dynamic_patterns() {
 
         # Use find to locate directories matching pattern_name
         # -maxdepth 6 keeps it practical
+        # Write found directories to a temp file to avoid subshell variable scope issues
+        local tmp_results
+        tmp_results="$(mktemp "${TMPDIR:-/tmp}/tm_exc.XXXXXX")"
+        find "$scan_root" -maxdepth 6 -type d -name "$pattern_name" > "$tmp_results" 2>/dev/null || true
+
         while IFS= read -r found_dir; do
             [[ -z "$found_dir" ]] && continue
 
@@ -528,7 +533,8 @@ scan_dynamic_patterns() {
             else
                 apply_exclusion "$found_dir"
             fi
-        done < <(find "$scan_root" -maxdepth 6 -type d -name "$pattern_name" 2>/dev/null || true)
+        done < "$tmp_results"
+        rm -f "$tmp_results"
     done <<EOF
 ${CONF_PATTERNS}
 EOF

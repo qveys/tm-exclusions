@@ -118,6 +118,7 @@ echo "--- Config management ---"
 
 # Use a temporary HOME to avoid polluting real config
 TEST_HOME="$(mktemp -d)"
+trap 'rm -rf "${TEST_HOME}"' EXIT
 export HOME="${TEST_HOME}"
 
 assert_exit_code 0 \
@@ -170,9 +171,6 @@ EOF
 assert_exit_code 0 \
     "dry-run with custom config exits 0" \
     bash "$TM_EXCLUSIONS" --dry-run
-
-# Cleanup
-rm -rf "${TEST_HOME}"
 
 # ---- Short flags ----
 echo ""
