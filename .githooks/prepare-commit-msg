@@ -1,0 +1,53 @@
+#!/bin/sh
+# prepare-commit-msg hook — injects Conventional Commits format reminder as
+# comments so the required format is visible in the editor on every commit.
+#
+# Format and allowed types are defined in .githooks/commit-format.sh.
+# Skips injection for merge and squash commits (they already have content).
+
+COMMIT_MSG_FILE="$1"
+COMMIT_SOURCE="${2:-}"
+
+# Do not inject for merge/squash: those messages already carry meaning.
+case "$COMMIT_SOURCE" in
+  merge|squash) exit 0 ;;
+esac
+
+# If the message already has non-comment, non-blank content (e.g. -m flag or
+# --amend with existing subject), do not overwrite or append.
+if [ -s "$COMMIT_MSG_FILE" ]; then
+  CONTENT=$(grep -v '^#' "$COMMIT_MSG_FILE" | grep -v '^[[:space:]]*$')
+  if [ -n "$CONTENT" ]; then
+    exit 0
+  fi
+fi
+
+# Load the central format definition to get CC_TYPES for the hint.
+REPO=$(git rev-parse --show-toplevel 2>/dev/null)
+. "$REPO/.githooks/commit-format.sh"
+
+# Convert pipe-separated types to space-separated for human-readable display.
+TYPES_DISPLAY=$(printf '%s' "$CC_TYPES" | tr '|' ' ')
+
+# Append the format reminder as Git comment lines (stripped before commit).
+{
+  printf '# ---------------------------------------------------------------------------\n'
+  printf '# Conventional Commits format (enforced by commit-msg hook and CI):\n'
+  printf '#\n'
+  printf '#   EMOJI <type>[(<scope>)][!]: <description>\n'
+  printf '#\n'
+  printf '#   ⚠️  A leading emoji is MANDATORY — the commit will be rejected without one.\n'
+  printf '#\n'
+  printf '# Allowed types:\n'
+  printf '#   %s\n' "$TYPES_DISPLAY"
+  printf '#\n'
+  printf '# Examples:\n'
+  printf '#   🎉 feat(acl): add new tag for servers\n'
+  printf '#   🔒 fix(policy): restrict access to prod\n'
+  printf '#   💥 chore!: drop legacy bootstrap config\n'
+  printf '#   📝 docs: update setup instructions\n'
+  printf '#   🚀 feat!: replace deny-all baseline with least-privilege policy\n'
+  printf '# ---------------------------------------------------------------------------\n'
+} >> "$COMMIT_MSG_FILE"
+
+exit 0
