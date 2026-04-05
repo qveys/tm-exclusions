@@ -1,0 +1,24 @@
+#!/bin/sh
+# Fallback bootstrap — installed by 'make setup' into Git's common hooks dir.
+#
+# Purpose: if core.hooksPath is ever unset (e.g. after 'git worktree add',
+# a manual 'git config --unset core.hooksPath', or a fresh clone where
+# 'make setup' was not yet run), this script runs from the fallback path in
+# Git's common hooks dir and:
+#   1. Auto-reconfigures core.hooksPath to point at the versioned hooks.
+#   2. Delegates to the real commit-msg hook for format validation.
+#
+# Once this runs, future commits use .githooks/commit-msg directly (because
+# core.hooksPath is now set) and this file is no longer invoked.
+
+git config core.hooksPath .githooks || {
+  printf '⚠️  Could not configure core.hooksPath — run "make setup" manually.\n' >&2
+  exit 1
+}
+
+REPO=$(git rev-parse --show-toplevel 2>/dev/null) || {
+  printf '⚠️  Could not determine repo root — run "make setup" manually.\n' >&2
+  exit 1
+}
+
+exec "$REPO/.githooks/commit-msg" "$@"

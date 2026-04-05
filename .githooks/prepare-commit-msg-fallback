@@ -1,0 +1,17 @@
+#!/bin/sh
+# Fallback bootstrap — installed by 'make setup' into the default Git hooks dir.
+#
+# Purpose: if core.hooksPath is unset, this script restores it and then delegates
+# to the versioned prepare-commit-msg hook so commit message guidance still works.
+
+git config core.hooksPath .githooks || {
+  printf '⚠️  Could not configure core.hooksPath — run "make setup" manually.\n' >&2
+  exit 1
+}
+
+REPO=$(git rev-parse --show-toplevel 2>/dev/null) || {
+  printf '⚠️  Could not determine repo root — run "make setup" manually.\n' >&2
+  exit 1
+}
+
+exec "$REPO/.githooks/prepare-commit-msg" "$@"

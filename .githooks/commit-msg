@@ -1,0 +1,38 @@
+#!/bin/sh
+# commit-msg hook — enforces Conventional Commits with a mandatory leading emoji.
+#
+# Format and allowed types are defined in .githooks/commit-format.sh.
+# Edit that file to change the validation rules everywhere at once.
+
+COMMIT_MSG_FILE="$1"
+
+# Load the central format definition (CC_TYPES, CC_PATTERN).
+REPO=$(git rev-parse --show-toplevel 2>/dev/null)
+. "$REPO/.githooks/commit-format.sh"
+
+# Read the commit message, stripping comment lines and blank lines.
+FIRST_LINE=$(grep -v '^#' "$COMMIT_MSG_FILE" | grep -v '^$' | head -1)
+
+# Allow empty messages (git handles this error itself).
+[ -z "$FIRST_LINE" ] && exit 0
+
+if ! printf '%s' "$FIRST_LINE" | LC_ALL=C grep -qE "$CC_PATTERN"; then
+  printf '\n' >&2
+  printf '❌  Commit rejected: message must start with an emoji and follow Conventional Commits format.\n' >&2
+  printf '\n' >&2
+  printf '    Required:  EMOJI <type>[(<scope>)][!]: <description>\n' >&2
+  printf '\n' >&2
+  printf '    Examples:\n' >&2
+  printf '      🎉 feat(acl): add server tag\n' >&2
+  printf '      🔒 fix(policy): restrict prod access\n' >&2
+  printf '      💥 chore!: drop legacy config\n' >&2
+  printf '      📝 docs: update setup instructions\n' >&2
+  printf '\n' >&2
+  printf '    Allowed types: %s\n' "$CC_TYPES" >&2
+  printf '\n' >&2
+  printf '    Your message: %s\n' "$FIRST_LINE" >&2
+  printf '\n' >&2
+  exit 1
+fi
+
+exit 0
