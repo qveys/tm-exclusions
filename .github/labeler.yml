@@ -1,21 +1,29 @@
 "🧩 Area: CI":
-  - .github/**/*
+  - changed-files:
+      - any-glob-to-any-file: ".github/**/*"
 
 "🧩 Area: Tests":
-  - tests/**/*
+  - changed-files:
+      - any-glob-to-any-file: "tests/**/*"
 
 "🧩 Area: Core":
-  - tm_exclusions.sh
+  - changed-files:
+      - any-glob-to-any-file: "*.sh"
 
 "🧩 Area: Config":
-  - config/**/*
+  - changed-files:
+      - any-glob-to-any-file: "config/**/*"
 
 "🧩 Area: Hooks":
-  - .githooks/**/*
+  - changed-files:
+      - any-glob-to-any-file: ".githooks/**/*"
 
 "🧩 Area: Docs":
-  - "**/*.md"
-  - docs/**/*
+  - changed-files:
+      - any-glob-to-any-file:
+          - "README.md"
+          - "docs/**/*"
 
 "🧩 Area: Build":
-  - Makefile
+  - changed-files:
+      - any-glob-to-any-file: "Makefile"
