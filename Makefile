@@ -74,15 +74,12 @@ lint: ## Run ShellCheck on all shell scripts
 
 install: setup ## Install tm-exclusions to PREFIX (default: /usr/local/bin)
 	@echo "Installing $(INSTALL_NAME) to $(PREFIX)..."
-	@$(SUDO) install -d "$(SHARE_DIR)"
-	@$(SUDO) install -m 755 $(SCRIPT) $(PREFIX)/$(INSTALL_NAME)
-	@$(SUDO) install -m 644 config/default.conf "$(SHARE_DIR)/default.conf"
+	@$(SUDO) sh -c 'install -d "$(SHARE_DIR)" && install -m 755 "$(SCRIPT)" "$(PREFIX)/$(INSTALL_NAME)" && install -m 644 config/default.conf "$(SHARE_DIR)/default.conf"'
 	@echo "Installed. Run '$(INSTALL_NAME) --help' to get started."
 
 uninstall: ## Remove tm-exclusions from PREFIX
 	@echo "Removing $(INSTALL_NAME) from $(PREFIX)..."
-	@$(SUDO) rm -f $(PREFIX)/$(INSTALL_NAME)
-	@$(SUDO) rm -f "$(SHARE_DIR)/default.conf"
+	@$(SUDO) rm -f "$(PREFIX)/$(INSTALL_NAME)" "$(SHARE_DIR)/default.conf"
 	@echo "Removed."
 
 check: lint test ## Run all checks (lint + test)
