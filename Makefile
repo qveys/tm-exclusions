@@ -33,8 +33,9 @@ setup: ## Explicitly install local Git hooks (also runs automatically on any 'ma
 	mkdir -p "$$HOOKS_DIR"; \
 	install -m 755 .githooks/commit-msg-fallback "$$HOOKS_DIR/commit-msg"; \
 	install -m 755 .githooks/prepare-commit-msg-fallback "$$HOOKS_DIR/prepare-commit-msg"; \
-	install -m 755 .githooks/post-checkout-fallback "$$HOOKS_DIR/post-checkout"
-	@echo "Git hooks installed. Conventional Commits will be enforced on every commit."
+	install -m 755 .githooks/post-checkout-fallback "$$HOOKS_DIR/post-checkout"; \
+	install -m 755 .githooks/post-merge-fallback "$$HOOKS_DIR/post-merge"
+	@echo "Git hooks installed (commit-msg, prepare-commit-msg, post-checkout, post-merge). Conventional Commits will be enforced on every commit."
 
 check-hooks: ## Verify that the local Git hooks are active; exit 1 if not
 	@HOOKS_PATH=$$(git config core.hooksPath 2>/dev/null); \
@@ -64,6 +65,11 @@ lint: ## Run ShellCheck on all shell scripts
 	@shellcheck -x -s bash $(SCRIPT)
 	@shellcheck -x -s bash tests/test_helpers.sh
 	@shellcheck -x -s bash tests/smoke.bats-like.sh
+	@shellcheck -x -s sh .githooks/post-checkout
+	@shellcheck -x -s sh .githooks/post-checkout-fallback
+	@shellcheck -x -s sh .githooks/post-merge
+	@shellcheck -x -s sh .githooks/post-merge-fallback
+	@shellcheck -x -s sh .githooks/prune-gone-branches.sh
 	@echo "ShellCheck passed."
 
 install: setup ## Install tm-exclusions to PREFIX (default: /usr/local/bin)
