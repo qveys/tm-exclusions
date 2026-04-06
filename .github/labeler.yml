@@ -1,0 +1,29 @@
+"🧩 Area: CI":
+  - changed-files:
+      - any-glob-to-any-file: ".github/**/*"
+
+"🧩 Area: Tests":
+  - changed-files:
+      - any-glob-to-any-file: "tests/**/*"
+
+"🧩 Area: Core":
+  - changed-files:
+      - any-glob-to-any-file: "*.sh"
+
+"🧩 Area: Config":
+  - changed-files:
+      - any-glob-to-any-file: "config/**/*"
+
+"🧩 Area: Hooks":
+  - changed-files:
+      - any-glob-to-any-file: ".githooks/**/*"
+
+"🧩 Area: Docs":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "README.md"
+          - "docs/**/*"
+
+"🧩 Area: Build":
+  - changed-files:
+      - any-glob-to-any-file: "Makefile"
