@@ -5,6 +5,13 @@
 
 set -euo pipefail
 
+export LANG=C
+export LC_ALL=C
+
+TEST_HOME="$(mktemp -d)"
+trap 'rm -rf "${TEST_HOME}"' EXIT
+export HOME="${TEST_HOME}"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=tests/test_helpers.sh
 source "${SCRIPT_DIR}/test_helpers.sh"
@@ -38,6 +45,10 @@ assert_output_contains "uninstall" \
 
 assert_output_contains "config" \
     "--help mentions config management" \
+    bash "$TM_EXCLUSIONS" --help
+
+assert_output_contains "--force" \
+    "--help mentions --force" \
     bash "$TM_EXCLUSIONS" --help
 
 # ---- Version ----
@@ -112,14 +123,13 @@ assert_output_contains "Usage:" \
     "--lang en shows English help" \
     bash "$TM_EXCLUSIONS" --lang en --help
 
+assert_exit_code 1 \
+    "--lang rejects unsupported values" \
+    bash "$TM_EXCLUSIONS" --lang de --help
+
 # ---- Config init ----
 echo ""
 echo "--- Config management ---"
-
-# Use a temporary HOME to avoid polluting real config
-TEST_HOME="$(mktemp -d)"
-trap 'rm -rf "${TEST_HOME}"' EXIT
-export HOME="${TEST_HOME}"
 
 assert_exit_code 0 \
     "--init exits 0" \
@@ -146,6 +156,10 @@ assert_output_contains "/tmp/test" \
 assert_exit_code 1 \
     "--add invalid type exits 1" \
     bash "$TM_EXCLUSIONS" --add invalid "/tmp/test" "test reason"
+
+assert_exit_code 1 \
+    "--add rejects trailing args" \
+    bash "$TM_EXCLUSIONS" --add path "/tmp/test" "test reason" --quiet
 
 # ---- Uninstall dry-run ----
 echo ""

@@ -17,7 +17,7 @@ One command. Safe to rerun. No dependencies beyond stock macOS.
 - **Prune support** to skip scanning irrelevant trees
 - **Dry-run mode** to preview changes without applying them
 - **Report-only mode** to audit current exclusion status
-- **Uninstall** to reverse all applied exclusions
+- **Uninstall** to remove exclusions matching the current configured rules and discovered patterns
 - **Idempotent** — safe to run repeatedly
 - **Multilingual** — English and French output
 - **Config management** — add custom rules, init/list/edit config
@@ -68,7 +68,7 @@ tm-exclusions --dry-run
 # Report current status without making changes
 tm-exclusions --report-only
 
-# Remove all applied exclusions
+# Remove exclusions matching the current configured rules
 tm-exclusions --uninstall
 
 # Remove exclusions even for paths that no longer exist
@@ -99,6 +99,8 @@ Rules are loaded and merged in order:
 
 1. `config/default.conf` — built-in rules (shipped with the tool)
 2. `~/.config/tm_exclusions/custom.conf` — your custom rules
+
+After `make install`, the built-in rules are installed under a shared data path such as `/usr/local/share/tm-exclusions/default.conf`.
 
 ### Config format
 
@@ -209,6 +211,7 @@ make uninstall
 
 - **Time Machine UI visibility**: Some exclusions applied via `tmutil addexclusion` may not appear in System Settings > Time Machine, even when they are active. Use `tmutil isexcluded <path>` to verify.
 - **User-space exclusions**: The tool uses user-level (`addexclusion`) not fixed exclusions (`addexclusion -p`). These are "sticky" and follow the path even if renamed.
+- **Uninstall scope**: `--uninstall` only removes exclusions matching the current configured static rules and discovered patterns. It does not track every exclusion from past runs.
 - **Scan depth**: Dynamic scanning uses `find -maxdepth 6` from `$HOME` for practical execution time.
 - **Non-macOS**: On non-macOS systems, the tool runs in simulation mode (no actual `tmutil` calls). Useful for testing and config management.
 - **Bash 3.2**: Compatible with stock macOS Bash. No Bash 4+ features used.

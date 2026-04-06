@@ -16,8 +16,6 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 readonly VERSION="1.0.0"
 readonly PROGRAM_NAME="tm-exclusions"
-# shellcheck disable=SC2155
-readonly DEFAULT_CONF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/config/default.conf"
 readonly CUSTOM_CONF="${HOME}/.config/tm_exclusions/custom.conf"
 readonly REPORT_FILE="${HOME}/.config/tm_exclusions/last_report.txt"
 readonly CUSTOM_CONF_DIR="${HOME}/.config/tm_exclusions"
@@ -61,9 +59,10 @@ declare_i18n_en() {
     MSG_HELP_DEFAULT="  (default)          Apply exclusions"
     MSG_HELP_DRY_RUN="  --dry-run          Show what would be done without making changes"
     MSG_HELP_REPORT="  --report-only      Scan and report without applying exclusions"
-    MSG_HELP_UNINSTALL="  --uninstall        Remove all exclusions previously applied"
+    MSG_HELP_UNINSTALL="  --uninstall        Remove exclusions matching the current configured rules"
     MSG_HELP_OPTIONS="Options:"
     MSG_HELP_QUIET="  -q, --quiet        Suppress non-essential output"
+    MSG_HELP_FORCE="  --force            With --uninstall, also remove matched paths that no longer exist"
     MSG_HELP_LANG="  --lang <en|fr>     Set output language"
     MSG_HELP_VERSION="  --version          Show version"
     MSG_HELP_HELP="  --help             Show this help"
@@ -83,6 +82,7 @@ declare_i18n_en() {
     MSG_REPORT_TITLE="=== tm-exclusions Report ==="
     MSG_REPORT_CHECKED="Paths checked:"
     MSG_REPORT_EXCLUDED="Newly excluded:"
+    MSG_REPORT_WOULD_EXCLUDE="Would exclude:"
     MSG_REPORT_ALREADY="Already excluded:"
     MSG_REPORT_SKIPPED="Skipped (not found):"
     MSG_REPORT_ERRORS="Errors:"
@@ -98,6 +98,7 @@ declare_i18n_en() {
     MSG_CONFIG_NO_FILE="Custom config file not found. Run --init first."
     MSG_ERROR_INVALID_ARG="Unknown argument:"
     MSG_ERROR_INVALID_TYPE="Invalid type. Supported: path, pattern, prune"
+    MSG_ERROR_INVALID_LANG="Unsupported language for --lang. Supported values: en, fr."
     MSG_ERROR_MISSING_ARGS="Missing required arguments."
     MSG_ERROR_NOT_MACOS="Warning: Not running on macOS. Some features will be simulated."
     MSG_ERROR_NO_TMUTIL="Warning: tmutil not found. Running in simulation mode."
@@ -112,9 +113,10 @@ declare_i18n_fr() {
     MSG_HELP_DEFAULT="  (défaut)           Appliquer les exclusions"
     MSG_HELP_DRY_RUN="  --dry-run          Montrer les actions sans les exécuter"
     MSG_HELP_REPORT="  --report-only      Scanner et rapporter sans appliquer"
-    MSG_HELP_UNINSTALL="  --uninstall        Supprimer les exclusions appliquées"
+    MSG_HELP_UNINSTALL="  --uninstall        Supprimer les exclusions correspondant aux règles configurées"
     MSG_HELP_OPTIONS="Options :"
     MSG_HELP_QUIET="  -q, --quiet        Mode silencieux"
+    MSG_HELP_FORCE="  --force            Avec --uninstall, supprimer aussi les chemins correspondants absents"
     MSG_HELP_LANG="  --lang <en|fr>     Langue de sortie"
     MSG_HELP_VERSION="  --version          Afficher la version"
     MSG_HELP_HELP="  --help             Afficher cette aide"
@@ -134,6 +136,7 @@ declare_i18n_fr() {
     MSG_REPORT_TITLE="=== Rapport tm-exclusions ==="
     MSG_REPORT_CHECKED="Chemins vérifiés :"
     MSG_REPORT_EXCLUDED="Nouvellement exclus :"
+    MSG_REPORT_WOULD_EXCLUDE="Seraient exclus :"
     MSG_REPORT_ALREADY="Déjà exclus :"
     MSG_REPORT_SKIPPED="Ignorés (non trouvés) :"
     MSG_REPORT_ERRORS="Erreurs :"
@@ -149,6 +152,7 @@ declare_i18n_fr() {
     MSG_CONFIG_NO_FILE="Fichier de configuration non trouvé. Exécutez --init d'abord."
     MSG_ERROR_INVALID_ARG="Argument inconnu :"
     MSG_ERROR_INVALID_TYPE="Type invalide. Supportés : path, pattern, prune"
+    MSG_ERROR_INVALID_LANG="Langue non supportée pour --lang. Valeurs supportées : en, fr."
     MSG_ERROR_MISSING_ARGS="Arguments requis manquants."
     MSG_ERROR_NOT_MACOS="Attention : pas sous macOS. Certaines fonctions seront simulées."
     MSG_ERROR_NO_TMUTIL="Attention : tmutil introuvable. Mode simulation activé."
@@ -178,6 +182,31 @@ $1"
     fi
 }
 
+resolve_default_conf() {
+    local script_dir candidate
+
+    if [[ -n "${TM_EXCLUSIONS_DEFAULT_CONF:-}" ]]; then
+        echo "${TM_EXCLUSIONS_DEFAULT_CONF}"
+        return 0
+    fi
+
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    for candidate in \
+        "${script_dir}/config/default.conf" \
+        "${script_dir}/../share/tm-exclusions/default.conf" \
+        "/usr/local/share/tm-exclusions/default.conf" \
+        "/opt/homebrew/share/tm-exclusions/default.conf" \
+        "/usr/share/tm-exclusions/default.conf"
+    do
+        if [[ -f "${candidate}" ]]; then
+            echo "${candidate}"
+            return 0
+        fi
+    done
+
+    echo "${script_dir}/config/default.conf"
+}
+
 # Detect language from environment or override
 detect_language() {
     if [[ -n "${LANG_OVERRIDE}" ]]; then
@@ -198,12 +227,12 @@ detect_language() {
 HAS_TMUTIL=0
 check_environment() {
     if [[ "$(uname -s 2>/dev/null)" != "Darwin" ]]; then
-        log_info "${MSG_ERROR_NOT_MACOS}"
+        log_error "${MSG_ERROR_NOT_MACOS}"
     fi
     if command -v tmutil >/dev/null 2>&1; then
         HAS_TMUTIL=1
     else
-        log_info "${MSG_ERROR_NO_TMUTIL}"
+        log_error "${MSG_ERROR_NO_TMUTIL}"
     fi
 }
 
@@ -229,6 +258,8 @@ tm_add_exclusion() {
     local path="$1"
     if [[ "${HAS_TMUTIL}" -eq 1 ]]; then
         tmutil addexclusion "$path" 2>/dev/null
+    else
+        return 0
     fi
 }
 
@@ -236,6 +267,8 @@ tm_remove_exclusion() {
     local path="$1"
     if [[ "${HAS_TMUTIL}" -eq 1 ]]; then
         tmutil removeexclusion "$path" 2>/dev/null
+    else
+        return 0
     fi
 }
 
@@ -306,7 +339,7 @@ load_config() {
     CONF_PRUNES=""
 
     # Load default config first
-    parse_config_file "${DEFAULT_CONF}"
+    parse_config_file "$(resolve_default_conf)"
     # Merge custom config (entries are appended)
     parse_config_file "${CUSTOM_CONF}"
 }
@@ -580,15 +613,17 @@ EOF
 generate_report() {
     local report=""
     local dry_run_note=""
+    local excluded_label="${MSG_REPORT_EXCLUDED}"
     if [ "${DRY_RUN}" -eq 1 ]; then
         dry_run_note=" (dry-run)"
+        excluded_label="${MSG_REPORT_WOULD_EXCLUDE}"
     fi
     report="${MSG_REPORT_TITLE}
 Date: $(date '+%Y-%m-%d %H:%M:%S')
 Mode: ${MODE}${dry_run_note}
 
 ${MSG_REPORT_CHECKED} ${TOTAL_CHECKED}
-${MSG_REPORT_EXCLUDED} ${TOTAL_EXCLUDED}
+${excluded_label} ${TOTAL_EXCLUDED}
 ${MSG_REPORT_ALREADY} ${TOTAL_ALREADY}
 ${MSG_REPORT_SKIPPED} ${TOTAL_SKIPPED}
 ${MSG_REPORT_ERRORS} ${TOTAL_ERRORS}"
@@ -630,6 +665,7 @@ show_help() {
     echo ""
     echo "${MSG_HELP_OPTIONS}"
     echo "${MSG_HELP_QUIET}"
+    echo "${MSG_HELP_FORCE}"
     echo "${MSG_HELP_LANG}"
     echo "${MSG_HELP_VERSION}"
     echo "${MSG_HELP_HELP}"
@@ -682,7 +718,15 @@ parse_args() {
                     exit 1
                 fi
                 shift
-                LANG_OVERRIDE="$1"
+                case "$1" in
+                    en|fr)
+                        LANG_OVERRIDE="$1"
+                        ;;
+                    *)
+                        log_error "${MSG_ERROR_INVALID_LANG}"
+                        exit 1
+                        ;;
+                esac
                 ;;
             --add)
                 if [[ $# -lt 4 ]]; then
@@ -690,9 +734,17 @@ parse_args() {
                     exit 1
                 fi
                 CONFIG_CMD="add"
-                shift; CONFIG_ADD_TYPE="$1"
-                shift; CONFIG_ADD_PATH="$1"
-                shift; CONFIG_ADD_REASON="$1"
+                shift
+                CONFIG_ADD_TYPE="$1"
+                shift
+                CONFIG_ADD_PATH="$1"
+                shift
+                CONFIG_ADD_REASON="$1"
+                shift
+                if [[ $# -gt 0 ]]; then
+                    log_error "${MSG_ERROR_INVALID_ARG} $1"
+                    exit 1
+                fi
                 return 0
                 ;;
             --list)
