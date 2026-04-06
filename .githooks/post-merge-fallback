@@ -1,8 +1,5 @@
 #!/bin/sh
-# Fallback bootstrap — installed by 'make setup' into the default Git hooks dir.
-#
-# Purpose: if core.hooksPath is unset in a clone or worktree, a checkout should
-# still restore the versioned hooks immediately.
+# Fallback bootstrap for post-merge.
 
 git config core.hooksPath .githooks || {
   printf '⚠️  Could not configure core.hooksPath — run "make setup" manually.\n' >&2
@@ -14,4 +11,4 @@ REPO=$(git rev-parse --show-toplevel 2>/dev/null) || {
   exit 1
 }
 
-exec "$REPO/.githooks/post-checkout" "$@"
+exec "$REPO/.githooks/post-merge" "$@"
