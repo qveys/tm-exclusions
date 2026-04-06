@@ -200,10 +200,10 @@ make lint
 # Run both
 make check
 
-# Install locally (uses sudo automatically when PREFIX is not writable)
+# Install locally (uses sudo automatically when PREFIX or SHARE_DIR is not writable)
 make install
 
-# Uninstall (uses sudo automatically when PREFIX is not writable)
+# Uninstall (uses sudo automatically when PREFIX or SHARE_DIR is not writable)
 make uninstall
 ```
 

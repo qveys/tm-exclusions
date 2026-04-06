@@ -6,10 +6,20 @@ INSTALL_NAME = tm-exclusions
 SHARE_DIR ?= $(abspath $(PREFIX)/../share/tm-exclusions)
 
 # Auto-detect whether sudo is required for install/uninstall.
-# Override with: make install SUDO='' (skip) or make install SUDO=sudo (force)
+# Override with: make install SUDO= (skip) or make install SUDO=sudo (force)
 SUDO := $(shell \
-  if [ -d "$(PREFIX)" ] && [ -w "$(PREFIX)" ]; then echo ''; \
-  elif [ ! -d "$(PREFIX)" ] && [ -w "$(dir $(PREFIX))" ]; then echo ''; \
+  prefix_ok=''; share_ok=''; \
+  if [ -d "$(PREFIX)" ]; then \
+    if [ -w "$(PREFIX)" ]; then prefix_ok=1; fi; \
+  elif [ -w "$(dir $(PREFIX))" ]; then \
+    prefix_ok=1; \
+  fi; \
+  if [ -d "$(SHARE_DIR)" ]; then \
+    if [ -w "$(SHARE_DIR)" ]; then share_ok=1; fi; \
+  elif [ -w "$(dir $(SHARE_DIR))" ]; then \
+    share_ok=1; \
+  fi; \
+  if [ -n "$$prefix_ok" ] && [ -n "$$share_ok" ]; then echo ''; \
   else echo 'sudo'; fi)
 
 # Auto-bootstrap the versioned hooks path on every `make` invocation so the
@@ -52,15 +62,15 @@ lint: ## Run ShellCheck on all shell scripts
 
 install: setup ## Install tm-exclusions to PREFIX (default: /usr/local/bin)
 	@echo "Installing $(INSTALL_NAME) to $(PREFIX)..."
-	$(SUDO) install -d "$(SHARE_DIR)"
-	$(SUDO) install -m 755 $(SCRIPT) $(PREFIX)/$(INSTALL_NAME)
-	$(SUDO) install -m 644 config/default.conf "$(SHARE_DIR)/default.conf"
+	@$(SUDO) install -d "$(SHARE_DIR)"
+	@$(SUDO) install -m 755 $(SCRIPT) $(PREFIX)/$(INSTALL_NAME)
+	@$(SUDO) install -m 644 config/default.conf "$(SHARE_DIR)/default.conf"
 	@echo "Installed. Run '$(INSTALL_NAME) --help' to get started."
 
 uninstall: ## Remove tm-exclusions from PREFIX
 	@echo "Removing $(INSTALL_NAME) from $(PREFIX)..."
-	$(SUDO) rm -f $(PREFIX)/$(INSTALL_NAME)
-	$(SUDO) rm -f "$(SHARE_DIR)/default.conf"
+	@$(SUDO) rm -f $(PREFIX)/$(INSTALL_NAME)
+	@$(SUDO) rm -f "$(SHARE_DIR)/default.conf"
 	@echo "Removed."
 
 check: lint test ## Run all checks (lint + test)
