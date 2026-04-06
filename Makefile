@@ -74,12 +74,19 @@ lint: ## Run ShellCheck on all shell scripts
 
 install: setup ## Install tm-exclusions to PREFIX (default: /usr/local/bin)
 	@echo "Installing $(INSTALL_NAME) to $(PREFIX)..."
+	@if [ -n "$(SUDO)" ]; then $(SUDO) -v; fi
 	@$(SUDO) sh -c 'install -d "$(SHARE_DIR)" && install -m 755 "$(SCRIPT)" "$(PREFIX)/$(INSTALL_NAME)" && install -m 644 config/default.conf "$(SHARE_DIR)/default.conf"'
 	@echo "Installed. Run '$(INSTALL_NAME) --help' to get started."
 
 uninstall: ## Remove tm-exclusions from PREFIX
-	@echo "Removing $(INSTALL_NAME) from $(PREFIX)..."
-	@$(SUDO) rm -f "$(PREFIX)/$(INSTALL_NAME)" "$(SHARE_DIR)/default.conf"
-	@echo "Removed."
+	@if [ ! -f "$(PREFIX)/$(INSTALL_NAME)" ] && [ ! -f "$(SHARE_DIR)/default.conf" ]; then \
+	  echo "$(INSTALL_NAME) is not installed. Nothing to remove."; \
+	else \
+	  echo "Removing $(INSTALL_NAME) from $(PREFIX)..."; \
+	  if [ -n "$(SUDO)" ]; then $(SUDO) -v; fi; \
+	  $(SUDO) rm -f "$(PREFIX)/$(INSTALL_NAME)" "$(SHARE_DIR)/default.conf"; \
+	  if [ -d "$(SHARE_DIR)" ]; then $(SUDO) rmdir "$(SHARE_DIR)" 2>/dev/null || true; fi; \
+	  echo "Removed."; \
+	fi
 
 check: lint test ## Run all checks (lint + test)
