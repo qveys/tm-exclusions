@@ -1,6 +1,6 @@
 # GitHub Labels
 
-Inventaire des labels actuellement configurés sur `qveys/tm-exclusions`, relevé le `2026-04-06`.
+Inventaire des labels actuellement configurés sur `qveys/tm-exclusions`, relevé le **2026-04-06** et mis à jour avec chaque PR.
 
 Style: labels avec emoji.
 
@@ -24,7 +24,7 @@ Total: `45` labels.
 | `🧹 Type: Chore` | `#cfd8dc` | Routine maintenance with no product behavior change. | Nettoyage mineur, renommage interne, ou entretien courant du repo. |
 | `🧼 Type: Refactor` | `#f48fb1` | Code change that neither fixes a bug nor adds a feature. | Réorganiser les fonctions shell sans modifier le comportement utilisateur. |
 
-## Priorites
+## Priorités
 
 | Label | Couleur | Description | Usage / Exemple |
 | --- | --- | --- | --- |
@@ -73,8 +73,8 @@ Total: `45` labels.
 
 | Label | Couleur | Description | Usage / Exemple |
 | --- | --- | --- | --- |
-| `🕰️ Automation: Stale issue` | `#cfd8dc` | Marque une issue sans activité récente (bot stale). | Appliqué par [`.github/workflows/stale.yml`](../.github/workflows/stale.yml) avant fermeture éventuelle. |
-| `🕰️ Automation: Stale pull request` | `#cfd8dc` | Marque une PR sans activité récente (bot stale). | Appliqué par [`.github/workflows/stale.yml`](../.github/workflows/stale.yml) avant fermeture éventuelle. |
+| `🕰️ Automation: Stale issue` | `#cfd8dc` | Marque une issue sans activité récente (bot stale). | Appliqué automatiquement lors du tri des issues inactives, avant fermeture éventuelle. |
+| `🕰️ Automation: Stale pull request` | `#cfd8dc` | Marque une PR sans activité récente (bot stale). | Appliqué automatiquement lors du tri des PR inactives, avant fermeture éventuelle. |
 
 ## Meta et Source
 
