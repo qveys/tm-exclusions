@@ -1,8 +1,31 @@
-.PHONY: test lint install uninstall help
+.PHONY: setup check-hooks help test lint install uninstall check
 
 SCRIPT = tm_exclusions.sh
 PREFIX ?= /usr/local/bin
 INSTALL_NAME = tm-exclusions
+
+# Auto-bootstrap the versioned hooks path on every `make` invocation so the
+# local Conventional Commit hooks are active without requiring manual setup.
+_ := $(shell git config core.hooksPath .githooks 2>/dev/null)
+
+setup: ## Explicitly install local Git hooks (also runs automatically on any 'make' invocation)
+	@git config core.hooksPath .githooks
+	@set -e; \
+	HOOKS_DIR=$$(git rev-parse --git-common-dir)/hooks; \
+	mkdir -p "$$HOOKS_DIR"; \
+	install -m 755 .githooks/commit-msg-fallback "$$HOOKS_DIR/commit-msg"; \
+	install -m 755 .githooks/prepare-commit-msg-fallback "$$HOOKS_DIR/prepare-commit-msg"; \
+	install -m 755 .githooks/post-checkout-fallback "$$HOOKS_DIR/post-checkout"
+	@echo "Git hooks installed. Conventional Commits will be enforced on every commit."
+
+check-hooks: ## Verify that the local Git hooks are active; exit 1 if not
+	@HOOKS_PATH=$$(git config core.hooksPath 2>/dev/null); \
+	if [ "$$HOOKS_PATH" = ".githooks" ]; then \
+	  echo "Git hooks are active (core.hooksPath = .githooks)."; \
+	else \
+	  echo "Git hooks are NOT active. Run 'make setup' or 'make install' to install them." >&2; \
+	  exit 1; \
+	fi
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
@@ -19,7 +42,7 @@ lint: ## Run ShellCheck on all shell scripts
 	@shellcheck -s bash tests/smoke.bats-like.sh
 	@echo "ShellCheck passed."
 
-install: ## Install tm-exclusions to PREFIX (default: /usr/local/bin)
+install: setup ## Install tm-exclusions to PREFIX (default: /usr/local/bin)
 	@echo "Installing $(INSTALL_NAME) to $(PREFIX)..."
 	@install -m 755 $(SCRIPT) $(PREFIX)/$(INSTALL_NAME)
 	@echo "Installed. Run '$(INSTALL_NAME) --help' to get started."

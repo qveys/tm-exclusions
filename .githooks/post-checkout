@@ -1,0 +1,14 @@
+#!/bin/sh
+# post-checkout hook — re-configures core.hooksPath after every checkout so
+# that the versioned hooks in .githooks/ remain active after branch switches,
+# git pull --rebase, or any other operation that triggers a working-tree update.
+#
+# Git invokes this hook with three arguments:
+#   $1  previous HEAD (or zeros on initial checkout)
+#   $2  new HEAD
+#   $3  1 for branch checkout, 0 for file checkout
+# We act on all cases — re-configuring is idempotent and takes <1 ms.
+
+git config core.hooksPath .githooks || {
+  printf '⚠️  post-checkout: could not configure core.hooksPath — run "make setup" manually.\n' >&2
+}

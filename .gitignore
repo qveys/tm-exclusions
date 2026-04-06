@@ -1,9 +1,27 @@
+# macOS
 .DS_Store
+
+# Editor
 *.swp
 *.swo
 *~
 .idea/
 .vscode/
 *.log
+
+# Local temporary output
 /tmp/
 last_report.txt
+
+# Test outputs
+*.report.txt
+
+# Worktrees
+.worktrees/
+
+# Personal plists
+*.plist
+
+# Claude Code internals
+.claude-flow/
+docs/superpowers/
