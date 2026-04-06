@@ -1,20 +1,25 @@
-name: ShellCheck
+name: CI
 
 on:
   push:
     branches: [master]
   pull_request:
     branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  shellcheck:
-    name: ShellCheck lint
+  lint:
+    name: ShellCheck
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - name: Install ShellCheck
         run: |
@@ -23,3 +28,12 @@ jobs:
 
       - name: Run ShellCheck
         run: make lint
+
+  test:
+    name: Smoke tests
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run smoke tests
+        run: make test
