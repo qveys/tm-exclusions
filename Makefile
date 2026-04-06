@@ -33,7 +33,8 @@ setup: ## Explicitly install local Git hooks (also runs automatically on any 'ma
 	mkdir -p "$$HOOKS_DIR"; \
 	install -m 755 .githooks/commit-msg-fallback "$$HOOKS_DIR/commit-msg"; \
 	install -m 755 .githooks/prepare-commit-msg-fallback "$$HOOKS_DIR/prepare-commit-msg"; \
-	install -m 755 .githooks/post-checkout-fallback "$$HOOKS_DIR/post-checkout"
+	install -m 755 .githooks/post-checkout-fallback "$$HOOKS_DIR/post-checkout"; \
+	install -m 755 .githooks/post-merge-fallback "$$HOOKS_DIR/post-merge"
 	@echo "Git hooks installed. Conventional Commits will be enforced on every commit."
 
 check-hooks: ## Verify that the local Git hooks are active; exit 1 if not

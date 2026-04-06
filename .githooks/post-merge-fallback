@@ -1,0 +1,14 @@
+#!/bin/sh
+# Fallback bootstrap for post-merge.
+
+git config core.hooksPath .githooks || {
+  printf '⚠️  Could not configure core.hooksPath — run "make setup" manually.\n' >&2
+  exit 1
+}
+
+REPO=$(git rev-parse --show-toplevel 2>/dev/null) || {
+  printf '⚠️  Could not determine repo root — run "make setup" manually.\n' >&2
+  exit 1
+}
+
+exec "$REPO/.githooks/post-merge" "$@"

@@ -1,0 +1,10 @@
+#!/bin/sh
+# post-merge hook — keep hooks path configured and prune local branches with
+# deleted upstreams after merges.
+
+git config core.hooksPath .githooks || {
+  printf '⚠️  post-merge: could not configure core.hooksPath — run "make setup" manually.\n' >&2
+}
+
+REPO=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+"$REPO/.githooks/prune-gone-branches.sh"

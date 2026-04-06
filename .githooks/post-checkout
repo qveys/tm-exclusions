@@ -12,3 +12,6 @@
 git config core.hooksPath .githooks || {
   printf '⚠️  post-checkout: could not configure core.hooksPath — run "make setup" manually.\n' >&2
 }
+
+REPO=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+"$REPO/.githooks/prune-gone-branches.sh"
