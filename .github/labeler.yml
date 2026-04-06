@@ -1,0 +1,21 @@
+"🧩 Area: CI":
+  - .github/**/*
+
+"🧩 Area: Tests":
+  - tests/**/*
+
+"🧩 Area: Core":
+  - tm_exclusions.sh
+
+"🧩 Area: Config":
+  - config/**/*
+
+"🧩 Area: Hooks":
+  - .githooks/**/*
+
+"🧩 Area: Docs":
+  - "**/*.md"
+  - docs/**/*
+
+"🧩 Area: Build":
+  - Makefile
