@@ -7,7 +7,10 @@ SHARE_DIR ?= $(abspath $(PREFIX)/../share/tm-exclusions)
 
 # Auto-detect whether sudo is required for install/uninstall.
 # Override with: make install SUDO='' (skip) or make install SUDO=sudo (force)
-SUDO := $(shell if [ -d "$(PREFIX)" ] && [ -w "$(PREFIX)" ]; then echo ''; else echo 'sudo'; fi)
+SUDO := $(shell \
+  if [ -d "$(PREFIX)" ] && [ -w "$(PREFIX)" ]; then echo ''; \
+  elif [ ! -d "$(PREFIX)" ] && [ -w "$(dir $(PREFIX))" ]; then echo ''; \
+  else echo 'sudo'; fi)
 
 # Auto-bootstrap the versioned hooks path on every `make` invocation so the
 # local Conventional Commit hooks are active without requiring manual setup.
