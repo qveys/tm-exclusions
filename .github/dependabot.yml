@@ -14,7 +14,7 @@ updates:
         patterns:
           - "*"
     commit-message:
-      prefix: chore
+      prefix: ci
       include: scope
     labels:
       - "📦 Type: Dependency"
