@@ -1,12 +1,9 @@
 name: Security
 
+# PR-only dependency review; Actions scanning uses Code Scanning default setup.
 on:
-  push:
-    branches: [master]
   pull_request:
     branches: [master]
-  schedule:
-    - cron: "24 5 * * 1"
 
 permissions:
   contents: read
@@ -14,7 +11,6 @@ permissions:
 jobs:
   dependency-review:
     name: Dependency review
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
