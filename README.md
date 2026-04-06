@@ -44,7 +44,7 @@ Default rules cover these areas:
 ## Install
 
 ```bash
-# Clone and install
+# Clone and install (uses sudo automatically when needed)
 git clone https://github.com/qveys/tm-exclusions.git
 cd tm-exclusions
 make install
@@ -200,10 +200,10 @@ make lint
 # Run both
 make check
 
-# Install locally
+# Install locally (uses sudo automatically when PREFIX is not writable)
 make install
 
-# Uninstall
+# Uninstall (uses sudo automatically when PREFIX is not writable)
 make uninstall
 ```
 
