@@ -38,9 +38,7 @@ test: ## Run smoke tests
 
 lint: ## Run ShellCheck on all shell scripts
 	@echo "Running ShellCheck..."
-	@shellcheck -x -s bash $(SCRIPT)
-	@shellcheck -x -s bash tests/test_helpers.sh
-	@shellcheck -x -s bash tests/smoke.bats-like.sh
+	@shellcheck -x -s bash $(SCRIPT) tests/test_helpers.sh tests/smoke.bats-like.sh
 	@echo "ShellCheck passed."
 
 install: setup ## Install tm-exclusions to PREFIX (default: /usr/local/bin)
