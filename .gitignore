@@ -8,6 +8,7 @@
 .idea/
 .vscode/
 *.log
+.cursor/
 
 # Local temporary output
 /tmp/
