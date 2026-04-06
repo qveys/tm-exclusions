@@ -37,10 +37,16 @@ test: ## Run smoke tests
 	@bash tests/smoke.bats-like.sh
 
 lint: ## Run ShellCheck on all shell scripts
+	@if ! command -v shellcheck >/dev/null 2>&1; then \
+	  echo "Error: shellcheck is not installed." >&2; \
+	  echo "Install it with:  brew install shellcheck" >&2; \
+	  echo "Or see https://github.com/koalaman/shellcheck#installing" >&2; \
+	  exit 1; \
+	fi
 	@echo "Running ShellCheck..."
-	@shellcheck -s bash $(SCRIPT)
-	@shellcheck -s bash tests/test_helpers.sh
-	@shellcheck -s bash tests/smoke.bats-like.sh
+	@shellcheck -x -s bash $(SCRIPT)
+	@shellcheck -x -s bash tests/test_helpers.sh
+	@shellcheck -x -s bash tests/smoke.bats-like.sh
 	@echo "ShellCheck passed."
 
 install: setup ## Install tm-exclusions to PREFIX (default: /usr/local/bin)
