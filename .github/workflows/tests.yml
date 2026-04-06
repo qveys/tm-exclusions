@@ -14,7 +14,7 @@ jobs:
     name: Smoke tests
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Run smoke tests
         run: make test
