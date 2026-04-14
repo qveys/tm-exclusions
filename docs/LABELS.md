@@ -6,6 +6,101 @@ Style: labels avec emoji.
 
 Total: `45` labels.
 
+## Auto-labeling
+
+- PRs: `actions/labeler` lit [`.github/labeler.yml`](../.github/labeler.yml) et ajoute **tous** les labels `🧩 Area:*` dont les globs matchent les fichiers modifiés. `sync-labels` est désactivé pour ne pas retirer les autres labels (Types, priorités, etc.) que le labeler ne connaît pas.
+- Issues et PRs: le job `classify-by-reference` charge le catalogue depuis ce fichier (`docs/LABELS.md`) et résout dynamiquement les labels (emoji inclus), sans noms codés en dur dans le workflow. Il ajoute autant de labels pertinents que nécessaire sur `Area`, `Type`, `Status`, `Effort`, `Source` et `Ecosystem`, sans supprimer les labels existants.
+
+## Classification Rules (machine-readable)
+
+Single source of truth for auto-labeling rules used by `.github/workflows/triage.yml`.
+
+Schema:
+- `groups.<Prefix>.match`: `any` (all matching rules) or `first` (first matching rule only)
+- `groups.<Prefix>.rules[]`: `{ "suffix", "patterns" }`
+- `extras[]`: additional conditional labels via `when` (`actor_contains`, `text_matches`, `pr_path_matches`)
+
+<!-- label-rules:start -->
+```json
+{
+  "version": 1,
+  "groups": {
+    "Area": {
+      "match": "any",
+      "rules": [
+        { "suffix": "CI", "patterns": ["\\.github\\b", "(^|/)workflows?/", "\\b(ci|pipeline|github actions?|actions/)\\b"] },
+        { "suffix": "Tests", "patterns": ["(^|/)tests?/", "\\b(test|spec|coverage|smoke|bats)\\b"] },
+        { "suffix": "Core", "patterns": ["\\btm_exclusions\\.sh\\b", "\\btm-exclusions\\b", "\\b(cli|runtime|shell script|bash script)\\b"] },
+        { "suffix": "Config", "patterns": ["(^|/)config/", "\\b(default\\.conf|configuration|settings?)\\b"] },
+        { "suffix": "Hooks", "patterns": ["\\.githooks", "\\bgithooks?\\b", "\\bpre-commit\\b", "\\bcommit-msg\\b"] },
+        { "suffix": "Docs", "patterns": ["(^|/)docs/", "\\breadme\\.md\\b", "\\bchangelog\\b", "\\bdocumentation\\b", "\\breadme\\b"] },
+        { "suffix": "Build", "patterns": ["\\bmakefile\\b", "\\bbuild\\b", "\\brelease\\b", "\\bpackag(e|ing)\\b", "\\binstall(ation)?\\b"] }
+      ]
+    },
+    "Type": {
+      "match": "any",
+      "rules": [
+        { "suffix": "Security", "patterns": ["\\b(security|vulnerabilit|cve|hardening|permission|privilege|sandbox)\\b"] },
+        { "suffix": "Bug", "patterns": ["\\b(bug|broken|regression|crash|doesn'?t work|does not work|error|hotfix|fix)\\b"] },
+        { "suffix": "Breaking Change", "patterns": ["\\b(breaking|incompatible|semver major|bc[!:])\\b"] },
+        { "suffix": "Feature", "patterns": ["\\b(feature|new mode|new option|implement support|user story)\\b"] },
+        { "suffix": "Enhancement", "patterns": ["\\b(enhancement|improvement|polish|incremental)\\b"] },
+        { "suffix": "Documentation", "patterns": ["\\b(documentation|doc update|readme|guide)\\b"] },
+        { "suffix": "Test", "patterns": ["\\b(test|tests|testing|spec|coverage|smoke test)\\b"] },
+        { "suffix": "Build", "patterns": ["\\b(build|packaging|installer|makefile|release pipeline)\\b"] },
+        { "suffix": "Dependency", "patterns": ["\\b(dependabot|dependency|renovate|bump(\\s+deps?)?)\\b"] },
+        { "suffix": "Performance", "patterns": ["\\b(performance|perf|slow|faster|optimi[sz]e|latency|speed)\\b"] },
+        { "suffix": "Refactor", "patterns": ["\\b(refactor|cleanup|reorganize|rename)\\b"] },
+        { "suffix": "Chore", "patterns": ["\\b(chore|maintenance|housekeeping|format|lint|prettier|whitespace)\\b"] },
+        { "suffix": "Question", "patterns": ["\\b(question|how (do|to|can)|is it possible|clarif)\\b", "\\?\\s*$"] }
+      ]
+    },
+    "Status": {
+      "match": "first",
+      "rules": [
+        { "suffix": "Blocked", "patterns": ["\\b(blocked|blocking|cannot proceed|dependency)\\b"] },
+        { "suffix": "Duplicate", "patterns": ["\\b(duplicate|already reported|same as)\\b"] },
+        { "suffix": "Fixed", "patterns": ["\\b(fixed|resolved|done)\\b"] },
+        { "suffix": "In Progress", "patterns": ["\\b(in progress|wip|working on)\\b"] },
+        { "suffix": "Invalid", "patterns": ["\\b(invalid|not reproducible|cannot reproduce)\\b"] },
+        { "suffix": "Needs Info", "patterns": ["\\b(needs info|more info|missing info|steps to reproduce)\\b"] },
+        { "suffix": "On Hold", "patterns": ["\\b(on hold|paused|deferred)\\b"] },
+        { "suffix": "Ready", "patterns": ["\\b(ready to merge|ready)\\b"] },
+        { "suffix": "Review Needed", "patterns": ["\\b(review needed|needs review|please review)\\b"] },
+        { "suffix": "Won't Fix", "patterns": ["\\b(won't fix|wont fix|not planned)\\b"] }
+      ]
+    },
+    "Effort": {
+      "match": "first",
+      "rules": [
+        { "suffix": "X-Large", "patterns": ["\\b(x-large|xl|extra large|multiple weeks)\\b"] },
+        { "suffix": "Large", "patterns": ["\\b(large|big|significant|about a week)\\b"] },
+        { "suffix": "Medium", "patterns": ["\\b(medium|moderate|few days)\\b"] },
+        { "suffix": "Small", "patterns": ["\\b(small|quick fix|few hours|minor)\\b"] }
+      ]
+    }
+  },
+  "extras": [
+    {
+      "when": "actor_contains",
+      "value": "dependabot",
+      "label": { "prefix": "Source", "suffix": "Dependabot" }
+    },
+    {
+      "when": "pr_path_matches",
+      "patterns": ["\\.github/workflows/"],
+      "label": { "prefix": "Ecosystem", "suffix": "github-actions" }
+    },
+    {
+      "when": "text_matches",
+      "patterns": ["\\b(github actions?|actions/)\\b"],
+      "label": { "prefix": "Ecosystem", "suffix": "github-actions" }
+    }
+  ]
+}
+```
+<!-- label-rules:end -->
+
 ## Types
 
 | Label | Couleur | Description | Usage / Exemple |
