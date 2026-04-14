@@ -14,7 +14,7 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: actions/labeler@v5
+      - uses: actions/labeler@v6
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           # sync-labels true can remove labels not listed in labeler.yml (Types, Priority, etc.)
@@ -28,7 +28,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Normalize title
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const ccTypes = [
