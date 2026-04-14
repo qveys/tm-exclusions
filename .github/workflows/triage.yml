@@ -315,12 +315,43 @@ jobs:
               return;
             }
 
-            const { data: current } = await github.rest.issues.listLabelsOnIssue({
+            const priorityNames = knownLabels.filter((l) =>
+              l.toLowerCase().includes("priority:"),
+            );
+            const chosenPriority = unique.find((u) => priorityNames.includes(u));
+
+            let { data: current } = await github.rest.issues.listLabelsOnIssue({
               owner,
               repo,
               issue_number: issueNumber,
               per_page: 100,
             });
+
+            if (chosenPriority) {
+              for (const l of current) {
+                if (priorityNames.includes(l.name) && l.name !== chosenPriority) {
+                  core.info(`Removing superseded priority label: ${l.name}`);
+                  try {
+                    await github.rest.issues.removeLabel({
+                      owner,
+                      repo,
+                      issue_number: issueNumber,
+                      name: l.name,
+                    });
+                  } catch (error) {
+                    core.warning(`removeLabel failed for ${l.name}: ${error.message}`);
+                  }
+                }
+              }
+              const refreshed = await github.rest.issues.listLabelsOnIssue({
+                owner,
+                repo,
+                issue_number: issueNumber,
+                per_page: 100,
+              });
+              current = refreshed.data;
+            }
+
             const have = new Set(current.map((l) => l.name));
             const missing = unique.filter((name) => !have.has(name));
             if (missing.length === 0) {

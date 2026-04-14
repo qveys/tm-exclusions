@@ -9,7 +9,7 @@ Total: `45` labels.
 ## Auto-labeling
 
 - PRs: `actions/labeler` lit [`.github/labeler.yml`](../.github/labeler.yml) et ajoute **tous** les labels `🧩 Area:*` dont les globs matchent les fichiers modifiés. `sync-labels` est désactivé pour ne pas retirer les autres labels (Types, priorités, etc.) que le labeler ne connaît pas.
-- Issues et PRs: le job `classify-by-reference` charge le catalogue depuis ce fichier (`docs/LABELS.md`) et résout dynamiquement les labels (emoji inclus), sans noms codés en dur dans le workflow. Il ajoute autant de labels pertinents que nécessaire sur `Area`, `Type`, `Status`, `Effort`, `Source` et `Ecosystem`, sans supprimer les labels existants.
+- Issues et PRs: le job `classify-by-reference` charge le catalogue depuis ce fichier (`docs/LABELS.md`) et résout dynamiquement les labels (emoji inclus), sans noms codés en dur dans le workflow. Il ajoute autant de labels pertinents que nécessaire sur `Area`, `Type`, `Status`, `Priority`, `Effort`, `Source` et `Ecosystem`. Pour **Priority**, au plus un label `🔥 Priority:*` est conservé (le plus fort parmi les correspondances) : les autres `Priority` déjà présents sont retirés avant d’ajouter le nouveau. Les autres familles ne sont pas retirées automatiquement.
 
 ## Classification Rules (machine-readable)
 
@@ -70,13 +70,70 @@ Schema:
         { "suffix": "Won't Fix", "patterns": ["\\b(won't fix|wont fix|not planned)\\b"] }
       ]
     },
+    "Priority": {
+      "match": "first",
+      "rules": [
+        {
+          "suffix": "Critical",
+          "patterns": [
+            "\\b(P0|blocker|critical|severity\\s*0|data\\s*loss|production\\s+down)\\b",
+            "\\b(bloquant|perte\\s+de\\s+données|sécurité\\s+critique|régression\\s+bloquante|urgence\\s+maximale)\\b"
+          ]
+        },
+        {
+          "suffix": "High",
+          "patterns": [
+            "\\b(high\\s+priority|P1|asap)\\b",
+            "\\b(haute\\s+priorité|priorité\\s+haute|à\\s+traiter\\s+vite)\\b"
+          ]
+        },
+        {
+          "suffix": "Medium",
+          "patterns": [
+            "\\b(medium\\s+priority|P2|normal\\s+priority)\\b",
+            "\\b(priorité\\s+moyenne|priorité\\s+normale|planifié)\\b"
+          ]
+        },
+        {
+          "suffix": "Low",
+          "patterns": [
+            "\\b(low\\s+priority|P3|nice\\s+to\\s+have|cosmetic)\\b",
+            "\\b(basse\\s+priorité|priorité\\s+basse|pas\\s+urgent|quand\\s+possible|cosmétique)\\b"
+          ]
+        }
+      ]
+    },
     "Effort": {
       "match": "first",
       "rules": [
-        { "suffix": "X-Large", "patterns": ["\\b(x-large|xl|extra large|multiple weeks)\\b"] },
-        { "suffix": "Large", "patterns": ["\\b(large|big|significant|about a week)\\b"] },
-        { "suffix": "Medium", "patterns": ["\\b(medium|moderate|few days)\\b"] },
-        { "suffix": "Small", "patterns": ["\\b(small|quick fix|few hours|minor)\\b"] }
+        {
+          "suffix": "X-Large",
+          "patterns": [
+            "\\b(x-large|xl|extra large|multiple weeks)\\b",
+            "\\b(plusieurs\\s+semaines|très\\s+volumineux)\\b"
+          ]
+        },
+        {
+          "suffix": "Large",
+          "patterns": [
+            "\\b(large|big|significant|about a week)\\b",
+            "\\b(environ\\s+une\\s+semaine|gros\\s+chantier|effort\\s+important)\\b"
+          ]
+        },
+        {
+          "suffix": "Medium",
+          "patterns": [
+            "\\b(medium|moderate|few days)\\b",
+            "\\b(quelques\\s+jours|effort\\s+moyen|modéré)\\b"
+          ]
+        },
+        {
+          "suffix": "Small",
+          "patterns": [
+            "\\b(small|quick fix|few hours|minor)\\b",
+            "\\b(quelques\\s+heures|petit\\s+correctif|correctif\\s+rapide|tâche\\s+mineure)\\b"
+          ]
+        }
       ]
     }
   },
