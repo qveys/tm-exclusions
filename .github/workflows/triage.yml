@@ -162,7 +162,11 @@ jobs:
 
   classify-by-reference:
     needs: [normalize-title]
-    if: github.event_name == 'issues' || github.event_name == 'pull_request_target'
+    # When normalize-title is skipped (e.g. pull_request_target synchronize), still run
+    # classification; default `needs` would skip this job if the needed job was skipped.
+    if: |
+      (github.event_name == 'issues' || github.event_name == 'pull_request_target') &&
+      (needs.normalize-title.result == 'success' || needs.normalize-title.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -170,7 +174,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Apply labels from reference catalog
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const isPr = Boolean(context.payload.pull_request);
