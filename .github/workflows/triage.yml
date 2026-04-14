@@ -227,7 +227,7 @@ jobs:
               const regexes = [];
               for (const pattern of patterns ?? []) {
                 try {
-                  regexes.push(new RegExp(pattern, "i"));
+                  regexes.push(new RegExp(pattern, "im"));
                 } catch (error) {
                   core.warning(`Invalid regex ignored: ${pattern} (${error.message})`);
                 }
@@ -264,8 +264,10 @@ jobs:
                 const regexes = compilePatterns(rule.patterns);
                 if (regexes.length > 0 && hasAny(regexes)) {
                   const name = findLabel(prefix, rule.suffix);
-                  if (name) hits.push(name);
-                  if (group.match === "first") break;
+                  if (name) {
+                    hits.push(name);
+                    if (group.match === "first") break;
+                  }
                 }
               }
               return hits;
