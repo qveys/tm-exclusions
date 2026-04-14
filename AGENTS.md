@@ -4,12 +4,14 @@ This file provides guidance to AI agentic LLM CLI tools when working with code i
 
 ## Project overview
 - `tm-exclusions` is a single-file Bash CLI (`tm_exclusions.sh`) for managing macOS Time Machine exclusions for regenerable developer data.
-- It is config-driven: built-in rules come from `config/default.conf`; user rules come from `~/.config/tm_exclusions/custom.conf`.
+- It is config-driven: built-in rules come from the resolved default config (`resolve_default_conf()` in `tm_exclusions.sh` — e.g. `config/default.conf` in a repo checkout, `.../share/tm-exclusions/default.conf` when installed, or `$TM_EXCLUSIONS_DEFAULT_CONF` when set); user rules come from `~/.config/tm_exclusions/custom.conf`.
 - Behavior and docs must stay aligned: when implementation changes, update `README.md`, tests in `tests/`, and `docs/ARCHITECTURE.md` when architectural behavior changes.
 
 ## Core development commands
-- Show available make targets:
+- Show available make targets and manage the dev environment:
   - `make help`
+  - `make setup`
+  - `make check-hooks`
 - Run all checks:
   - `make check`
 - Lint shell scripts:
@@ -41,7 +43,7 @@ This file provides guidance to AI agentic LLM CLI tools when working with code i
 - Processing model:
   - Static rules (`path`) are handled directly.
   - Dynamic rules (`pattern`) are discovered with `find "$HOME" -maxdepth 6 -type d -name <pattern>`.
-  - Prune rules (`prune`) exclude directory trees from dynamic scanning only (they do not create Time Machine exclusions).
+  - Prune rules (`prune`) do not create Time Machine exclusions. They only skip applying exclusions to dynamic matches whose paths fall under a prune prefix after discovery; `find` still walks from `$HOME` — these rules filter results afterward and do not limit which directories `find` visits.
 - `tmutil` integration:
   - All Time Machine operations are wrapped via `tm_is_excluded`, `tm_add_exclusion`, `tm_remove_exclusion`.
   - On non-macOS or when `tmutil` is unavailable, wrappers simulate behavior so tests can run without mutating Time Machine state.
@@ -52,6 +54,6 @@ This file provides guidance to AI agentic LLM CLI tools when working with code i
 ## Constraints and repo-specific rules
 - Bash compatibility target is Bash 3.2+ (stock macOS). Avoid Bash 4+ features.
 - Keep quoting strict and portable shell style consistent with current script.
-- Config file format is `type|target|reason`; supported types are `path`, `pattern`, `prune`.
+- Config file format is `type|target|reason`; supported types are `path`, `pattern`, `prune`. The `target` field supports leading `~` expansion to the user’s home directory.
 - Conventional Commits with leading emoji are enforced by local hooks in `.githooks/`.
   - Ensure hooks are active via `make setup` (also auto-bootstrapped by the Makefile).
