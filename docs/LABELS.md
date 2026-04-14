@@ -28,7 +28,7 @@ Schema:
     "Area": {
       "match": "any",
       "rules": [
-        { "suffix": "CI", "patterns": ["\\.github\\b", "(^|/)workflows?/", "\\b(ci|pipeline|github actions?|actions/)\\b"] },
+        { "suffix": "CI", "patterns": ["\\.github\\b", "(^|/)workflows?/", "\\b(ci|pipeline|github actions?)\\b", "\\bactions\\/?"] },
         { "suffix": "Tests", "patterns": ["(^|/)tests?/", "\\b(test|spec|coverage|smoke|bats)\\b"] },
         { "suffix": "Core", "patterns": ["\\btm_exclusions\\.sh\\b", "\\btm-exclusions\\b", "\\b(cli|runtime|shell script|bash script)\\b"] },
         { "suffix": "Config", "patterns": ["(^|/)config/", "\\b(default\\.conf|configuration|settings?)\\b"] },
@@ -40,9 +40,9 @@ Schema:
     "Type": {
       "match": "any",
       "rules": [
-        { "suffix": "Security", "patterns": ["\\b(security|vulnerabilit|cve|hardening|permission|privilege|sandbox)\\b"] },
+        { "suffix": "Security", "patterns": ["\\b(security|vulnerabilit[a-z]*|cve|hardening|permission|privilege|sandbox)\\b"] },
         { "suffix": "Bug", "patterns": ["\\b(bug|broken|regression|crash|doesn'?t work|does not work|error|hotfix|fix)\\b"] },
-        { "suffix": "Breaking Change", "patterns": ["\\b(breaking|incompatible|semver major|bc[!:])\\b"] },
+        { "suffix": "Breaking Change", "patterns": ["\\b(breaking|incompatible|semver major)\\b", "\\bbc[!:]"] },
         { "suffix": "Feature", "patterns": ["\\b(feature|new mode|new option|implement support|user story)\\b"] },
         { "suffix": "Enhancement", "patterns": ["\\b(enhancement|improvement|polish|incremental)\\b"] },
         { "suffix": "Documentation", "patterns": ["\\b(documentation|doc update|readme|guide)\\b"] },
@@ -52,7 +52,7 @@ Schema:
         { "suffix": "Performance", "patterns": ["\\b(performance|perf|slow|faster|optimi[sz]e|latency|speed)\\b"] },
         { "suffix": "Refactor", "patterns": ["\\b(refactor|cleanup|reorganize|rename)\\b"] },
         { "suffix": "Chore", "patterns": ["\\b(chore|maintenance|housekeeping|format|lint|prettier|whitespace)\\b"] },
-        { "suffix": "Question", "patterns": ["\\b(question|how (do|to|can)|is it possible|clarif)\\b", "\\?\\s*$"] }
+        { "suffix": "Question", "patterns": ["\\b(question|how (do|to|can)|is it possible|clarif[a-z]*)\\b", "\\?\\s*$"] }
       ]
     },
     "Status": {
@@ -77,28 +77,28 @@ Schema:
           "suffix": "Critical",
           "patterns": [
             "\\b(P0|blocker|critical|severity\\s*0|data\\s*loss|production\\s+down)\\b",
-            "\\b(bloquant|perte\\s+de\\s+données|sécurité\\s+critique|régression\\s+bloquante|urgence\\s+maximale)\\b"
+            "(^|\\W)(bloquant|perte\\s+de\\s+données|sécurité\\s+critique|régression\\s+bloquante|urgence\\s+maximale)(\\W|$)"
           ]
         },
         {
           "suffix": "High",
           "patterns": [
             "\\b(high\\s+priority|P1|asap)\\b",
-            "\\b(haute\\s+priorité|priorité\\s+haute|à\\s+traiter\\s+vite)\\b"
+            "(^|\\W)(haute\\s+priorité|priorité\\s+haute|à\\s+traiter\\s+vite)(\\W|$)"
           ]
         },
         {
           "suffix": "Medium",
           "patterns": [
             "\\b(medium\\s+priority|P2|normal\\s+priority)\\b",
-            "\\b(priorité\\s+moyenne|priorité\\s+normale|planifié)\\b"
+            "(^|\\W)(priorité\\s+moyenne|priorité\\s+normale|planifié)(\\W|$)"
           ]
         },
         {
           "suffix": "Low",
           "patterns": [
             "\\b(low\\s+priority|P3|nice\\s+to\\s+have|cosmetic)\\b",
-            "\\b(basse\\s+priorité|priorité\\s+basse|pas\\s+urgent|quand\\s+possible|cosmétique)\\b"
+            "(^|\\W)(basse\\s+priorité|priorité\\s+basse|pas\\s+urgent|quand\\s+possible|cosmétique)(\\W|$)"
           ]
         }
       ]
@@ -124,7 +124,7 @@ Schema:
           "suffix": "Medium",
           "patterns": [
             "\\b(medium|moderate|few days)\\b",
-            "\\b(quelques\\s+jours|effort\\s+moyen|modéré)\\b"
+            "(^|\\W)(quelques\\s+jours|effort\\s+moyen|modéré)(\\W|$)"
           ]
         },
         {
@@ -150,7 +150,7 @@ Schema:
     },
     {
       "when": "text_matches",
-      "patterns": ["\\b(github actions?|actions/)\\b"],
+      "patterns": ["\\b(github actions?|actions)\\/?"],
       "label": { "prefix": "Ecosystem", "suffix": "github-actions" }
     }
   ]
