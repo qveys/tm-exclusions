@@ -48,6 +48,13 @@ CONF_PATHS=""
 CONF_PATTERNS=""
 CONF_PRUNES=""
 REPORT_LINES=""
+# Paths discovered after config (brew cache, large VM images); newline-separated
+EXTRA_PATHS=""
+# Unique existing paths for optional du summary in report
+DU_PATHS=""
+SUDO_KEEPALIVE_PID=""
+# When 1, log_info also appends to FD 5 (opened from TM_EXCLUSIONS_DEBUG_FIFO)
+DEBUG_LOG_FD=0
 
 # ---------------------------------------------------------------------------
 # i18n strings
@@ -66,6 +73,7 @@ declare_i18n_en() {
     MSG_HELP_LANG="  --lang <en|fr>     Set output language"
     MSG_HELP_VERSION="  --version          Show version"
     MSG_HELP_HELP="  --help             Show this help"
+    MSG_HELP_HELP_SHORT="  -h                 Same as --help"
     MSG_HELP_CONFIG="Config management:"
     MSG_HELP_ADD="  --add <type> <path> <reason>  Add a custom exclusion rule"
     MSG_HELP_LIST="  --list             List custom exclusion rules"
@@ -79,20 +87,24 @@ declare_i18n_en() {
     MSG_NOT_EXCLUDED="Not currently excluded:"
     MSG_SCANNING="Scanning for regenerable directories..."
     MSG_STATIC="Applying static exclusion rules..."
+    MSG_EXTRA_PATHS="Applying discovered paths (brew cache, large VM images)..."
     MSG_REPORT_TITLE="=== tm-exclusions Report ==="
     MSG_REPORT_CHECKED="Paths checked:"
     MSG_REPORT_EXCLUDED="Newly excluded:"
     MSG_REPORT_WOULD_EXCLUDE="Would exclude:"
+    MSG_REPORT_NEED_EXCLUSION="Paths not yet excluded (action needed):"
     MSG_REPORT_ALREADY="Already excluded:"
-    MSG_REPORT_SKIPPED="Skipped (not found):"
+    MSG_REPORT_SKIPPED="Skipped:"
     MSG_REPORT_ERRORS="Errors:"
     MSG_REPORT_REMOVED="Removed:"
     MSG_REPORT_SAVED="Report saved to:"
+    MSG_REPORT_DESKTOP_COPY="Also saved report copy to:"
     MSG_UNINSTALL_START="Removing tm-exclusions applied exclusions..."
     MSG_UNINSTALL_DONE="Uninstall complete."
     MSG_UNINSTALL_FORCE="Force mode: removing all matched exclusions."
     MSG_CONFIG_CREATED="Custom config directory created:"
     MSG_CONFIG_EXISTS="Custom config directory already exists:"
+    MSG_CONFIG_AUTO_CREATED="Created default custom config (first run):"
     MSG_CONFIG_ADDED="Rule added to custom config:"
     MSG_CONFIG_EMPTY="No custom rules found."
     MSG_CONFIG_NO_FILE="Custom config file not found. Run --init first."
@@ -104,6 +116,7 @@ declare_i18n_en() {
     MSG_ERROR_NO_TMUTIL="Warning: tmutil not found. Running in simulation mode."
     MSG_PATH_NOT_FOUND="Path not found, skipping:"
     MSG_PRUNE_SKIP="Pruning (skipping scan of):"
+    MSG_SKIP_PRIVILEGED="Skipping (non-interactive / no sudo cache) for system path:"
 }
 
 declare_i18n_fr() {
@@ -120,6 +133,7 @@ declare_i18n_fr() {
     MSG_HELP_LANG="  --lang <en|fr>     Langue de sortie"
     MSG_HELP_VERSION="  --version          Afficher la version"
     MSG_HELP_HELP="  --help             Afficher cette aide"
+    MSG_HELP_HELP_SHORT="  -h                 Identique à --help"
     MSG_HELP_CONFIG="Gestion de la configuration :"
     MSG_HELP_ADD="  --add <type> <chemin> <raison>  Ajouter une règle personnalisée"
     MSG_HELP_LIST="  --list             Lister les règles personnalisées"
@@ -133,20 +147,24 @@ declare_i18n_fr() {
     MSG_NOT_EXCLUDED="Non exclu actuellement :"
     MSG_SCANNING="Recherche des répertoires régénérables..."
     MSG_STATIC="Application des règles d'exclusion statiques..."
+    MSG_EXTRA_PATHS="Application des chemins découverts (cache brew, grosses images VM)..."
     MSG_REPORT_TITLE="=== Rapport tm-exclusions ==="
     MSG_REPORT_CHECKED="Chemins vérifiés :"
     MSG_REPORT_EXCLUDED="Nouvellement exclus :"
     MSG_REPORT_WOULD_EXCLUDE="Seraient exclus :"
+    MSG_REPORT_NEED_EXCLUSION="Chemins pas encore exclus (action requise) :"
     MSG_REPORT_ALREADY="Déjà exclus :"
-    MSG_REPORT_SKIPPED="Ignorés (non trouvés) :"
+    MSG_REPORT_SKIPPED="Ignorés :"
     MSG_REPORT_ERRORS="Erreurs :"
     MSG_REPORT_REMOVED="Supprimés :"
     MSG_REPORT_SAVED="Rapport sauvegardé dans :"
+    MSG_REPORT_DESKTOP_COPY="Copie du rapport également enregistrée dans :"
     MSG_UNINSTALL_START="Suppression des exclusions tm-exclusions..."
     MSG_UNINSTALL_DONE="Désinstallation terminée."
     MSG_UNINSTALL_FORCE="Mode forcé : suppression de toutes les exclusions correspondantes."
     MSG_CONFIG_CREATED="Répertoire de configuration créé :"
     MSG_CONFIG_EXISTS="Répertoire de configuration existant :"
+    MSG_CONFIG_AUTO_CREATED="Configuration personnalisée par défaut créée (premier lancement) :"
     MSG_CONFIG_ADDED="Règle ajoutée à la configuration :"
     MSG_CONFIG_EMPTY="Aucune règle personnalisée trouvée."
     MSG_CONFIG_NO_FILE="Fichier de configuration non trouvé. Exécutez --init d'abord."
@@ -158,6 +176,7 @@ declare_i18n_fr() {
     MSG_ERROR_NO_TMUTIL="Attention : tmutil introuvable. Mode simulation activé."
     MSG_PATH_NOT_FOUND="Chemin introuvable, ignoré :"
     MSG_PRUNE_SKIP="Élagage (scan ignoré pour) :"
+    MSG_SKIP_PRIVILEGED="Ignoré (non interactif / pas de cache sudo) pour chemin système :"
 }
 
 # ---------------------------------------------------------------------------
@@ -166,6 +185,9 @@ declare_i18n_fr() {
 log_info() {
     if [[ "${QUIET}" -eq 0 ]]; then
         echo "$@"
+        if [[ "${DEBUG_LOG_FD}" -eq 1 ]]; then
+            echo "$@" >&5 2>/dev/null || true
+        fi
     fi
 }
 
@@ -180,6 +202,123 @@ add_report_line() {
         REPORT_LINES="${REPORT_LINES}
 $1"
     fi
+}
+
+# Track paths for optional du summary (dedupe; Bash 3.2 — no associative arrays)
+du_track_path() {
+    local p="$1"
+    [[ -z "$p" || ! -e "$p" ]] && return 0
+    if printf '%s\n' "${DU_PATHS}" | grep -Fqx "$p" 2>/dev/null; then
+        return 0
+    fi
+    if [[ -z "${DU_PATHS}" ]]; then
+        DU_PATHS="$p"
+    else
+        DU_PATHS="${DU_PATHS}
+$p"
+    fi
+}
+
+# True if path is $HOME or under it (normalized, no trailing slash ambiguity)
+path_under_home() {
+    local p="$1"
+    local h="${HOME%/}"
+    local pn="${p%/}"
+    case "$pn" in
+        "${h}"|"${h}/"*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+sudo_keepalive_stop() {
+    if [[ -n "${SUDO_KEEPALIVE_PID}" ]] && kill -0 "${SUDO_KEEPALIVE_PID}" 2>/dev/null; then
+        kill "${SUDO_KEEPALIVE_PID}" 2>/dev/null || true
+    fi
+    SUDO_KEEPALIVE_PID=""
+}
+
+sudo_keepalive_start() {
+    [[ "${HAS_TMUTIL}" -eq 0 ]] && return 0
+    [[ -n "${SUDO_KEEPALIVE_PID}" ]] && return 0
+    (
+        while true; do
+            sleep 55
+            if sudo -n true 2>/dev/null; then
+                sudo -n -v 2>/dev/null || true
+            fi
+        done
+    ) &
+    SUDO_KEEPALIVE_PID=$!
+}
+
+# Refresh sudo timestamp once before privileged tmutil calls (TTY may prompt)
+sudo_prepare_for_path() {
+    local path="$1"
+    if path_under_home "$path"; then
+        return 0
+    fi
+    if [[ "${HAS_TMUTIL}" -eq 0 ]]; then
+        return 0
+    fi
+    sudo_keepalive_start
+    sudo -v 2>/dev/null || true
+}
+
+# Paths outside $HOME need sudo + tmutil -p; skip when non-interactive and no cached sudo (CI / smoke).
+privileged_tmutil_ok() {
+    local path="$1"
+    path_under_home "$path" && return 0
+    if [[ "${HAS_TMUTIL}" -eq 0 ]]; then
+        return 0
+    fi
+    if sudo -n true 2>/dev/null; then
+        return 0
+    fi
+    if [[ -t 0 ]]; then
+        return 0
+    fi
+    return 1
+}
+
+# True when we would need sudo+tmutil for this path but cannot (non-interactive smoke/CI).
+cannot_privileged_tmutil() {
+    local path="$1"
+    [[ "${HAS_TMUTIL}" -eq 1 ]] || return 1
+    path_under_home "$path" && return 1
+    privileged_tmutil_ok "$path" && return 1
+    return 0
+}
+
+# Dynamic pattern matches: drop obvious false positives (legacy 2.x parity)
+pattern_match_allowed() {
+    local pat="$1"
+    local dir="$2"
+    local parent
+    parent="$(dirname "$dir")"
+
+    case "$pat" in
+        target)
+            if [[ -f "${parent}/Cargo.toml" \
+                || -f "${parent}/pom.xml" \
+                || -f "${parent}/build.gradle" \
+                || -f "${parent}/build.gradle.kts" ]]; then
+                return 0
+            fi
+            return 1
+            ;;
+        worktrees)
+            case "$dir" in
+                */.git/worktrees|*/.git/worktrees/*|*/.cursor/*) return 0 ;;
+            esac
+            if [[ -f "${parent}/HEAD" && ( -d "${parent}/worktrees" || -f "${parent}/commondir" ) ]]; then
+                return 0
+            fi
+            return 1
+            ;;
+        *)
+            return 0
+            ;;
+    esac
 }
 
 resolve_default_conf() {
@@ -255,8 +394,16 @@ check_environment() {
 tm_is_excluded() {
     local path="$1"
     if [[ "${HAS_TMUTIL}" -eq 1 ]]; then
-        local result
-        result="$(tmutil isexcluded "$path" 2>/dev/null)" || return 1
+        local result=""
+        if path_under_home "$path"; then
+            result="$(tmutil isexcluded "$path" 2>/dev/null)" || result=""
+        else
+            if ! privileged_tmutil_ok "$path"; then
+                return 1
+            fi
+            sudo_prepare_for_path "$path"
+            result="$(sudo tmutil isexcluded "$path" 2>/dev/null)" || result=""
+        fi
         case "$result" in
             *"[Excluded]"*) return 0 ;;
             *) return 1 ;;
@@ -270,7 +417,15 @@ tm_is_excluded() {
 tm_add_exclusion() {
     local path="$1"
     if [[ "${HAS_TMUTIL}" -eq 1 ]]; then
-        tmutil addexclusion "$path" 2>/dev/null
+        if path_under_home "$path"; then
+            tmutil addexclusion "$path" 2>/dev/null
+        else
+            if ! privileged_tmutil_ok "$path"; then
+                return 1
+            fi
+            sudo_prepare_for_path "$path"
+            sudo tmutil addexclusion -p "$path" 2>/dev/null
+        fi
     else
         return 0
     fi
@@ -279,7 +434,15 @@ tm_add_exclusion() {
 tm_remove_exclusion() {
     local path="$1"
     if [[ "${HAS_TMUTIL}" -eq 1 ]]; then
-        tmutil removeexclusion "$path" 2>/dev/null
+        if path_under_home "$path"; then
+            tmutil removeexclusion "$path" 2>/dev/null
+        else
+            if ! privileged_tmutil_ok "$path"; then
+                return 1
+            fi
+            sudo_prepare_for_path "$path"
+            sudo tmutil removeexclusion -p "$path" 2>/dev/null
+        fi
     else
         return 0
     fi
@@ -313,6 +476,10 @@ parse_config_file() {
         case "$entry_target" in
             "~"*) entry_target="${HOME}${entry_target#\~}" ;;
         esac
+        # Expand $HOME in targets (legacy default.conf style; one global replace)
+        local home_token
+        home_token="\$HOME"
+        entry_target="${entry_target//${home_token}/$HOME}"
 
         case "$entry_type" in
             path)
@@ -360,15 +527,11 @@ load_config() {
 # ---------------------------------------------------------------------------
 # Config management commands
 # ---------------------------------------------------------------------------
-cmd_config_init() {
-    if [[ -d "${CUSTOM_CONF_DIR}" ]]; then
-        log_info "${MSG_CONFIG_EXISTS} ${CUSTOM_CONF_DIR}"
-    else
-        mkdir -p "${CUSTOM_CONF_DIR}"
-        log_info "${MSG_CONFIG_CREATED} ${CUSTOM_CONF_DIR}"
+write_custom_config_if_absent() {
+    if [[ -f "${CUSTOM_CONF}" ]]; then
+        return 1
     fi
-    if [[ ! -f "${CUSTOM_CONF}" ]]; then
-        cat > "${CUSTOM_CONF}" << 'CONF_EOF'
+    cat > "${CUSTOM_CONF}" << 'CONF_EOF'
 # tm-exclusions custom configuration
 # Format: type|target|reason
 # Types: path (static path), pattern (directory name for scan), prune (skip during scan)
@@ -378,7 +541,24 @@ cmd_config_init() {
 # pattern|.myframework_cache|Framework cache directories
 # prune|~/Archive|Skip scanning archive directory
 CONF_EOF
+    return 0
+}
+
+ensure_custom_conf_exists() {
+    mkdir -p "${CUSTOM_CONF_DIR}" 2>/dev/null || true
+    if write_custom_config_if_absent; then
+        log_info "${MSG_CONFIG_AUTO_CREATED} ${CUSTOM_CONF}"
     fi
+}
+
+cmd_config_init() {
+    if [[ -d "${CUSTOM_CONF_DIR}" ]]; then
+        log_info "${MSG_CONFIG_EXISTS} ${CUSTOM_CONF_DIR}"
+    else
+        mkdir -p "${CUSTOM_CONF_DIR}"
+        log_info "${MSG_CONFIG_CREATED} ${CUSTOM_CONF_DIR}"
+    fi
+    write_custom_config_if_absent || true
 }
 
 cmd_config_add() {
@@ -448,6 +628,15 @@ apply_exclusion() {
         return 0
     fi
 
+    du_track_path "$path"
+
+    if cannot_privileged_tmutil "$path"; then
+        TOTAL_SKIPPED=$((TOTAL_SKIPPED + 1))
+        log_info "  ${MSG_SKIP_PRIVILEGED} ${path}"
+        add_report_line "SKIP  ${path} (needs sudo for system path)"
+        return 0
+    fi
+
     # Check if already excluded
     if tm_is_excluded "$path"; then
         TOTAL_ALREADY=$((TOTAL_ALREADY + 1))
@@ -481,6 +670,17 @@ remove_exclusion() {
     if [[ ! -e "$path" ]] && [[ "${FORCE}" -eq 0 ]]; then
         TOTAL_SKIPPED=$((TOTAL_SKIPPED + 1))
         add_report_line "SKIP  ${path} (not found)"
+        return 0
+    fi
+
+    if [[ -e "$path" ]]; then
+        du_track_path "$path"
+    fi
+
+    if cannot_privileged_tmutil "$path"; then
+        TOTAL_SKIPPED=$((TOTAL_SKIPPED + 1))
+        log_info "  ${MSG_SKIP_PRIVILEGED} ${path}"
+        add_report_line "SKIP  ${path} (needs sudo for system path)"
         return 0
     fi
 
@@ -559,6 +759,10 @@ scan_dynamic_patterns() {
         while IFS= read -r found_dir; do
             [[ -z "$found_dir" ]] && continue
 
+            if ! pattern_match_allowed "$pattern_name" "$found_dir"; then
+                continue
+            fi
+
             # Check if this path is under a pruned directory
             if is_pruned "$found_dir"; then
                 log_info "  ${MSG_PRUNE_SKIP} ${found_dir}"
@@ -569,7 +773,11 @@ scan_dynamic_patterns() {
                 remove_exclusion "$found_dir"
             elif [[ "${MODE}" = "report-only" ]]; then
                 TOTAL_CHECKED=$((TOTAL_CHECKED + 1))
-                if tm_is_excluded "$found_dir"; then
+                du_track_path "$found_dir"
+                if cannot_privileged_tmutil "$found_dir"; then
+                    TOTAL_SKIPPED=$((TOTAL_SKIPPED + 1))
+                    add_report_line "SKIP  ${found_dir} (needs sudo for system path)"
+                elif tm_is_excluded "$found_dir"; then
                     TOTAL_ALREADY=$((TOTAL_ALREADY + 1))
                     add_report_line "OK    ${found_dir} (excluded)"
                 else
@@ -605,18 +813,105 @@ apply_static_paths() {
             if [[ ! -e "$static_path" ]]; then
                 TOTAL_SKIPPED=$((TOTAL_SKIPPED + 1))
                 add_report_line "SKIP  ${static_path} (not found)"
-            elif tm_is_excluded "$static_path"; then
-                TOTAL_ALREADY=$((TOTAL_ALREADY + 1))
-                add_report_line "OK    ${static_path} (excluded)"
-            else
-                TOTAL_EXCLUDED=$((TOTAL_EXCLUDED + 1))
-                add_report_line "NEED  ${static_path} (not excluded)"
+            elif [[ -e "$static_path" ]]; then
+                du_track_path "$static_path"
+                if cannot_privileged_tmutil "$static_path"; then
+                    TOTAL_SKIPPED=$((TOTAL_SKIPPED + 1))
+                    add_report_line "SKIP  ${static_path} (needs sudo for system path)"
+                elif tm_is_excluded "$static_path"; then
+                    TOTAL_ALREADY=$((TOTAL_ALREADY + 1))
+                    add_report_line "OK    ${static_path} (excluded)"
+                else
+                    TOTAL_EXCLUDED=$((TOTAL_EXCLUDED + 1))
+                    add_report_line "NEED  ${static_path} (not excluded)"
+                fi
             fi
         else
             apply_exclusion "$static_path"
         fi
     done <<EOF
 ${CONF_PATHS}
+EOF
+}
+
+# Append one path to EXTRA_PATHS if not already listed (Bash 3.2 — no associative arrays)
+extra_paths_append() {
+    local x="$1"
+    [[ -z "$x" ]] && return 0
+    if [[ -n "${EXTRA_PATHS}" ]] && printf '%s\n' "${EXTRA_PATHS}" | grep -Fqx "$x" 2>/dev/null; then
+        return 0
+    fi
+    if [[ -z "${EXTRA_PATHS}" ]]; then
+        EXTRA_PATHS="$x"
+    else
+        EXTRA_PATHS="${EXTRA_PATHS}
+$x"
+    fi
+}
+
+collect_post_scan_paths() {
+    EXTRA_PATHS=""
+    local line tmp
+
+    if command -v brew >/dev/null 2>&1; then
+        line="$(brew --cache 2>/dev/null)" || line=""
+        if [[ -n "$line" && -e "$line" ]]; then
+            extra_paths_append "$line"
+        fi
+    fi
+
+    tmp="$(mktemp "${TMPDIR:-/tmp}/tm_exc_disk.XXXXXX")"
+    # One tree walk from $HOME covers ~/Library. BSD/GNU find: uppercase M for megabytes.
+    # .sparsebundle is a directory bundle on macOS — match with -type d; other images as files.
+    find "$HOME" \( -path '*/Mobile Documents/*' -o -path '*/Library/Mobile Documents/*' \) -prune -o \
+        \( -type d -name '*.sparsebundle' -prune -print \) -o \
+        \( -type f \( -name '*.vmdk' -o -name '*.qcow2' -o -name '*.raw' -o -name '*.img' \) -size +512M -print \) \
+        2>/dev/null | head -n 50 >>"$tmp" || true
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -z "$line" ]] && continue
+        extra_paths_append "$line"
+    done < "$tmp"
+    rm -f "$tmp"
+}
+
+apply_extra_paths() {
+    if [[ -z "${EXTRA_PATHS}" ]]; then
+        return 0
+    fi
+
+    log_info ""
+    log_info "${MSG_EXTRA_PATHS}"
+
+    local extra_path
+    while IFS= read -r extra_path; do
+        [[ -z "$extra_path" ]] && continue
+
+        if [[ "${MODE}" = "uninstall" ]]; then
+            remove_exclusion "$extra_path"
+        elif [[ "${MODE}" = "report-only" ]]; then
+            TOTAL_CHECKED=$((TOTAL_CHECKED + 1))
+            if [[ ! -e "$extra_path" ]]; then
+                TOTAL_SKIPPED=$((TOTAL_SKIPPED + 1))
+                add_report_line "SKIP  ${extra_path} (not found)"
+            elif [[ -e "$extra_path" ]]; then
+                du_track_path "$extra_path"
+                if cannot_privileged_tmutil "$extra_path"; then
+                    TOTAL_SKIPPED=$((TOTAL_SKIPPED + 1))
+                    add_report_line "SKIP  ${extra_path} (needs sudo for system path)"
+                elif tm_is_excluded "$extra_path"; then
+                    TOTAL_ALREADY=$((TOTAL_ALREADY + 1))
+                    add_report_line "OK    ${extra_path} (excluded)"
+                else
+                    TOTAL_EXCLUDED=$((TOTAL_EXCLUDED + 1))
+                    add_report_line "NEED  ${extra_path} (not excluded)"
+                fi
+            fi
+        else
+            apply_exclusion "$extra_path"
+        fi
+    done <<EOF
+${EXTRA_PATHS}
 EOF
 }
 
@@ -627,11 +922,76 @@ generate_report() {
     local report=""
     local dry_run_note=""
     local excluded_label="${MSG_REPORT_EXCLUDED}"
+    local inv du_sec tm_list out_path path_total path_dirs p szk sh total_k desk_copy raw_list
+
     if [ "${DRY_RUN}" -eq 1 ]; then
         dry_run_note=" (dry-run)"
         excluded_label="${MSG_REPORT_WOULD_EXCLUDE}"
+    elif [[ "${MODE}" = "report-only" ]]; then
+        excluded_label="${MSG_REPORT_NEED_EXCLUSION}"
     fi
+
+    inv="
+=== Inventory (informational) ==="
+    if [[ "${TM_EXCLUSIONS_SKIP_INVENTORY:-}" = "1" ]]; then
+        inv="${inv}
+(skipped: TM_EXCLUSIONS_SKIP_INVENTORY=1)"
+    else
+        if [[ -d /Applications ]]; then
+            inv="${inv}
+/Applications (top-level): $(find /Applications -maxdepth 1 -mindepth 1 2>/dev/null | wc -l | tr -d '[:space:]')"
+        fi
+        if command -v brew >/dev/null 2>&1; then
+            inv="${inv}
+Homebrew formulas: $(brew list --formula 2>/dev/null | wc -l | tr -d '[:space:]')"
+            inv="${inv}
+Homebrew casks: $(brew list --cask 2>/dev/null | wc -l | tr -d '[:space:]')"
+        fi
+        path_total="$(printf '%s' "${PATH:-}" | awk -F: '{print NF}')"
+        path_dirs=0
+        local oifs="${IFS}"
+        IFS=':'
+        for p in ${PATH:-}; do
+            [[ -d "$p" ]] && path_dirs=$((path_dirs + 1))
+        done
+        IFS="${oifs}"
+        inv="${inv}
+PATH: ${path_dirs} existing directories (of ${path_total} colon-separated entries)"
+    fi
+
+    du_sec=""
+    if [[ -n "${DU_PATHS}" ]]; then
+        du_sec="
+=== Disk usage (paths touched in this run, present on disk) ==="
+        total_k=0
+        while IFS= read -r p; do
+            [[ -z "$p" || ! -e "$p" ]] && continue
+            szk="$(du -sk "$p" 2>/dev/null | awk '{print $1}')"
+            [[ -z "$szk" ]] && continue
+            total_k=$((total_k + szk))
+            sh="$(awk -v k="$szk" 'BEGIN {
+                if (k < 1024) { printf "%dK", k; exit }
+                x = k / 1024.0
+                if (x < 1024) { printf "%.1fM", x; exit }
+                x = x / 1024.0
+                if (x < 1024) { printf "%.1fG", x; exit }
+                x = x / 1024.0
+                printf "%.1fT", x
+            }')"
+            du_sec="${du_sec}
+${sh}	${p}"
+        done <<EOF
+${DU_PATHS}
+EOF
+        du_sec="${du_sec}
+Total (sum of du -sk, KiB): ${total_k}
+"
+    fi
+
     report="${MSG_REPORT_TITLE}
+Host: $(hostname 2>/dev/null || echo unknown)
+User: $(id -un 2>/dev/null || echo unknown)
+${PROGRAM_NAME} ${VERSION}
 Date: $(date '+%Y-%m-%d %H:%M:%S')
 Mode: ${MODE}${dry_run_note}
 
@@ -646,6 +1006,13 @@ ${MSG_REPORT_ERRORS} ${TOTAL_ERRORS}"
 ${MSG_REPORT_REMOVED} ${TOTAL_REMOVED}"
     fi
 
+    report="${report}
+${inv}"
+
+    if [[ -n "${du_sec}" ]]; then
+        report="${report}${du_sec}"
+    fi
+
     if [[ -n "${REPORT_LINES}" ]]; then
         report="${report}
 
@@ -653,14 +1020,34 @@ Details:
 ${REPORT_LINES}"
     fi
 
+    tm_list=""
+    if [[ "${HAS_TMUTIL}" -eq 1 ]]; then
+        raw_list="$( { tmutil listexclusions 2>/dev/null || true; } | head -n 500)" || raw_list=""
+        tm_list="
+=== tmutil listexclusions (first 500 lines) ===
+${raw_list}"
+    fi
+    report="${report}${tm_list}"
+
     echo ""
     echo "$report"
 
-    # Save report to file
-    mkdir -p "${CUSTOM_CONF_DIR}" 2>/dev/null || true
-    echo "$report" > "${REPORT_FILE}" 2>/dev/null || true
+    out_path="${REPORT_FILE}"
+    if [[ -n "${TM_EXCLUSIONS_REPORT:-}" ]]; then
+        out_path="${TM_EXCLUSIONS_REPORT}"
+    fi
+
+    mkdir -p "$(dirname "${out_path}")" 2>/dev/null || true
+    echo "$report" > "${out_path}" 2>/dev/null || true
     log_info ""
-    log_info "${MSG_REPORT_SAVED} ${REPORT_FILE}"
+    log_info "${MSG_REPORT_SAVED} ${out_path}"
+
+    if [[ "${TM_EXCLUSIONS_REPORT_DESKTOP:-}" = "1" ]]; then
+        desk_copy="${HOME}/Desktop/tm-exclusions_last_report.txt"
+        mkdir -p "${HOME}/Desktop" 2>/dev/null || true
+        echo "$report" > "${desk_copy}" 2>/dev/null || true
+        log_info "${MSG_REPORT_DESKTOP_COPY} ${desk_copy}"
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -682,6 +1069,7 @@ show_help() {
     echo "${MSG_HELP_LANG}"
     echo "${MSG_HELP_VERSION}"
     echo "${MSG_HELP_HELP}"
+    echo "${MSG_HELP_HELP_SHORT}"
     echo ""
     echo "${MSG_HELP_CONFIG}"
     echo "${MSG_HELP_ADD}"
@@ -702,7 +1090,7 @@ show_version() {
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --help)
+            --help|-h)
                 CONFIG_CMD="help"
                 return 0
                 ;;
@@ -817,6 +1205,12 @@ main() {
     # Parse arguments fully
     parse_args "$@"
 
+    case "${CONFIG_CMD}" in
+        add|list|edit|"")
+            ensure_custom_conf_exists
+            ;;
+    esac
+
     # Handle config/info commands
     case "${CONFIG_CMD}" in
         help)
@@ -845,11 +1239,32 @@ main() {
             ;;
     esac
 
+    trap 'sudo_keepalive_stop' EXIT
+
+    if [[ -n "${TM_EXCLUSIONS_DEBUG_FIFO:-}" ]]; then
+        # FIFO: open read+write so open(2) does not block waiting for a separate reader.
+        if [[ -p "${TM_EXCLUSIONS_DEBUG_FIFO}" ]]; then
+            if exec 5<>"${TM_EXCLUSIONS_DEBUG_FIFO}"; then
+                DEBUG_LOG_FD=1
+            else
+                DEBUG_LOG_FD=0
+            fi
+        else
+            if exec 5>>"${TM_EXCLUSIONS_DEBUG_FIFO}"; then
+                DEBUG_LOG_FD=1
+            else
+                DEBUG_LOG_FD=0
+            fi
+        fi
+    fi
+
     # Check environment
     check_environment
 
     # Load config
     load_config
+
+    collect_post_scan_paths
 
     # Execute based on mode
     case "${MODE}" in
@@ -860,6 +1275,7 @@ main() {
             fi
             apply_static_paths
             scan_dynamic_patterns
+            apply_extra_paths
             generate_report
             log_info ""
             log_info "${MSG_UNINSTALL_DONE}"
@@ -867,11 +1283,13 @@ main() {
         report-only)
             apply_static_paths
             scan_dynamic_patterns
+            apply_extra_paths
             generate_report
             ;;
         apply|*)
             apply_static_paths
             scan_dynamic_patterns
+            apply_extra_paths
             generate_report
             ;;
     esac

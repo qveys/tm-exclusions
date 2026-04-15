@@ -7,6 +7,8 @@ set -euo pipefail
 
 export LANG=C
 export LC_ALL=C
+# Avoid slow brew enumeration during report smoke (inventory is optional detail)
+export TM_EXCLUSIONS_SKIP_INVENTORY=1
 
 TEST_HOME="$(mktemp -d)"
 trap 'rm -rf "${TEST_HOME}"' EXIT
@@ -30,6 +32,14 @@ assert_exit_code 0 \
 assert_output_contains "Usage:" \
     "--help shows usage line" \
     bash "$TM_EXCLUSIONS" --help
+
+assert_exit_code 0 \
+    "-h exits 0 (alias for --help)" \
+    bash "$TM_EXCLUSIONS" -h
+
+assert_output_contains "Usage:" \
+    "-h shows usage line" \
+    bash "$TM_EXCLUSIONS" -h
 
 assert_output_contains "dry-run" \
     "--help mentions dry-run" \
@@ -102,6 +112,59 @@ assert_exit_code 0 \
 assert_output_contains "Report" \
     "--report-only generates a report" \
     bash "$TM_EXCLUSIONS" --report-only
+
+assert_output_contains "Host:" \
+    "--report-only report includes host header" \
+    bash "$TM_EXCLUSIONS" --report-only
+
+assert_output_contains "Inventory" \
+    "--report-only report includes inventory section" \
+    bash "$TM_EXCLUSIONS" --report-only
+
+assert_output_contains "Paths not yet excluded" \
+    "--report-only summary labels NEED paths correctly" \
+    bash "$TM_EXCLUSIONS" --report-only
+
+# ---- Report env (TM_EXCLUSIONS_REPORT*) ----
+echo ""
+echo "--- TM_EXCLUSIONS_REPORT ---"
+
+REPORT_OUT="${TEST_HOME}/tm_exclusions_ci_report.txt"
+rm -f "${REPORT_OUT}"
+assert_exit_code 0 \
+    "TM_EXCLUSIONS_REPORT dry-run writes file" \
+    env TM_EXCLUSIONS_REPORT="${REPORT_OUT}" bash "$TM_EXCLUSIONS" --dry-run
+
+if [[ ! -f "${REPORT_OUT}" ]]; then
+    TESTS_RUN=$((TESTS_RUN + 1))
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b TM_EXCLUSIONS_REPORT file missing\n' "$RED" "$NC"
+else
+    TESTS_RUN=$((TESTS_RUN + 1))
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b TM_EXCLUSIONS_REPORT file created\n' "$GREEN" "$NC"
+fi
+
+assert_output_contains "Host:" \
+    "TM_EXCLUSIONS_REPORT file contains report header" \
+    cat "${REPORT_OUT}"
+
+mkdir -p "${TEST_HOME}/Desktop"
+DESK_COPY="${TEST_HOME}/Desktop/tm-exclusions_last_report.txt"
+rm -f "${DESK_COPY}"
+assert_exit_code 0 \
+    "TM_EXCLUSIONS_REPORT_DESKTOP=1 writes Desktop copy" \
+    env TM_EXCLUSIONS_REPORT_DESKTOP=1 bash "$TM_EXCLUSIONS" --dry-run
+
+if [[ ! -f "${DESK_COPY}" ]]; then
+    TESTS_RUN=$((TESTS_RUN + 1))
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b Desktop report copy missing\n' "$RED" "$NC"
+else
+    TESTS_RUN=$((TESTS_RUN + 1))
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b Desktop report copy created\n' "$GREEN" "$NC"
+fi
 
 # ---- Quiet mode ----
 echo ""
@@ -231,6 +294,34 @@ echo "--- Parity placeholders (epic #34) ---"
 assert_output_contains "tm-exclusions" \
     "--version stable for packaging smoke" \
     bash "$TM_EXCLUSIONS" --version
+
+# ---- Auto-init custom.conf on first run (#34) ----
+echo ""
+echo "--- Auto-init custom.conf ---"
+
+AUTO_HOME="$(mktemp -d)"
+export HOME="${AUTO_HOME}"
+MINIMAL_CONF="${AUTO_HOME}/minimal.conf"
+cat > "${MINIMAL_CONF}" << 'EOF'
+path|/tmp/tm_exclusions_auto_init_path|smoke auto-init path
+EOF
+
+assert_exit_code 0 \
+    "dry-run without prior --init creates custom.conf" \
+    env TM_EXCLUSIONS_DEFAULT_CONF="${MINIMAL_CONF}" bash "$TM_EXCLUSIONS" --dry-run
+
+if [[ ! -f "${AUTO_HOME}/.config/tm_exclusions/custom.conf" ]]; then
+    TESTS_RUN=$((TESTS_RUN + 1))
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b custom.conf missing after first dry-run\n' "$RED" "$NC"
+else
+    TESTS_RUN=$((TESTS_RUN + 1))
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b custom.conf exists after first dry-run\n' "$GREEN" "$NC"
+fi
+
+rm -rf "${AUTO_HOME}"
+export HOME="${TEST_HOME}"
 
 # ---- Summary ----
 test_summary

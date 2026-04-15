@@ -21,7 +21,9 @@ One command. Safe to rerun. No dependencies beyond stock macOS.
 - **Idempotent** — safe to run repeatedly
 - **Multilingual** — English and French output
 - **Config management** — add custom rules, init/list/edit config
-- **Human-readable reports** saved after each run
+- **Human-readable reports** after each run (host/user/version, optional inventory, `du` summary, `tmutil listexclusions` excerpt)
+
+Optional environment variables (see **`docs/ARCHITECTURE.md`**): `TM_EXCLUSIONS_REPORT`, `TM_EXCLUSIONS_REPORT_DESKTOP`, `TM_EXCLUSIONS_SKIP_INVENTORY`, `TM_EXCLUSIONS_DEBUG_FIFO`.
 
 ### Covered Ecosystems
 
