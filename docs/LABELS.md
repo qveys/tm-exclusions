@@ -9,7 +9,7 @@ Total: `45` labels.
 ## Auto-labeling
 
 - PRs: `actions/labeler` lit [`.github/labeler.yml`](../.github/labeler.yml) et ajoute **tous** les labels `🧩 Area:*` dont les globs matchent les fichiers modifiés. `sync-labels` est désactivé pour ne pas retirer les autres labels (Types, priorités, etc.) que le labeler ne connaît pas.
-- Issues et PRs: le job `classify-by-reference` charge le catalogue depuis ce fichier (`docs/LABELS.md`) et résout dynamiquement les labels (emoji inclus), sans noms codés en dur dans le workflow. Il ajoute autant de labels pertinents que nécessaire sur `Area`, `Type`, `Status`, `Effort`, `Source` et `Ecosystem`, sans supprimer les labels existants.
+- Issues et PRs: le job `classify-by-reference` charge le catalogue depuis ce fichier (`docs/LABELS.md`) et résout dynamiquement les labels (emoji inclus), sans noms codés en dur dans le workflow. Il ajoute autant de labels pertinents que nécessaire sur `Area`, `Type`, `Status`, `Priority`, `Effort`, `Source` et `Ecosystem`. Pour **Priority**, au plus un label `🔥 Priority:*` est conservé (le plus fort parmi les correspondances) : les autres `Priority` déjà présents sont retirés avant d’ajouter le nouveau. Les autres familles ne sont pas retirées automatiquement.
 
 ## Classification Rules (machine-readable)
 
@@ -28,7 +28,7 @@ Schema:
     "Area": {
       "match": "any",
       "rules": [
-        { "suffix": "CI", "patterns": ["\\.github\\b", "(^|/)workflows?/", "\\b(ci|pipeline|github actions?|actions/)\\b"] },
+        { "suffix": "CI", "patterns": ["\\.github\\b", "(^|/)workflows?/", "\\b(ci|pipeline|github actions?)\\b", "\\bactions\\/?"] },
         { "suffix": "Tests", "patterns": ["(^|/)tests?/", "\\b(test|spec|coverage|smoke|bats)\\b"] },
         { "suffix": "Core", "patterns": ["\\btm_exclusions\\.sh\\b", "\\btm-exclusions\\b", "\\b(cli|runtime|shell script|bash script)\\b"] },
         { "suffix": "Config", "patterns": ["(^|/)config/", "\\b(default\\.conf|configuration|settings?)\\b"] },
@@ -40,9 +40,9 @@ Schema:
     "Type": {
       "match": "any",
       "rules": [
-        { "suffix": "Security", "patterns": ["\\b(security|vulnerabilit|cve|hardening|permission|privilege|sandbox)\\b"] },
+        { "suffix": "Security", "patterns": ["\\b(security|vulnerabilit[a-z]*|cve|hardening|permission|privilege|sandbox)\\b"] },
         { "suffix": "Bug", "patterns": ["\\b(bug|broken|regression|crash|doesn'?t work|does not work|error|hotfix|fix)\\b"] },
-        { "suffix": "Breaking Change", "patterns": ["\\b(breaking|incompatible|semver major|bc[!:])\\b"] },
+        { "suffix": "Breaking Change", "patterns": ["\\b(breaking|incompatible|semver major)\\b", "\\bbc[!:]"] },
         { "suffix": "Feature", "patterns": ["\\b(feature|new mode|new option|implement support|user story)\\b"] },
         { "suffix": "Enhancement", "patterns": ["\\b(enhancement|improvement|polish|incremental)\\b"] },
         { "suffix": "Documentation", "patterns": ["\\b(documentation|doc update|readme|guide)\\b"] },
@@ -52,7 +52,7 @@ Schema:
         { "suffix": "Performance", "patterns": ["\\b(performance|perf|slow|faster|optimi[sz]e|latency|speed)\\b"] },
         { "suffix": "Refactor", "patterns": ["\\b(refactor|cleanup|reorganize|rename)\\b"] },
         { "suffix": "Chore", "patterns": ["\\b(chore|maintenance|housekeeping|format|lint|prettier|whitespace)\\b"] },
-        { "suffix": "Question", "patterns": ["\\b(question|how (do|to|can)|is it possible|clarif)\\b", "\\?\\s*$"] }
+        { "suffix": "Question", "patterns": ["\\b(question|how (do|to|can)|is it possible|clarif[a-z]*)\\b", "\\?\\s*$"] }
       ]
     },
     "Status": {
@@ -70,13 +70,70 @@ Schema:
         { "suffix": "Won't Fix", "patterns": ["\\b(won't fix|wont fix|not planned)\\b"] }
       ]
     },
+    "Priority": {
+      "match": "first",
+      "rules": [
+        {
+          "suffix": "Critical",
+          "patterns": [
+            "\\b(P0|blocker|critical|severity\\s*0|data\\s*loss|production\\s+down)\\b",
+            "(^|\\W)(bloquant|perte\\s+de\\s+données|sécurité\\s+critique|régression\\s+bloquante|urgence\\s+maximale)(\\W|$)"
+          ]
+        },
+        {
+          "suffix": "High",
+          "patterns": [
+            "\\b(high\\s+priority|P1|asap)\\b",
+            "(^|\\W)(haute\\s+priorité|priorité\\s+haute|à\\s+traiter\\s+vite)(\\W|$)"
+          ]
+        },
+        {
+          "suffix": "Medium",
+          "patterns": [
+            "\\b(medium\\s+priority|P2|normal\\s+priority)\\b",
+            "(^|\\W)(priorité\\s+moyenne|priorité\\s+normale|planifié)(\\W|$)"
+          ]
+        },
+        {
+          "suffix": "Low",
+          "patterns": [
+            "\\b(low\\s+priority|P3|nice\\s+to\\s+have|cosmetic)\\b",
+            "(^|\\W)(basse\\s+priorité|priorité\\s+basse|pas\\s+urgent|quand\\s+possible|cosmétique)(\\W|$)"
+          ]
+        }
+      ]
+    },
     "Effort": {
       "match": "first",
       "rules": [
-        { "suffix": "X-Large", "patterns": ["\\b(x-large|xl|extra large|multiple weeks)\\b"] },
-        { "suffix": "Large", "patterns": ["\\b(large|big|significant|about a week)\\b"] },
-        { "suffix": "Medium", "patterns": ["\\b(medium|moderate|few days)\\b"] },
-        { "suffix": "Small", "patterns": ["\\b(small|quick fix|few hours|minor)\\b"] }
+        {
+          "suffix": "X-Large",
+          "patterns": [
+            "\\b(x-large|xl|extra large|multiple weeks)\\b",
+            "\\b(plusieurs\\s+semaines|très\\s+volumineux)\\b"
+          ]
+        },
+        {
+          "suffix": "Large",
+          "patterns": [
+            "\\b(large|big|significant|about a week)\\b",
+            "\\b(environ\\s+une\\s+semaine|gros\\s+chantier|effort\\s+important)\\b"
+          ]
+        },
+        {
+          "suffix": "Medium",
+          "patterns": [
+            "\\b(medium|moderate|few days)\\b",
+            "(^|\\W)(quelques\\s+jours|effort\\s+moyen|modéré)(\\W|$)"
+          ]
+        },
+        {
+          "suffix": "Small",
+          "patterns": [
+            "\\b(small|quick fix|few hours|minor)\\b",
+            "\\b(quelques\\s+heures|petit\\s+correctif|correctif\\s+rapide|tâche\\s+mineure)\\b"
+          ]
+        }
       ]
     }
   },
@@ -93,7 +150,7 @@ Schema:
     },
     {
       "when": "text_matches",
-      "patterns": ["\\b(github actions?|actions/)\\b"],
+      "patterns": ["\\b(github actions?|actions)\\/?"],
       "label": { "prefix": "Ecosystem", "suffix": "github-actions" }
     }
   ]
