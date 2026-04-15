@@ -121,6 +121,51 @@ assert_output_contains "Inventory" \
     "--report-only report includes inventory section" \
     bash "$TM_EXCLUSIONS" --report-only
 
+assert_output_contains "Paths not yet excluded" \
+    "--report-only summary labels NEED paths correctly" \
+    bash "$TM_EXCLUSIONS" --report-only
+
+# ---- Report env (TM_EXCLUSIONS_REPORT*) ----
+echo ""
+echo "--- TM_EXCLUSIONS_REPORT ---"
+
+REPORT_OUT="${TEST_HOME}/tm_exclusions_ci_report.txt"
+rm -f "${REPORT_OUT}"
+assert_exit_code 0 \
+    "TM_EXCLUSIONS_REPORT dry-run writes file" \
+    env TM_EXCLUSIONS_REPORT="${REPORT_OUT}" bash "$TM_EXCLUSIONS" --dry-run
+
+if [[ ! -f "${REPORT_OUT}" ]]; then
+    TESTS_RUN=$((TESTS_RUN + 1))
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b TM_EXCLUSIONS_REPORT file missing\n' "$RED" "$NC"
+else
+    TESTS_RUN=$((TESTS_RUN + 1))
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b TM_EXCLUSIONS_REPORT file created\n' "$GREEN" "$NC"
+fi
+
+assert_output_contains "Host:" \
+    "TM_EXCLUSIONS_REPORT file contains report header" \
+    cat "${REPORT_OUT}"
+
+mkdir -p "${TEST_HOME}/Desktop"
+DESK_COPY="${TEST_HOME}/Desktop/tm-exclusions_last_report.txt"
+rm -f "${DESK_COPY}"
+assert_exit_code 0 \
+    "TM_EXCLUSIONS_REPORT_DESKTOP=1 writes Desktop copy" \
+    env TM_EXCLUSIONS_REPORT_DESKTOP=1 bash "$TM_EXCLUSIONS" --dry-run
+
+if [[ ! -f "${DESK_COPY}" ]]; then
+    TESTS_RUN=$((TESTS_RUN + 1))
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b Desktop report copy missing\n' "$RED" "$NC"
+else
+    TESTS_RUN=$((TESTS_RUN + 1))
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b Desktop report copy created\n' "$GREEN" "$NC"
+fi
+
 # ---- Quiet mode ----
 echo ""
 echo "--- Quiet mode ---"

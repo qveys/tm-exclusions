@@ -16,10 +16,10 @@ main()
   ├── load_config()
   │   ├── parse_config_file(default.conf)
   │   └── parse_config_file(custom.conf)  [merged]
-  ├── apply_static_paths()     ← process 'path' entries
-  ├── scan_dynamic_patterns()  ← process 'pattern' entries with find
-  ├── collect_post_scan_paths()  ← brew --cache + large VM/disk images under $HOME / ~/Library
-  ├── apply_extra_paths()      ← apply discovered paths like static rules
+  ├── collect_post_scan_paths()  ← brew --cache + large VM/disk images (deduped list)
+  ├── apply_static_paths()       ← process 'path' entries
+  ├── scan_dynamic_patterns()    ← process 'pattern' entries with find
+  ├── apply_extra_paths()        ← apply paths from collect_post_scan_paths()
   └── generate_report()
 ```
 
@@ -95,20 +95,20 @@ After processing all paths, a human-readable report is printed and saved to `~/.
 |----------|--------|
 | `TM_EXCLUSIONS_REPORT` | Absolute or relative path for the saved report file instead of `~/.config/tm_exclusions/last_report.txt` |
 | `TM_EXCLUSIONS_REPORT_DESKTOP=1` | Also write `~/Desktop/tm-exclusions_last_report.txt` |
-| `TM_EXCLUSIONS_DEBUG_FIFO` | If set to a path, append the same `log_info` lines to **FD 5**. For a **named FIFO**, a background `cat` opens the read end first so opening FD 5 for write does not hang; use a regular file if you prefer no extra process. |
+| `TM_EXCLUSIONS_DEBUG_FIFO` | If set to a path, append the same `log_info` lines to **FD 5**. For a **named FIFO**, the script opens **read+write** (`exec 5<>`) so `open` does not block waiting for another process; regular files use append-only open. |
 
 ## First-run custom config
 
 Before normal runs (default apply, `--dry-run`, `--report-only`, `--uninstall`) and before `--add` / `--list` / `--edit`, the tool ensures `~/.config/tm_exclusions/` exists and creates **`custom.conf`** from the same template as `--init` if the file is missing. This matches legacy “auto init” behavior.
 
-## Post-scan discovered paths
+## Discovered extra paths (`collect_post_scan_paths`)
 
-After dynamic pattern scanning, the tool may append:
+Immediately after **`load_config()`** (and before static paths / dynamic scan), the tool builds **`EXTRA_PATHS`**:
 
 - **`brew --cache`** when `brew` is on `PATH` and the cache directory exists
-- Large virtual-disk files under `$HOME` and `~/Library` (e.g. `.vmdk`, `.qcow2`, `.sparsebundle` over ~512 MiB), pruning iCloud “Mobile Documents” trees to avoid shortcut churn
+- Large disk images under **`$HOME`** in one `find` pass (covers `~/Library` too): files matching `.vmdk`, `.qcow2`, `.raw`, `.img` over **512 MiB** (`find -size +512M`), and **`.sparsebundle` directory bundles** (`-type d`), pruning iCloud “Mobile Documents” trees
 
-These are processed like extra static paths (`apply_extra_paths`).
+Paths are **deduplicated** before `apply_extra_paths()` runs (after the pattern scan), which applies them like extra static rules.
 
 ## Uninstall Behavior
 

@@ -13,6 +13,9 @@ All notable changes to this project will be documented in this file.
 - After pattern scan: apply `brew --cache` when `brew` exists; scan for large VM / container disk files under `$HOME` / `~/Library` (excluding iCloud shortcut trees).
 - Report: host, user, version; inventory block (Applications / Homebrew / PATH stats); `du` summary for paths touched; append `tmutil listexclusions` (first 500 lines) when `tmutil` is available. Env: `TM_EXCLUSIONS_REPORT`, `TM_EXCLUSIONS_REPORT_DESKTOP`, `TM_EXCLUSIONS_SKIP_INVENTORY`, `TM_EXCLUSIONS_DEBUG_FIFO`.
 - First run of apply-like modes (and `--add` / `--list` / `--edit`) auto-creates `custom.conf` from the `--init` template if missing.
+- Report-only: summary line for “not excluded” paths reads as **action needed**, not “newly excluded”; **Skipped:** label covers privileged skips and missing paths.
+- `collect_post_scan_paths`: dedupe `EXTRA_PATHS`; **`find -size +512M`** (portable suffix); **`.sparsebundle`** matched as **directories**; **`worktrees`** glob matches `.git/worktrees` root.
+- Debug FIFO: open with **`exec 5<>`** (read+write) so named pipes do not block on open.
 
 ### Default rules
 

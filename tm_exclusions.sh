@@ -92,8 +92,9 @@ declare_i18n_en() {
     MSG_REPORT_CHECKED="Paths checked:"
     MSG_REPORT_EXCLUDED="Newly excluded:"
     MSG_REPORT_WOULD_EXCLUDE="Would exclude:"
+    MSG_REPORT_NEED_EXCLUSION="Paths not yet excluded (action needed):"
     MSG_REPORT_ALREADY="Already excluded:"
-    MSG_REPORT_SKIPPED="Skipped (not found):"
+    MSG_REPORT_SKIPPED="Skipped:"
     MSG_REPORT_ERRORS="Errors:"
     MSG_REPORT_REMOVED="Removed:"
     MSG_REPORT_SAVED="Report saved to:"
@@ -151,8 +152,9 @@ declare_i18n_fr() {
     MSG_REPORT_CHECKED="Chemins vérifiés :"
     MSG_REPORT_EXCLUDED="Nouvellement exclus :"
     MSG_REPORT_WOULD_EXCLUDE="Seraient exclus :"
+    MSG_REPORT_NEED_EXCLUSION="Chemins pas encore exclus (action requise) :"
     MSG_REPORT_ALREADY="Déjà exclus :"
-    MSG_REPORT_SKIPPED="Ignorés (non trouvés) :"
+    MSG_REPORT_SKIPPED="Ignorés :"
     MSG_REPORT_ERRORS="Erreurs :"
     MSG_REPORT_REMOVED="Supprimés :"
     MSG_REPORT_SAVED="Rapport sauvegardé dans :"
@@ -306,7 +308,7 @@ pattern_match_allowed() {
             ;;
         worktrees)
             case "$dir" in
-                */.git/worktrees/*|*/.cursor/*) return 0 ;;
+                */.git/worktrees|*/.git/worktrees/*|*/.cursor/*) return 0 ;;
             esac
             if [[ -f "${parent}/HEAD" && ( -d "${parent}/worktrees" || -f "${parent}/commondir" ) ]]; then
                 return 0
@@ -832,6 +834,21 @@ ${CONF_PATHS}
 EOF
 }
 
+# Append one path to EXTRA_PATHS if not already listed (Bash 3.2 — no associative arrays)
+extra_paths_append() {
+    local x="$1"
+    [[ -z "$x" ]] && return 0
+    if [[ -n "${EXTRA_PATHS}" ]] && printf '%s\n' "${EXTRA_PATHS}" | grep -Fqx "$x" 2>/dev/null; then
+        return 0
+    fi
+    if [[ -z "${EXTRA_PATHS}" ]]; then
+        EXTRA_PATHS="$x"
+    else
+        EXTRA_PATHS="${EXTRA_PATHS}
+$x"
+    fi
+}
+
 collect_post_scan_paths() {
     EXTRA_PATHS=""
     local line tmp
@@ -839,23 +856,22 @@ collect_post_scan_paths() {
     if command -v brew >/dev/null 2>&1; then
         line="$(brew --cache 2>/dev/null)" || line=""
         if [[ -n "$line" && -e "$line" ]]; then
-            EXTRA_PATHS="$line"
+            extra_paths_append "$line"
         fi
     fi
 
     tmp="$(mktemp "${TMPDIR:-/tmp}/tm_exc_disk.XXXXXX")"
-    # One tree walk from $HOME covers ~/Library; cap matches for speed
+    # One tree walk from $HOME covers ~/Library. BSD/GNU find: uppercase M for megabytes.
+    # .sparsebundle is a directory bundle on macOS — match with -type d; other images as files.
     find "$HOME" \( -path '*/Mobile Documents/*' -o -path '*/Library/Mobile Documents/*' \) -prune -o \
-        \( -type f \( -name '*.vmdk' -o -name '*.qcow2' -o -name '*.raw' -o -name '*.img' -o -name '*.sparsebundle' \) -size +512m \) -print 2>/dev/null | head -n 50 >>"$tmp" || true
+        \( \
+            \( -type f \( -name '*.vmdk' -o -name '*.qcow2' -o -name '*.raw' -o -name '*.img' \) -size +512M \) \
+            -o \( -type d -name '*.sparsebundle' \) \
+        \) -print 2>/dev/null | head -n 50 >>"$tmp" || true
 
     while IFS= read -r line || [[ -n "$line" ]]; do
         [[ -z "$line" ]] && continue
-        if [[ -z "${EXTRA_PATHS}" ]]; then
-            EXTRA_PATHS="$line"
-        else
-            EXTRA_PATHS="${EXTRA_PATHS}
-$line"
-        fi
+        extra_paths_append "$line"
     done < "$tmp"
     rm -f "$tmp"
 }
@@ -912,6 +928,8 @@ generate_report() {
     if [ "${DRY_RUN}" -eq 1 ]; then
         dry_run_note=" (dry-run)"
         excluded_label="${MSG_REPORT_WOULD_EXCLUDE}"
+    elif [[ "${MODE}" = "report-only" ]]; then
+        excluded_label="${MSG_REPORT_NEED_EXCLUSION}"
     fi
 
     inv="
@@ -1225,14 +1243,19 @@ main() {
     trap 'sudo_keepalive_stop' EXIT
 
     if [[ -n "${TM_EXCLUSIONS_DEBUG_FIFO:-}" ]]; then
-        # Opening a FIFO for write blocks until a reader exists — drain in background first.
+        # FIFO: open read+write so open(2) does not block waiting for a separate reader.
         if [[ -p "${TM_EXCLUSIONS_DEBUG_FIFO}" ]]; then
-            cat "${TM_EXCLUSIONS_DEBUG_FIFO}" >/dev/null &
-        fi
-        if exec 5>>"${TM_EXCLUSIONS_DEBUG_FIFO}"; then
-            DEBUG_LOG_FD=1
+            if exec 5<>"${TM_EXCLUSIONS_DEBUG_FIFO}"; then
+                DEBUG_LOG_FD=1
+            else
+                DEBUG_LOG_FD=0
+            fi
         else
-            DEBUG_LOG_FD=0
+            if exec 5>>"${TM_EXCLUSIONS_DEBUG_FIFO}"; then
+                DEBUG_LOG_FD=1
+            else
+                DEBUG_LOG_FD=0
+            fi
         fi
     fi
 
