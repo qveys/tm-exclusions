@@ -149,6 +149,10 @@ assert_output_contains "Host:" \
     "TM_EXCLUSIONS_REPORT file contains report header" \
     cat "${REPORT_OUT}"
 
+assert_output_contains "TM_EXCLUSIONS_SKIP_DU=1" \
+    "TM_EXCLUSIONS_SKIP_DU=1 skips du section in report output" \
+    env TM_EXCLUSIONS_SKIP_DU=1 bash "$TM_EXCLUSIONS" --dry-run
+
 mkdir -p "${TEST_HOME}/Desktop"
 DESK_COPY="${TEST_HOME}/Desktop/tm-exclusions_last_report.txt"
 rm -f "${DESK_COPY}"
