@@ -50,6 +50,23 @@ cd tm-exclusions
 make install
 ```
 
+### Homebrew
+
+After the formula is published in [qveys/homebrew-tools](https://github.com/qveys/homebrew-tools) (updated automatically on each **`v*`** tag when `HOMEBREW_TAP_TOKEN` is configured):
+
+```bash
+brew tap qveys/homebrew-tools
+brew install tm-exclusions
+```
+
+From a git checkout you can install the local formula (macOS):
+
+```bash
+brew install --formula ./Formula/tm-exclusions.rb
+```
+
+See **`docs/PACKAGING.md`** for Makefile vs Homebrew layout and tap sync.
+
 Or run directly without installing:
 
 ```bash
