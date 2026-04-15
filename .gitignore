@@ -26,3 +26,6 @@ last_report.txt
 # Claude Code internals
 .claude-flow/
 docs/superpowers/
+
+# Aperant data directory
+.auto-claude/
