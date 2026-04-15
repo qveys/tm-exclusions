@@ -864,10 +864,9 @@ collect_post_scan_paths() {
     # One tree walk from $HOME covers ~/Library. BSD/GNU find: uppercase M for megabytes.
     # .sparsebundle is a directory bundle on macOS — match with -type d; other images as files.
     find "$HOME" \( -path '*/Mobile Documents/*' -o -path '*/Library/Mobile Documents/*' \) -prune -o \
-        \( \
-            \( -type f \( -name '*.vmdk' -o -name '*.qcow2' -o -name '*.raw' -o -name '*.img' \) -size +512M \) \
-            -o \( -type d -name '*.sparsebundle' \) \
-        \) -print 2>/dev/null | head -n 50 >>"$tmp" || true
+        \( -type d -name '*.sparsebundle' -prune -print \) -o \
+        \( -type f \( -name '*.vmdk' -o -name '*.qcow2' -o -name '*.raw' -o -name '*.img' \) -size +512M -print \) \
+        2>/dev/null | head -n 50 >>"$tmp" || true
 
     while IFS= read -r line || [[ -n "$line" ]]; do
         [[ -z "$line" ]] && continue
