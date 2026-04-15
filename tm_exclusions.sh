@@ -14,7 +14,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-readonly VERSION="1.0.0"
+readonly VERSION="1.1.0"
 readonly PROGRAM_NAME="tm-exclusions"
 readonly CUSTOM_CONF="${HOME}/.config/tm_exclusions/custom.conf"
 readonly REPORT_FILE="${HOME}/.config/tm_exclusions/last_report.txt"
