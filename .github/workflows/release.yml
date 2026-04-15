@@ -1,0 +1,78 @@
+name: Release
+
+# On tag v*, create/update GitHub Release and bump Formula/tm-exclusions.rb in qveys/homebrew-tools.
+# Repository secret: HOMEBREW_TAP_TOKEN — PAT with repo scope on qveys/homebrew-tools
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "tm-exclusions $TAG"
+          else
+            gh release create "$TAG" --title "tm-exclusions $TAG" --generate-notes
+          fi
+
+      - name: Compute tarball SHA256
+        id: sha256
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          URL="https://github.com/${REPO}/archive/refs/tags/${TAG}.tar.gz"
+          curl --fail --retry 5 --retry-delay 3 -sSL "$URL" -o release.tar.gz
+          SHA256="$(sha256sum release.tar.gz | awk '{print $1}')"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+
+      - name: Update Homebrew tap
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+          URL: ${{ steps.sha256.outputs.url }}
+          SHA256: ${{ steps.sha256.outputs.sha256 }}
+        run: |
+          if [ -z "${HOMEBREW_TAP_TOKEN:-}" ]; then
+            echo "HOMEBREW_TAP_TOKEN not set; skipping tap bump."
+            exit 0
+          fi
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/qveys/homebrew-tools.git" tap
+          cd tap
+          test -f Formula/tm-exclusions.rb || { echo "ERROR: Formula/tm-exclusions.rb missing in tap"; exit 1; }
+          sed -i "s|^  url \".*\"|  url \"${URL}\"|" Formula/tm-exclusions.rb
+          sed -i "s|^  sha256 \".*\"|  sha256 \"${SHA256}\"|" Formula/tm-exclusions.rb
+          sed -i "s|^  version \".*\"|  version \"${VERSION}\"|" Formula/tm-exclusions.rb
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/tm-exclusions.rb
+          git diff --staged --quiet && echo "No formula changes" && exit 0
+          git commit -m "Update tm-exclusions to ${TAG}"
+          git push
