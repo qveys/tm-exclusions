@@ -241,7 +241,9 @@ sudo_keepalive_start() {
     (
         while true; do
             sleep 55
-            sudo -n true 2>/dev/null && sudo -n -v 2>/dev/null || true
+            if sudo -n true 2>/dev/null; then
+                sudo -n -v 2>/dev/null || true
+            fi
         done
     ) &
     SUDO_KEEPALIVE_PID=$!
@@ -1221,7 +1223,11 @@ main() {
     trap 'sudo_keepalive_stop' EXIT
 
     if [[ -n "${TM_EXCLUSIONS_DEBUG_FIFO:-}" ]]; then
-        exec 5>>"${TM_EXCLUSIONS_DEBUG_FIFO}" && DEBUG_LOG_FD=1 || DEBUG_LOG_FD=0
+        if exec 5>>"${TM_EXCLUSIONS_DEBUG_FIFO}"; then
+            DEBUG_LOG_FD=1
+        else
+            DEBUG_LOG_FD=0
+        fi
     fi
 
     # Check environment
