@@ -9,7 +9,7 @@ Default layout (see `Makefile`):
 | CLI | `$(PREFIX)/tm-exclusions` (default `PREFIX=/usr/local/bin`) |
 | Built-in rules | `$(SHARE_DIR)/default.conf` with `SHARE_DIR` = `$(abspath $(PREFIX)/../share/tm-exclusions)` |
 
-`tm_exclusions.sh` resolves `config/default.conf` via `resolve_default_conf()` (repo checkout, `../share/tm-exclusions/default.conf` next to the binary, or standard `/usr/local` / `/opt/homebrew` share paths).
+`tm_exclusions.sh` resolves the default rules via `resolve_default_conf()`: optional **`TM_EXCLUSIONS_DEFAULT_CONF`** override first; else `config/default.conf` (repo), `../share/tm-exclusions/default.conf` (next to the binary), then `/usr/local/share/tm-exclusions/default.conf`, `/opt/homebrew/share/tm-exclusions/default.conf`, and `/usr/share/tm-exclusions/default.conf`.
 
 ## Homebrew
 
@@ -25,12 +25,12 @@ Bump `url`, `version`, and `sha256` in `Formula/tm-exclusions.rb` when cutting a
 
 ### From the tap (`qveys/homebrew-tools`)
 
-After a **`v*`** tag is pushed, `.github/workflows/release.yml` (if enabled) creates/updates the GitHub release and bumps **`Formula/tm-exclusions.rb`** in **`qveys/homebrew-tools`** using repository secret **`HOMEBREW_TAP_TOKEN`** (PAT with `repo` on the tap).
+After a **`v*`** tag is pushed, `.github/workflows/release.yml` (if enabled) creates/updates the GitHub Release and bumps **`Formula/tm-exclusions.rb`** in **`qveys/homebrew-tools`** using repository secret **`HOMEBREW_TAP_TOKEN`** (PAT with `repo` on the tap).
 
 Then:
 
 ```bash
-brew tap qveys/homebrew-tools
+brew tap qveys/tools
 brew install tm-exclusions
 ```
 

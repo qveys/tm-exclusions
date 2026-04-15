@@ -123,6 +123,10 @@ assert_output_contains "Usage:" \
     "--lang en shows English help" \
     bash "$TM_EXCLUSIONS" --lang en --help
 
+assert_output_contains "Utilisation" \
+    "LC_MESSAGES=fr_FR.UTF-8 shows French help (detect_language)" \
+    env LC_ALL= LC_MESSAGES=fr_FR.UTF-8 LANG=C bash "$TM_EXCLUSIONS" --help
+
 assert_exit_code 1 \
     "--lang rejects unsupported values" \
     bash "$TM_EXCLUSIONS" --lang de --help

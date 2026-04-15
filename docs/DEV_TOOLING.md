@@ -1,6 +1,6 @@
 # Developer tooling: `.cursor` vs archived `.claude`
 
-This document compares what ships in **tm-exclusions** today versus the **archived** `tm-exclusion-main` tree (`~/Downloads/tm-exclusion-main`).
+This document compares what ships in **tm-exclusions** today versus an **archived** `tm-exclusion-main` tree (legacy tarball or checkout you keep locally — not part of this repo).
 
 ## This repository (Cursor-first)
 

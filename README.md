@@ -55,7 +55,7 @@ make install
 After the formula is published in [qveys/homebrew-tools](https://github.com/qveys/homebrew-tools) (updated automatically on each **`v*`** tag when `HOMEBREW_TAP_TOKEN` is configured):
 
 ```bash
-brew tap qveys/homebrew-tools
+brew tap qveys/tools
 brew install tm-exclusions
 ```
 
