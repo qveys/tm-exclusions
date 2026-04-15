@@ -24,8 +24,10 @@ main()
 ## Config Merge Order
 
 Configuration is loaded and merged in this order:
-1. `config/default.conf` — built-in rules shipped with the tool
+1. **Default rules** — resolved by `resolve_default_conf()`: repo-relative `config/default.conf`, `../share/tm-exclusions/default.conf` beside the installed binary, fixed paths under `/usr/local` / `/opt/homebrew` / `/usr/share`, or **`TM_EXCLUSIONS_DEFAULT_CONF`** when set (absolute path to a rules file).
 2. `~/.config/tm_exclusions/custom.conf` — user-defined rules
+
+Strings for **en** / **fr** are embedded in `tm_exclusions.sh` (not external locale files); see **`docs/I18N.md`**.
 
 Later entries are appended; there is no override or deduplication. Both files use the same `type|target|reason` format.
 
