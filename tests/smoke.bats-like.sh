@@ -202,5 +202,31 @@ assert_exit_code 1 \
     "--add with missing args exits 1" \
     bash "$TM_EXCLUSIONS" --add path
 
+# ---- TM_EXCLUSIONS_DEFAULT_CONF (install-style override) ----
+echo ""
+echo "--- TM_EXCLUSIONS_DEFAULT_CONF ---"
+
+MINIMAL_CONF="${TEST_HOME}/minimal-default.conf"
+cat > "${MINIMAL_CONF}" << 'EOF'
+# minimal default for smoke
+path|/tmp/tm_exclusions_smoke_path|smoke test path
+EOF
+
+assert_exit_code 0 \
+    "TM_EXCLUSIONS_DEFAULT_CONF dry-run exits 0" \
+    env TM_EXCLUSIONS_DEFAULT_CONF="${MINIMAL_CONF}" bash "$TM_EXCLUSIONS" --dry-run
+
+assert_output_contains "/tmp/tm_exclusions_smoke_path" \
+    "TM_EXCLUSIONS_DEFAULT_CONF dry-run uses override file" \
+    env TM_EXCLUSIONS_DEFAULT_CONF="${MINIMAL_CONF}" bash "$TM_EXCLUSIONS" --dry-run
+
+# ---- Parity harness (#34) ----
+echo ""
+echo "--- Parity placeholders (epic #34) ---"
+
+assert_output_contains "tm-exclusions" \
+    "--version stable for packaging smoke" \
+    bash "$TM_EXCLUSIONS" --version
+
 # ---- Summary ----
 test_summary
