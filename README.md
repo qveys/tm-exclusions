@@ -33,6 +33,18 @@ Ollama models     ████████████████        11 GB
                   ─────────────────────────────
                   Total wasted: ~56 GB 💸
 ```
+- **Static exclusion rules** for known cache/artifact paths across multiple ecosystems
+- **Dynamic scanning** to discover `node_modules`, `.venv`, `build`, `dist`, and other regenerable directories
+- **Prune support** to skip scanning irrelevant trees
+- **Dry-run mode** to preview changes without applying them
+- **Report-only mode** to audit current exclusion status
+- **Uninstall** to remove exclusions matching the current configured rules and discovered patterns
+- **Idempotent** — safe to run repeatedly
+- **Multilingual** — English and French output
+- **Config management** — add custom rules, init/list/edit config
+- **Human-readable reports** after each run (host/user/version, optional inventory, `du` summary, `tmutil listexclusions` excerpt)
+
+Optional environment variables (see **`docs/ARCHITECTURE.md`**): `TM_EXCLUSIONS_REPORT`, `TM_EXCLUSIONS_REPORT_DESKTOP`, `TM_EXCLUSIONS_SKIP_INVENTORY`, `TM_EXCLUSIONS_DEBUG_FIFO`.
 
 **tm-exclusions** finds and excludes all of it in one command.
 
