@@ -18,6 +18,8 @@ main()
   │   └── parse_config_file(custom.conf)  [merged]
   ├── apply_static_paths()     ← process 'path' entries
   ├── scan_dynamic_patterns()  ← process 'pattern' entries with find
+  ├── collect_post_scan_paths()  ← brew --cache + large VM/disk images under $HOME / ~/Library
+  ├── apply_extra_paths()      ← apply discovered paths like static rules
   └── generate_report()
 ```
 
@@ -31,6 +33,8 @@ Strings for **en** / **fr** are embedded in `tm_exclusions.sh` (not external loc
 
 Later entries are appended; there is no override or deduplication. Both files use the same `type|target|reason` format.
 
+Targets may use leading `~` (expanded to `$HOME`) or the literal substring `$HOME` (expanded at parse time).
+
 ## Config Entry Types
 
 | Type | Behavior |
@@ -42,6 +46,8 @@ Later entries are appended; there is no override or deduplication. Both files us
 ## Scan Logic
 
 Dynamic scanning uses `find` from `$HOME` with `-maxdepth 6` to keep execution time practical. For each configured pattern name (e.g., `node_modules`), matching directories are collected and processed.
+
+Matches named **`target`** are accepted only when the parent directory looks like a Rust/Cargo, Maven, or Gradle project (`Cargo.toml`, `pom.xml`, `build.gradle`, or `build.gradle.kts` next to the `target` directory). Matches named **`worktrees`** are narrowed to typical Git/Cursor layouts (e.g. under `.git/worktrees` or `.cursor`).
 
 Before processing a found directory, it is checked against prune paths. If the directory falls under a pruned prefix, it is skipped silently (or with a log message).
 
@@ -61,9 +67,13 @@ For each path to exclude:
 
 This makes the tool **idempotent**: running it multiple times produces the same result.
 
+Paths **outside `$HOME`** (for example `/Applications`) use **`sudo tmutil … -p`** (privileged sticky exclusions). When stdin is not a TTY and there is no **passwordless sudo** cache (`sudo -n` fails), those paths are **skipped** with a clear log/report line so CI and automated smoke tests do not block on a sudo password.
+
 ### tmutil Wrappers
 
 All `tmutil` interaction goes through wrapper functions (`tm_is_excluded`, `tm_add_exclusion`, `tm_remove_exclusion`). On non-macOS systems or when `tmutil` is absent, these functions simulate behavior (always report "not excluded," no-op on add/remove). This allows the tool to run its scan and config logic anywhere for testing.
+
+A background **sudo credential refresh** loop may start when a privileged path is processed, mirroring long interactive runs.
 
 ### Note on Time Machine UI
 
@@ -71,10 +81,34 @@ Some exclusions applied via `tmutil addexclusion` (user-level "sticky" exclusion
 
 ## Report Generation
 
-After processing all paths, a human-readable report is printed and saved to `~/.config/tm_exclusions/last_report.txt`. The report includes:
-- Timestamp and mode
+After processing all paths, a human-readable report is printed and saved to `~/.config/tm_exclusions/last_report.txt` by default. The report includes:
+- Hostname, user, program version, timestamp, and mode
 - Counts: checked, newly excluded, already excluded, skipped, errors
+- **Inventory** (optional): `/Applications` item count, Homebrew formula/cask counts when `brew` exists, PATH directory stats. Set **`TM_EXCLUSIONS_SKIP_INVENTORY=1`** to skip this block (faster smoke/CI; `brew list` can be slow).
+- **Disk usage**: `du -sh` per path touched in the run (existing paths only) and an approximate total in KiB
 - Per-path detail lines
+- When `tmutil` is available: an excerpt of **`tmutil listexclusions`** (first 500 lines)
+
+**Report path overrides**
+
+| Variable | Effect |
+|----------|--------|
+| `TM_EXCLUSIONS_REPORT` | Absolute or relative path for the saved report file instead of `~/.config/tm_exclusions/last_report.txt` |
+| `TM_EXCLUSIONS_REPORT_DESKTOP=1` | Also write `~/Desktop/tm-exclusions_last_report.txt` |
+| `TM_EXCLUSIONS_DEBUG_FIFO` | If set to a path, append the same `log_info` lines to **FD 5** (open a named FIFO in another terminal for live debug) |
+
+## First-run custom config
+
+Before normal runs (default apply, `--dry-run`, `--report-only`, `--uninstall`) and before `--add` / `--list` / `--edit`, the tool ensures `~/.config/tm_exclusions/` exists and creates **`custom.conf`** from the same template as `--init` if the file is missing. This matches legacy “auto init” behavior.
+
+## Post-scan discovered paths
+
+After dynamic pattern scanning, the tool may append:
+
+- **`brew --cache`** when `brew` is on `PATH` and the cache directory exists
+- Large virtual-disk files under `$HOME` and `~/Library` (e.g. `.vmdk`, `.qcow2`, `.sparsebundle` over ~512 MiB), pruning iCloud “Mobile Documents” trees to avoid shortcut churn
+
+These are processed like extra static paths (`apply_extra_paths`).
 
 ## Uninstall Behavior
 
@@ -114,10 +148,9 @@ Tests run without real `tmutil` mutations. On non-macOS systems (like CI runners
 
 ## Future Work (v2)
 
-Planned enhancements for future versions:
-- **tmux dual-pane UI**: Live split-screen interface showing scan progress and exclusion status
-- **Expanded rule sets**: Additional categories and more granular control
-- **Watch mode**: Monitor for new regenerable directories and auto-exclude
-- **Size estimation**: Show disk space impact of exclusions
+Possible follow-ups:
+- **tmux split-pane** or richer agent-oriented debug UX around `TM_EXCLUSIONS_DEBUG_FIFO`
+- **Watch mode**: detect new regenerable directories and re-apply
+- **Heavier inventory** (full app listings, full `brew list`, deep PATH enumeration) — intentionally capped today for speed
 
-These are **not implemented in v1**. The current architecture (config-driven, function-based) supports these additions without major restructuring.
+The current architecture (config-driven, function-based) supports these additions without major restructuring.
