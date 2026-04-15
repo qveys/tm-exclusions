@@ -63,7 +63,7 @@ assert_output_contains "tm-exclusions" \
     "--version shows program name" \
     bash "$TM_EXCLUSIONS" --version
 
-assert_output_contains "1.0.0" \
+assert_output_contains "1.1.0" \
     "--version shows version number" \
     bash "$TM_EXCLUSIONS" --version
 
