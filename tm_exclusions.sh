@@ -209,12 +209,25 @@ resolve_default_conf() {
 
 # Detect language from environment or override
 detect_language() {
+    local loc=""
+
     if [[ -n "${LANG_OVERRIDE}" ]]; then
         CURRENT_LANG="${LANG_OVERRIDE}"
-    elif [[ "${LANG:-}" == fr* ]]; then
-        CURRENT_LANG="fr"
     else
-        CURRENT_LANG="en"
+        if [[ -n "${LC_ALL:-}" ]]; then
+            loc="${LC_ALL}"
+        elif [[ -n "${LC_MESSAGES:-}" ]]; then
+            loc="${LC_MESSAGES}"
+        elif [[ -n "${LC_CTYPE:-}" ]]; then
+            loc="${LC_CTYPE}"
+        elif [[ -n "${LANG:-}" ]]; then
+            loc="${LANG}"
+        fi
+        if [[ "${loc}" == fr* ]]; then
+            CURRENT_LANG="fr"
+        else
+            CURRENT_LANG="en"
+        fi
     fi
 
     case "${CURRENT_LANG}" in
