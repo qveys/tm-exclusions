@@ -1,17 +1,38 @@
-# tm-exclusions
+<p align="center">
+  <img src="https://img.icons8.com/color/96/time-machine.png" alt="Time Machine" width="80"/>
+</p>
 
-**macOS Time Machine exclusion manager for developer machines.**
+<h1 align="center">🛡️ tm-exclusions</h1>
 
-Automatically excludes regenerable content — caches, `node_modules`, virtual environments, build artifacts, model files — from Time Machine backups so you reclaim backup space safely.
+<p align="center">
+  <strong>Reclaim tens of GB from your Time Machine backups — automatically.</strong><br/>
+  A smart macOS exclusion manager for developer machines.
+</p>
 
-## Why?
+<p align="center">
+  <a href="https://github.com/qveys/tm-exclusions/actions/workflows/tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/qveys/tm-exclusions/tests.yml?style=flat-square&label=tests" alt="Tests"/></a>
+  <a href="https://github.com/qveys/tm-exclusions/actions/workflows/shellcheck.yml"><img src="https://img.shields.io/github/actions/workflow/status/qveys/tm-exclusions/shellcheck.yml?style=flat-square&label=shellcheck" alt="ShellCheck"/></a>
+  <img src="https://img.shields.io/badge/bash-3.2%2B-green?style=flat-square&logo=gnubash&logoColor=white" alt="Bash 3.2+"/>
+  <img src="https://img.shields.io/badge/macOS-compatible-black?style=flat-square&logo=apple&logoColor=white" alt="macOS"/>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/qveys/tm-exclusions?style=flat-square" alt="License"/></a>
+</p>
 
-Developer machines accumulate gigabytes of regenerable data: package caches, build outputs, toolchain binaries, AI model downloads. Time Machine backs all of this up by default. `tm-exclusions` identifies these directories and excludes them via `tmutil`, saving significant backup time and disk space.
+---
 
-One command. Safe to rerun. No dependencies beyond stock macOS.
+## 🤔 Why?
 
-## Features (v1)
+A typical developer Mac wastes **30–60 GB** of backup space on content that's trivially regenerable:
 
+```
+node_modules/     ██████████████████████  12 GB
+Docker data       ████████████████████    14 GB
+.venv/            ████████                 4 GB
+Xcode DevSupport  ██████████               5 GB
+Homebrew          ██████████████          10 GB
+Ollama models     ████████████████        11 GB
+                  ─────────────────────────────
+                  Total wasted: ~56 GB 💸
+```
 - **Static exclusion rules** for known cache/artifact paths across multiple ecosystems
 - **Dynamic scanning** to discover `node_modules`, `.venv`, `build`, `dist`, and other regenerable directories
 - **Prune support** to skip scanning irrelevant trees
@@ -25,216 +46,281 @@ One command. Safe to rerun. No dependencies beyond stock macOS.
 
 Optional environment variables (see **`docs/ARCHITECTURE.md`**): `TM_EXCLUSIONS_REPORT`, `TM_EXCLUSIONS_REPORT_DESKTOP`, `TM_EXCLUSIONS_SKIP_INVENTORY`, `TM_EXCLUSIONS_DEBUG_FIFO`.
 
-### Covered Ecosystems
+**tm-exclusions** finds and excludes all of it in one command.
 
-Default rules cover these areas:
+---
 
-| Category | Examples |
+## ✨ Features
+
+| | Feature | Details |
+|---|---|---|
+| 📦 | **Built-in rules** | Static + dynamic coverage across major dev ecosystems |
+| 🔍 | **Dynamic scan** | Recursively finds `node_modules`, `.venv`, `__pycache__`, build dirs |
+| 🔒 | **Dual tmutil strategy** | User paths via `tmutil addexclusion`; system paths via `sudo tmutil ... -p` |
+| 🌍 | **Multilingual** | French / English (auto-detected from `$LANG`) |
+| 📊 | **Rich report** | Saved report with counters/details (+ optional inventory and desktop copy) |
+| 🔄 | **Idempotent** | Safe to re-run — skips already-excluded paths |
+| 🐚 | **Bash 3.2** | Works with macOS stock shell — no dependencies |
+
+<details>
+<summary>📝 Brouillon (pas encore d'actualité)</summary>
+
+| Item | Statut |
 |---|---|
-| Node.js | npm/yarn/pnpm caches, `node_modules` |
-| Python | pip cache, virtualenvs, `__pycache__`, `.venv` |
-| Rust | Cargo registry/git, `target` |
-| Go | Module cache, build cache |
-| Java/JVM | Gradle caches/wrapper, Maven repository |
-| Docker | Docker Desktop local data |
-| Xcode | DerivedData, Archives, CoreSimulator |
-| Homebrew | Download cache |
-| AI/LLM | Hugging Face, Ollama, LM Studio caches |
-| IDE/Editor | JetBrains, VS Code caches |
-| Build artifacts | `dist`, `build`, `.next`, `.turbo`, `Pods`, `.gradle` |
+| **170+ built-in rules / 16 categories** | Brouillon |
+| **Triple-layer pruning** | Brouillon |
+| **tmux dual-pane UI** | Brouillon |
+| **Desktop report generated on each run** | Brouillon (desktop copy via `TM_EXCLUSIONS_REPORT_DESKTOP=1`) |
 
-## Install
+</details>
+
+---
+
+## 🚀 Quick Start
+
+### Install
 
 ```bash
-# Clone and install (uses sudo automatically when needed)
+# Homebrew (recommended)
+brew tap qveys/tools
+brew install tm-exclusions
+
+# Or from source
 git clone https://github.com/qveys/tm-exclusions.git
 cd tm-exclusions
 make install
+# Or run directly: bash tm_exclusions.sh --dry-run
 ```
 
-### Homebrew
-
-After the formula is published in [qveys/homebrew-tools](https://github.com/qveys/homebrew-tools) (updated automatically on each **`v*`** tag when `HOMEBREW_TAP_TOKEN` is configured):
-
-```bash
-brew tap qveys/tools
-brew install tm-exclusions
-```
-
-From a git checkout you can install the local formula (macOS):
+From a git checkout:
 
 ```bash
 brew install --formula ./Formula/tm-exclusions.rb
 ```
 
-See **`docs/PACKAGING.md`** for Makefile vs Homebrew layout and tap sync.
-
-Or run directly without installing:
+### Run
 
 ```bash
-bash tm_exclusions.sh --help
+tm-exclusions --dry-run      # 👀 Preview (no changes)
+tm-exclusions                # 🛡️ Apply all exclusions
+tm-exclusions --report-only  # 📊 Generate report only
+tm-exclusions --lang en      # 🇬🇧 Force English
 ```
 
-## Usage
+---
 
-```bash
-# Apply all exclusions (default mode)
-tm-exclusions
+## 🏗️ How It Works
 
-# Preview what would be excluded
-tm-exclusions --dry-run
+Config files are loaded, merged, then applied via a dual `tmutil` strategy (user paths under `$HOME`, fixed-path for system paths). Dynamic scan uses `find "$HOME" -maxdepth 6 -type d -name <pattern>` and `prune` rules filter matched results under configured prefixes. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full flowchart and details.
 
-# Report current status without making changes
-tm-exclusions --report-only
+> 💡 Most exclusions won't appear in System Settings → Time Machine. They're still active — verify with `tmutil isexcluded ~/Library/Caches`
 
-# Remove exclusions matching the current configured rules
-tm-exclusions --uninstall
+<details>
+<summary>📦 <strong>Built-in Categories</strong> (current coverage)</summary>
 
-# Remove exclusions even for paths that no longer exist
-tm-exclusions --uninstall --force
+| Category | Examples |
+|---|---|
+| 🍎 **Applications** | `/Applications`, `~/Applications` |
+| 📗 **Node.js** | npm/yarn/pnpm caches, dynamic `node_modules` |
+| 🐍 **Python** | pip cache, virtualenvs, `.venv`, `venv`, `__pycache__` |
+| 🐳 **Docker** | Desktop local data |
+| 🍺 **Homebrew** | Homebrew download cache (+ discovered `brew --cache`) |
+| 🦀 **Rust** | Cargo registry/git, rustup toolchains |
+| ☕ **Java/JVM** | Maven, Gradle caches |
+| 🔨 **Xcode** | DerivedData, Archives, CoreSimulator |
+| 🤖 **AI/LLM** | Hugging Face, Ollama, LM Studio caches |
+| 💻 **IDE Support** | JetBrains, VS Code caches |
+| 🗂️ **Dynamic scan** | `node_modules`, `.venv`, `__pycache__`, `target`, `.next`, `.turbo`, `Pods`, `.gradle`, worktrees… |
 
-# Preview uninstall
-tm-exclusions --uninstall --dry-run
+</details>
 
-# Quiet mode (suppress non-essential output)
-tm-exclusions --quiet
-tm-exclusions -q
+---
 
-# French output
-tm-exclusions --lang fr
+## 📋 Usage
 
-# Show help
-tm-exclusions --help
+```
+Usage: tm_exclusions.sh [OPTIONS]
 
-# Show version
-tm-exclusions --version
+Run modes:
+  (none)           Apply all exclusions
+  --dry-run        Preview without modifying anything
+  --report-only    Generate report only
+
+Persistent config file management:
+  --add <type> <path> <reason>     Add an entry
+  --list                           Show current config
+  --edit                           Open in $EDITOR
+  --init                           Create user config
+
+Uninstall (idempotent — missing xattrs/paths silently skipped):
+  --uninstall      Remove all TM exclusions set by this script
+  --uninstall --force   Remove without confirmation prompt
+  --uninstall --dry-run Preview what would be removed
+
+Other:
+  --quiet, -q      Quiet mode (no banner, no colors, no spinners)
+  --version        Show version
+  --lang <fr|en>   Force language
+  --help           Show help
 ```
 
-## Configuration
+---
 
-### Config files
+## ⚙️ Configuration
 
-Rules are loaded and merged in order:
+The script loads two config files in order:
 
-1. `config/default.conf` — built-in rules (shipped with the tool)
-2. `~/.config/tm_exclusions/custom.conf` — your custom rules
-
-After `make install`, the built-in rules are installed under a shared data path such as `/usr/local/share/tm-exclusions/default.conf`.
+```
+1️⃣  config/default.conf              ← Built-in rules (shipped)
+2️⃣  ~/.config/tm_exclusions/custom.conf  ← Your additions (auto-created)
+```
 
 ### Config format
 
-Each line is: `type|target|reason`
+```conf
+# type|target|reason
+#@Section Name
+path|$HOME/.deno|Deno cache — reinstallable
+pattern|.gradle|Gradle project cache
+prune|$HOME/VMs
+```
 
-| Type | Meaning |
+| Type | Effect |
 |---|---|
-| `path` | Exact path to exclude from backup |
-| `pattern` | Directory name to find and exclude during scan |
-| `prune` | Path prefix to skip during scanning (not excluded) |
+| `path` | 🎯 Static exclusion → `tmutil addexclusion` |
+| `pattern` | 🔍 Directory name matched by `find -name` during scan |
+| `prune` | ✂️ Path ignored by scan (no TM exclusion applied) |
 
-Lines starting with `#` are comments.
-
-### Managing custom rules
+### Add custom exclusions
 
 ```bash
-# Initialize custom config directory
-tm-exclusions --init
+# 🎯 Exclude a specific directory
+tm-exclusions --add path ~/.deno "Deno cache — reinstallable"
 
-# Add a custom exclusion
-tm-exclusions --add path "~/MyLargeDataset" "Large dataset not needed in backup"
-tm-exclusions --add pattern ".myframework_cache" "Framework cache directories"
-tm-exclusions --add prune "~/Archive" "Skip scanning archive directory"
+# 🔍 Add a pattern for dynamic scan
+tm-exclusions --add pattern .angular "Angular CLI cache"
 
-# List custom rules
-tm-exclusions --list
-
-# Edit custom config in $EDITOR
-tm-exclusions --edit
+# ✂️ Ignore a directory during scan
+tm-exclusions --add prune ~/VMs
 ```
 
-### Custom exclusion examples
+---
 
-```
-# Exclude a specific large directory
-path|~/Datasets/imagenet|Large ML dataset
+## 🔇 Quiet Mode (cron / launchd)
 
-# Find and exclude all .terraform directories
-pattern|.terraform|Terraform provider cache
+Use `--quiet` (or `-q`) for unattended execution:
 
-# Skip scanning a mounted network volume
-prune|/Volumes/NAS|Network volume
-```
-
-## Quiet Mode
-
-Use `--quiet` or `-q` to suppress informational output. Reports and errors are still shown.
+- No banner, no colors, no spinners, no tmux
+- Report is still printed to stdout (summary/report output is not suppressed)
+- Desktop report copy is generated only with `TM_EXCLUSIONS_REPORT_DESKTOP=1`
 
 ```bash
-# Good for cron or launchd
-tm-exclusions --quiet
+# Weekly cron job
+0 3 * * 0  /usr/local/bin/tm-exclusions --quiet 2>>/tmp/tm_exclusions.err
 ```
 
-## Scheduled Execution with launchd
+<details>
+<summary>📄 launchd plist example</summary>
 
-Create `~/Library/LaunchAgents/com.tm-exclusions.plist`:
+Save as `~/Library/LaunchAgents/com.tm-exclusions.weekly.plist`:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>Label</key>
-    <string>com.tm-exclusions</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/usr/local/bin/tm-exclusions</string>
-        <string>--quiet</string>
-    </array>
-    <key>StartInterval</key>
-    <integer>86400</integer>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>/tmp/tm-exclusions.log</string>
-    <key>StandardErrorPath</key>
-    <string>/tmp/tm-exclusions.err</string>
+  <key>Label</key>
+  <string>com.tm-exclusions.weekly</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/usr/local/bin/tm-exclusions</string>
+    <string>--quiet</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key>
+    <integer>0</integer>
+    <key>Hour</key>
+    <integer>3</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>StandardErrorPath</key>
+  <string>/tmp/tm_exclusions.err</string>
 </dict>
 </plist>
 ```
 
-Load it:
-
 ```bash
-launchctl load ~/Library/LaunchAgents/com.tm-exclusions.plist
+launchctl load ~/Library/LaunchAgents/com.tm-exclusions.weekly.plist
 ```
 
-## Development
+</details>
+
+---
+
+## 📋 Requirements
+
+| Requirement | Details |
+|---|---|
+| 🍎 macOS | Any version with Time Machine |
+| 🐚 Bash | 3.2+ (macOS stock) |
+| 🔑 sudo | Optional — for system path exclusions |
+
+---
+
+## 🔧 Environment variables
+
+| Variable | Effect |
+|---|---|
+| `TM_EXCLUSIONS_DEFAULT_CONF` | Override default rules file path |
+| `TM_EXCLUSIONS_REPORT` | Override report output path |
+| `TM_EXCLUSIONS_REPORT_DESKTOP=1` | Also write a report copy to Desktop |
+| `TM_EXCLUSIONS_SKIP_INVENTORY=1` | Skip inventory block in report |
+| `TM_EXCLUSIONS_SKIP_DU=1` | Skip per-path `du` disk-usage section in report |
+| `TM_EXCLUSIONS_DEBUG_FIFO` | Mirror `log_info` output to FD 5 |
+
+---
+
+## 🔎 Current behavior notes
+
+- In non-interactive runs without cached/passwordless sudo (`sudo -n`), system paths are skipped (no blocking prompt).
+- `--uninstall` removes exclusions matching current configured static rules, dynamic matches, and discovered extra paths.
+- Dynamic scan depth is intentionally capped to `find -maxdepth 6`.
+- Report output always prints to stdout, including with `--quiet`.
+- On non-macOS or without `tmutil`, behavior is simulated (useful for tests).
+
+---
+
+## 🧪 Development
 
 ```bash
-# Run tests
-make test
-
-# Run ShellCheck linting
-make lint
-
-# Run both
-make check
-
-# Install locally (uses sudo automatically when PREFIX or SHARE_DIR is not writable)
-make install
-
-# Uninstall (uses sudo automatically when PREFIX or SHARE_DIR is not writable)
-make uninstall
+make test     # Run TAP-format smoke tests (--dry-run, no tmutil calls)
+make lint     # ShellCheck on all .sh files
+make install  # Install to /usr/local
 ```
 
-## Limitations & Notes
+### Releasing
 
-- **Time Machine UI visibility**: Some exclusions applied via `tmutil addexclusion` may not appear in System Settings > Time Machine, even when they are active. Use `tmutil isexcluded <path>` to verify.
-- **User-space exclusions**: The tool uses user-level (`addexclusion`) not fixed exclusions (`addexclusion -p`). These are "sticky" and follow the path even if renamed.
-- **Uninstall scope**: `--uninstall` only removes exclusions matching the current configured static rules and discovered patterns. It does not track every exclusion from past runs.
-- **Scan depth**: Dynamic scanning uses `find -maxdepth 6` from `$HOME` for practical execution time.
-- **Non-macOS**: On non-macOS systems, the tool runs in simulation mode (no actual `tmutil` calls). Useful for testing and config management.
-- **Bash 3.2**: Compatible with stock macOS Bash. No Bash 4+ features used.
+```bash
+# 1. Bump VERSION in tm_exclusions.sh
+# 2. Commit, then tag and push:
+git tag v1.1.0
+git push origin v1.1.0
+```
 
-## License
+CI handles the rest: creates GitHub release, computes tarball SHA256, and updates the [Homebrew formula](https://github.com/qveys/homebrew-tools).
 
-[MIT](LICENSE) — Quentin Veys
+---
+
+## 📄 License
+
+MIT
+
+---
+
+<p align="center">
+  <sub>Made with ☕ on macOS — because your backups shouldn't weigh more than your code.</sub>
+</p>

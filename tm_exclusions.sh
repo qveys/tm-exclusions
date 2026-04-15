@@ -960,7 +960,11 @@ PATH: ${path_dirs} existing directories (of ${path_total} colon-separated entrie
     fi
 
     du_sec=""
-    if [[ -n "${DU_PATHS}" ]]; then
+    if [[ "${TM_EXCLUSIONS_SKIP_DU:-}" = "1" ]]; then
+        du_sec="
+=== Disk usage (paths touched in this run, present on disk) ===
+(skipped: TM_EXCLUSIONS_SKIP_DU=1)"
+    elif [[ -n "${DU_PATHS}" ]]; then
         du_sec="
 === Disk usage (paths touched in this run, present on disk) ==="
         total_k=0
