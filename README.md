@@ -211,8 +211,8 @@ tm-exclusions --add prune ~/VMs
 Use `--quiet` (or `-q`) for unattended execution:
 
 - No banner, no colors, no spinners, no tmux
-- Only errors/warnings on stderr
-- Desktop report still generated
+- Report is still printed to stdout (summary/report output is not suppressed)
+- Desktop report copy is generated only with `TM_EXCLUSIONS_REPORT_DESKTOP=1`
 
 ```bash
 # Weekly cron job
@@ -279,6 +279,7 @@ launchctl load ~/Library/LaunchAgents/com.tm-exclusions.weekly.plist
 | `TM_EXCLUSIONS_REPORT` | Override report output path |
 | `TM_EXCLUSIONS_REPORT_DESKTOP=1` | Also write a report copy to Desktop |
 | `TM_EXCLUSIONS_SKIP_INVENTORY=1` | Skip inventory block in report |
+| `TM_EXCLUSIONS_SKIP_DU=1` | Skip per-path `du` disk-usage section in report |
 | `TM_EXCLUSIONS_DEBUG_FIFO` | Mirror `log_info` output to FD 5 |
 
 ---
@@ -288,6 +289,7 @@ launchctl load ~/Library/LaunchAgents/com.tm-exclusions.weekly.plist
 - In non-interactive runs without cached/passwordless sudo (`sudo -n`), system paths are skipped (no blocking prompt).
 - `--uninstall` removes exclusions matching current configured static rules, dynamic matches, and discovered extra paths.
 - Dynamic scan depth is intentionally capped to `find -maxdepth 6`.
+- Report output always prints to stdout, including with `--quiet`.
 - On non-macOS or without `tmutil`, behavior is simulated (useful for tests).
 
 ---
