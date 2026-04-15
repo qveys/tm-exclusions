@@ -95,7 +95,7 @@ After processing all paths, a human-readable report is printed and saved to `~/.
 |----------|--------|
 | `TM_EXCLUSIONS_REPORT` | Absolute or relative path for the saved report file instead of `~/.config/tm_exclusions/last_report.txt` |
 | `TM_EXCLUSIONS_REPORT_DESKTOP=1` | Also write `~/Desktop/tm-exclusions_last_report.txt` |
-| `TM_EXCLUSIONS_DEBUG_FIFO` | If set to a path, append the same `log_info` lines to **FD 5** (open a named FIFO in another terminal for live debug) |
+| `TM_EXCLUSIONS_DEBUG_FIFO` | If set to a path, append the same `log_info` lines to **FD 5**. For a **named FIFO**, a background `cat` opens the read end first so opening FD 5 for write does not hang; use a regular file if you prefer no extra process. |
 
 ## First-run custom config
 

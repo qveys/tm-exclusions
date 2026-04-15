@@ -474,12 +474,10 @@ parse_config_file() {
         case "$entry_target" in
             "~"*) entry_target="${HOME}${entry_target#\~}" ;;
         esac
-        # Expand $HOME in targets (legacy default.conf style)
+        # Expand $HOME in targets (legacy default.conf style; one global replace)
         local home_token
         home_token="\$HOME"
-        while [[ "${entry_target}" == *"${home_token}"* ]]; do
-            entry_target="${entry_target//${home_token}/$HOME}"
-        done
+        entry_target="${entry_target//${home_token}/$HOME}"
 
         case "$entry_type" in
             path)
@@ -846,12 +844,9 @@ collect_post_scan_paths() {
     fi
 
     tmp="$(mktemp "${TMPDIR:-/tmp}/tm_exc_disk.XXXXXX")"
+    # One tree walk from $HOME covers ~/Library; cap matches for speed
     find "$HOME" \( -path '*/Mobile Documents/*' -o -path '*/Library/Mobile Documents/*' \) -prune -o \
-        \( -type f \( -name '*.vmdk' -o -name '*.qcow2' -o -name '*.raw' -o -name '*.img' -o -name '*.sparsebundle' \) -size +512m \) -print 2>/dev/null | head -n 25 >>"$tmp" || true
-    if [[ -d "${HOME}/Library" ]]; then
-        find "${HOME}/Library" \( -path '*/Mobile Documents/*' \) -prune -o \
-            \( -type f \( -name '*.vmdk' -o -name '*.qcow2' -o -name '*.raw' -o -name '*.img' -o -name '*.sparsebundle' \) -size +512m \) -print 2>/dev/null | head -n 25 >>"$tmp" || true
-    fi
+        \( -type f \( -name '*.vmdk' -o -name '*.qcow2' -o -name '*.raw' -o -name '*.img' -o -name '*.sparsebundle' \) -size +512m \) -print 2>/dev/null | head -n 50 >>"$tmp" || true
 
     while IFS= read -r line || [[ -n "$line" ]]; do
         [[ -z "$line" ]] && continue
@@ -957,7 +952,15 @@ PATH: ${path_dirs} existing directories (of ${path_total} colon-separated entrie
             szk="$(du -sk "$p" 2>/dev/null | awk '{print $1}')"
             [[ -z "$szk" ]] && continue
             total_k=$((total_k + szk))
-            sh="$(du -sh "$p" 2>/dev/null | awk '{print $1}')"
+            sh="$(awk -v k="$szk" 'BEGIN {
+                if (k < 1024) { printf "%dK", k; exit }
+                x = k / 1024.0
+                if (x < 1024) { printf "%.1fM", x; exit }
+                x = x / 1024.0
+                if (x < 1024) { printf "%.1fG", x; exit }
+                x = x / 1024.0
+                printf "%.1fT", x
+            }')"
             du_sec="${du_sec}
 ${sh}	${p}"
         done <<EOF
@@ -1018,7 +1021,6 @@ ${raw_list}"
     fi
 
     mkdir -p "$(dirname "${out_path}")" 2>/dev/null || true
-    mkdir -p "${CUSTOM_CONF_DIR}" 2>/dev/null || true
     echo "$report" > "${out_path}" 2>/dev/null || true
     log_info ""
     log_info "${MSG_REPORT_SAVED} ${out_path}"
@@ -1223,6 +1225,10 @@ main() {
     trap 'sudo_keepalive_stop' EXIT
 
     if [[ -n "${TM_EXCLUSIONS_DEBUG_FIFO:-}" ]]; then
+        # Opening a FIFO for write blocks until a reader exists — drain in background first.
+        if [[ -p "${TM_EXCLUSIONS_DEBUG_FIFO}" ]]; then
+            cat "${TM_EXCLUSIONS_DEBUG_FIFO}" >/dev/null &
+        fi
         if exec 5>>"${TM_EXCLUSIONS_DEBUG_FIFO}"; then
             DEBUG_LOG_FD=1
         else
