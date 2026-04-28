@@ -54,7 +54,7 @@ Optional environment variables (see **`docs/ARCHITECTURE.md`**): `TM_EXCLUSIONS_
 
 | | Feature | Details |
 |---|---|---|
-| 📦 | **Built-in rules** | Static + dynamic coverage across major dev ecosystems |
+| 📦 | **Built-in rules** | ~102 rules across 17 categories (Node.js, Python, Rust, Java, Xcode, AI/LLM, Docker, Homebrew, …) |
 | 🔍 | **Dynamic scan** | Recursively finds `node_modules`, `.venv`, `__pycache__`, build dirs |
 | 🔒 | **Dual tmutil strategy** | User paths via `tmutil addexclusion`; system paths via `sudo tmutil ... -p` |
 | 🌍 | **Multilingual** | French / English (auto-detected from `$LANG`) |
@@ -67,7 +67,6 @@ Optional environment variables (see **`docs/ARCHITECTURE.md`**): `TM_EXCLUSIONS_
 
 | Item | Statut |
 |---|---|
-| **170+ built-in rules / 16 categories** | Brouillon |
 | **Triple-layer pruning** | Brouillon |
 | **tmux dual-pane UI** | Brouillon |
 | **Desktop report generated on each run** | Brouillon (desktop copy via `TM_EXCLUSIONS_REPORT_DESKTOP=1`) |
@@ -116,21 +115,27 @@ Config files are loaded, merged, then applied via a dual `tmutil` strategy (user
 > 💡 Most exclusions won't appear in System Settings → Time Machine. They're still active — verify with `tmutil isexcluded ~/Library/Caches`
 
 <details>
-<summary>📦 <strong>Built-in Categories</strong> (current coverage)</summary>
+<summary>📦 <strong>Built-in Categories</strong> (17 categories — see <code>config/default.conf</code> for the full list)</summary>
 
 | Category | Examples |
 |---|---|
-| 🍎 **Applications** | `/Applications`, `~/Applications` |
-| 📗 **Node.js** | npm/yarn/pnpm caches, dynamic `node_modules` |
-| 🐍 **Python** | pip cache, virtualenvs, `.venv`, `venv`, `__pycache__` |
-| 🐳 **Docker** | Desktop local data |
-| 🍺 **Homebrew** | Homebrew download cache (+ discovered `brew --cache`) |
-| 🦀 **Rust** | Cargo registry/git, rustup toolchains |
-| ☕ **Java/JVM** | Maven, Gradle caches |
-| 🔨 **Xcode** | DerivedData, Archives, CoreSimulator |
-| 🤖 **AI/LLM** | Hugging Face, Ollama, LM Studio caches |
-| 💻 **IDE Support** | JetBrains, VS Code caches |
-| 🗂️ **Dynamic scan** | `node_modules`, `.venv`, `__pycache__`, `target`, `.next`, `.turbo`, `Pods`, `.gradle`, worktrees… |
+| 🍎 **Applications** | `/Applications`, `$HOME/Applications` |
+| 📗 **Node.js / JavaScript** | npm/yarn/pnpm caches, `.bun`, `.nvm`; dynamic `node_modules`, `.next`, `.turbo`, `.parcel-cache` |
+| 🐍 **Python** | pip/uv/pipx caches, `.pyenv`, conda forges; dynamic `.venv`, `venv`, `__pycache__`, `.pytest_cache`, `.ruff_cache` |
+| 🐳 **Docker** | Docker Desktop containers and group containers (`.docker` itself stays in backups for credentials) |
+| 🍺 **Homebrew** | `/opt/homebrew`, `/usr/local/Cellar`, Homebrew download cache (+ discovered `brew --cache`) |
+| 🦀 **Rust / Cargo** | Cargo registry/git, rustup toolchains; dynamic `target` |
+| ☕ **Java / JVM** | Maven, Gradle, Ivy, SBT, Coursier caches; dynamic `.gradle` |
+| 🐹 **Go** | Go module cache, build cache |
+| 💎 **Ruby / iOS** | rbenv, RVM, gems, CocoaPods repo; dynamic `Pods` |
+| 🔨 **Xcode / Apple Dev Tools** | DerivedData, Archives, iOS/watchOS/tvOS/visionOS DeviceSupport, CoreSimulator |
+| 🗄️ **macOS Caches** | `~/Library/Caches`, `~/Library/Logs` |
+| 🛠️ **Dev Tools** | IDE caches (JetBrains, VS Code), Terraform, Pulumi, Helm, kubectl plugin caches |
+| 🤖 **AI / LLM** | Hugging Face, LM Studio, Ollama models, Claude Code VM bundles, SuperWhisper |
+| 🧰 **App Support** | (opt-in — see config) Application Support roots for Cursor, JetBrains, Zed, … |
+| 🤝 **Claude Code / Codex** | Dynamic `.auto-claude`, `.codex`, `worktrees` |
+| 🧼 **Generic caches** | (opt-in — see config) Pattern `.cache` |
+| 🚫 **Prune zones** | Skip-scan-only: `~/Library`, `~/.Trash`, `~/.bun`, `~/.nvm`, … |
 
 </details>
 

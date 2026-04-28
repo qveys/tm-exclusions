@@ -327,5 +327,79 @@ fi
 rm -rf "${AUTO_HOME}"
 export HOME="${TEST_HOME}"
 
+# ---- Catalog invariants (#37) ----
+echo ""
+echo "--- Catalog invariants ---"
+
+# SCRIPT_DIR is reassigned to repo root by test_helpers.sh on source.
+# The "──" markers in the section regex below are Unicode box-drawing
+# characters (U+2500); editors that auto-substitute them with ASCII
+# hyphens will break the catalog invariants.
+CONF="${SCRIPT_DIR}/config/default.conf"
+
+# Active rules (path/pattern/prune lines, ignoring comments).
+# Floor is pinned to the documented baseline so silent regressions fail CI.
+# Bump this constant when intentionally growing the catalog.
+MIN_ACTIVE_RULES=102
+RULE_COUNT=$(grep -cE '^(path|pattern|prune)\|' "${CONF}" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${RULE_COUNT}" -ge "${MIN_ACTIVE_RULES}" ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b default.conf has >=%d active rules (got %d)\n' "$GREEN" "$NC" "${MIN_ACTIVE_RULES}" "${RULE_COUNT}"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b default.conf has >=%d active rules (got %d)\n' "$RED" "$NC" "${MIN_ACTIVE_RULES}" "${RULE_COUNT}"
+fi
+
+# Distinct #@ category labels == 17
+LABEL_COUNT=$(grep -E '^#@' "${CONF}" | sort -u | wc -l | tr -d ' ')
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${LABEL_COUNT}" -eq 17 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b default.conf has 17 distinct #@ category labels\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b default.conf has 17 distinct #@ category labels (got %d)\n' "$RED" "$NC" "${LABEL_COUNT}"
+fi
+
+# Three section markers exist
+SECTION_COUNT=$(grep -cE '^# ── (STATIC EXCLUSIONS|DYNAMIC SCAN PATTERNS|SCAN PRUNE ZONES)' "${CONF}" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${SECTION_COUNT}" -eq 3 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b default.conf has the three section markers\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b default.conf has the three section markers (got %d)\n' "$RED" "$NC" "${SECTION_COUNT}"
+fi
+
+# No rule uses the ~/ home prefix (must be $HOME/)
+TILDE_COUNT=$(grep -cE '^(path|pattern|prune)\|~/' "${CONF}" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${TILDE_COUNT}" -eq 0 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    # shellcheck disable=SC2016
+    printf '%b  PASS%b default.conf uses $HOME/ not ~/ for home-rooted paths\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    # shellcheck disable=SC2016
+    printf '%b  FAIL%b default.conf uses ~/ on %d lines (must be $HOME/)\n' "$RED" "$NC" "${TILDE_COUNT}"
+fi
+
+# Every (path|pattern|prune) line is preceded by a #@ marker within its section
+ORPHAN_COUNT=$(awk '
+    /^# ── (STATIC EXCLUSIONS|DYNAMIC SCAN PATTERNS|SCAN PRUNE ZONES)/ {cat=0; next}
+    /^#@/ {cat=1; next}
+    /^(path|pattern|prune)\|/ {if (!cat) print NR}
+' "${CONF}" | wc -l | tr -d ' ')
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${ORPHAN_COUNT}" -eq 0 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b default.conf has no orphan rule outside a #@ category\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b default.conf has %d rule(s) outside any #@ category\n' "$RED" "$NC" "${ORPHAN_COUNT}"
+fi
+
 # ---- Summary ----
 test_summary

@@ -154,3 +154,57 @@ Possible follow-ups:
 - **Heavier inventory** (full app listings, full `brew list`, deep PATH enumeration) — intentionally capped today for speed
 
 The current architecture (config-driven, function-based) supports these additions without major restructuring.
+
+## Default rule catalog
+
+`config/default.conf` ships approximately 102 rules organized in 17 categories. Categories use `#@CategoryName` markers — cosmetic in 1.x (treated as comments by the loader), forward-compatible with the category-aware report grouping tracked in [#34](https://github.com/qveys/tm-exclusions/issues/34).
+
+| # | Category | Section(s) | Sample entries |
+|---|---|---|---|
+| 1 | Applications | path | `/Applications`, `$HOME/Applications` |
+| 2 | Node.js / JavaScript | path + pattern | `$HOME/.npm`, `$HOME/.pnpm-store`, `node_modules`, `.next`, `.turbo` |
+| 3 | Python | path + pattern | `$HOME/.cache/pip`, `$HOME/.pyenv/versions`, `.venv`, `__pycache__`, `.ruff_cache` |
+| 4 | Docker | path | `$HOME/.docker`, `$HOME/Library/Containers/com.docker.docker` |
+| 5 | Homebrew | path | `/opt/homebrew`, `/usr/local/Cellar`, `$HOME/Library/Caches/Homebrew` |
+| 6 | Rust / Cargo | path + pattern | `$HOME/.cargo/registry`, `$HOME/.rustup/toolchains`, `target` |
+| 7 | Java / JVM | path + pattern | `$HOME/.m2/repository`, `$HOME/.gradle/caches`, `.gradle` |
+| 8 | Go | path | `$HOME/go/pkg/mod`, `$HOME/.cache/go-build` |
+| 9 | Ruby / iOS | path + pattern | `$HOME/.rbenv/versions`, `$HOME/.cocoapods`, `Pods` |
+| 10 | Xcode / Apple Dev Tools | path | `$HOME/Library/Developer/Xcode/DerivedData`, `…/CoreSimulator` |
+| 11 | macOS Caches | path | `$HOME/Library/Caches`, `$HOME/Library/Logs` |
+| 12 | Dev Tools | path | `$HOME/.terraform.d/plugin-cache`, IDE extensions and caches |
+| 13 | AI / LLM | path | `$HOME/.cache/huggingface`, `$HOME/.ollama/models`, Claude VM bundles |
+| 14 | App Support | path (opt-in) | Application Support entries for Cursor, JetBrains, Zed, … (commented out — see Opt-in entries) |
+| 15 | Claude Code / Codex | pattern | `.auto-claude`, `.codex`, `worktrees` |
+| 16 | Generic caches | pattern (opt-in) | `.cache` (commented out — uncomment to enable) |
+| 17 | Prune zones | prune | `$HOME/Library`, `$HOME/.Trash`, `$HOME/.nvm`, … |
+
+### Path style
+
+Home-rooted paths use `$HOME/...`. The loader also accepts the legacy `~/...` form. System paths are absolute (`/Applications`, `/opt/homebrew`).
+
+### Opt-in entries
+
+Several entries ship commented out:
+- `path|/private/var/folders` — already covered by macOS Time Machine StdExclusions; `du` on it can fail on partially-readable subdirs and aborts the script (see [#45](https://github.com/qveys/tm-exclusions/issues/45)).
+- `path|$HOME/.docker` — kept in backups because it holds `config.json` (registry auth tokens). Bulky Docker data is covered by other rules.
+- All `path|$HOME/Library/Application Support/<app>` entries (Antigravity, auto-claude-ui, Cursor, discord, GitKrakenCLI, JetBrains, virtualenv, vscode-sqltools, Zed) — these directories mix user data (settings, keymaps, sessions) with regenerable caches; re-enable selectively only after confirming the app's specific layout is cache-only.
+- `pattern|.cache` — would match any project's `.cache/` directory (too broad as a default).
+- `pattern|site-packages` — already covered by `.venv` patterns.
+
+Uncomment them in your installed `default.conf` if you have specific use cases.
+
+### Cloud-sync prunes
+
+Pruning `$HOME/Dropbox`, `$HOME/Google Drive`, `$HOME/OneDrive` is **not** part of the default config — those directories typically contain non-regenerable user data, and pruning them at scan time risks masking caches/build artifacts that should be excluded. An opt-in mechanism is tracked in [#44](https://github.com/qveys/tm-exclusions/issues/44).
+
+### Catalog invariants
+
+The smoke test suite (`tests/smoke.bats-like.sh`) guards five invariants:
+- ≥ 100 active rules (path/pattern/prune lines).
+- Exactly 17 distinct `#@` category labels.
+- Three section banners present (`# ── STATIC EXCLUSIONS (path) ──`, `# ── DYNAMIC SCAN PATTERNS (pattern) ──`, `# ── SCAN PRUNE ZONES (prune) ──`); the smoke test matches them by prefix.
+- No rule uses the `~/` home prefix (must be `$HOME/`).
+- Every rule sits under a `#@` marker.
+
+Adjusting the taxonomy therefore forces a coordinated update of the docs and the test thresholds.
