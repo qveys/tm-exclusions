@@ -201,7 +201,7 @@ Pruning `$HOME/Dropbox`, `$HOME/Google Drive`, `$HOME/OneDrive` is **not** part 
 ### Catalog invariants
 
 The smoke test suite (`tests/smoke.bats-like.sh`) guards five invariants:
-- ≥ 100 active rules (path/pattern/prune lines).
+- ≥ 102 active rules (path/pattern/prune lines).
 - Exactly 17 distinct `#@` category labels.
 - Three section banners present (`# ── STATIC EXCLUSIONS (path) ──`, `# ── DYNAMIC SCAN PATTERNS (pattern) ──`, `# ── SCAN PRUNE ZONES (prune) ──`); the smoke test matches them by prefix.
 - No rule uses the `~/` home prefix (must be `$HOME/`).

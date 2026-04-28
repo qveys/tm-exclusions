@@ -310,10 +310,11 @@ make install  # Install to /usr/local
 ### Releasing
 
 ```bash
-# 1. Bump VERSION in tm_exclusions.sh
-# 2. Commit, then tag and push:
-git tag v1.1.0
-git push origin v1.1.0
+# 1. Open a release PR that bumps VERSION and CHANGELOG:
+make release VERSION=1.1.0
+
+# 2. After merging the release PR, tag the merge commit:
+make tag VERSION=1.1.0
 ```
 
 CI handles the rest: creates GitHub release, computes tarball SHA256, and updates the [Homebrew formula](https://github.com/qveys/homebrew-tools).

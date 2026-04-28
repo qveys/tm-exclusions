@@ -4,6 +4,7 @@ SCRIPT = tm_exclusions.sh
 PREFIX ?= /usr/local/bin
 INSTALL_NAME = tm-exclusions
 SHARE_DIR ?= $(abspath $(PREFIX)/../share/tm-exclusions)
+BASE_BRANCH ?= master
 
 # Auto-detect whether sudo is required for install/uninstall.
 # Override with: make install SUDO= (skip) or make install SUDO=sudo (force)
@@ -93,30 +94,34 @@ check: lint test ## Run all checks (lint + test)
 
 release: ## Cut a release PR — make release VERSION=x.y.z  (run make tag after merge)
 	@test -n "$(VERSION)" || { echo "Usage: make release VERSION=x.y.z" >&2; exit 1; }
-	@command -v gh >/dev/null 2>&1 || { echo "Error: gh CLI not installed." >&2; exit 1; }
+	@command -v gh >/dev/null 2>&1 || { \
+	  echo "Error: gh CLI not installed." >&2; \
+	  echo "Install it with: brew install gh" >&2; \
+	  echo "Or see https://cli.github.com/" >&2; \
+	  exit 1; \
+	}
 	@git diff --quiet && git diff --cached --quiet || \
 	  { echo "Error: uncommitted changes — commit or stash first." >&2; exit 1; }
-	@git rev-parse --verify release/v$(VERSION) >/dev/null 2>&1 && \
-	  { echo "Error: branch release/v$(VERSION) already exists." >&2; exit 1; } || true
-	$(MAKE) check
-	git checkout -b release/v$(VERSION)
-	sed -i '' 's|^readonly VERSION=".*"|readonly VERSION="$(VERSION)"|' $(SCRIPT)
-	sed -i '' 's|^  version ".*"|  version "$(VERSION)"|' Formula/tm-exclusions.rb
-	awk '/^## Unreleased$$/{print; print ""; print "## v$(VERSION)"; next}1' \
-	  CHANGELOG.md > CHANGELOG.md.tmp && mv CHANGELOG.md.tmp CHANGELOG.md
-	git add $(SCRIPT) Formula/tm-exclusions.rb CHANGELOG.md
-	git commit -m "🔖 chore(release): bump to v$(VERSION)"
-	git push -u origin release/v$(VERSION)
-	@printf 'Release v$(VERSION).\n\nAfter merge, push the tag to trigger the GitHub release workflow:\n```\nmake tag VERSION=$(VERSION)\n```\n' \
-	  > /tmp/tm-release-body.md
-	gh pr create \
-	  --title "🔖 chore(release): v$(VERSION)" \
-	  --body-file /tmp/tm-release-body.md \
-	  --base master
-	@rm -f /tmp/tm-release-body.md
+	@if git show-ref --verify --quiet refs/heads/release/v$(VERSION); then \
+	  echo "Error: branch release/v$(VERSION) already exists." >&2; \
+	  exit 1; \
+	fi
+	@$(MAKE) check
+	@git checkout -b release/v$(VERSION)
+	@current_version="$$(sed -n 's/^readonly VERSION="\([^"]*\)"/\1/p' $(SCRIPT))"; \
+	  test -n "$$current_version" || { echo "Error: could not determine current version from $(SCRIPT)." >&2; exit 1; }; \
+	  tmp_file="$$(mktemp)"; \
+	  sed 's|^readonly VERSION=".*"|readonly VERSION="$(VERSION)"|' $(SCRIPT) > "$$tmp_file" && mv "$$tmp_file" $(SCRIPT)
+	@tmp_file="$$(mktemp)"; \
+	  awk '/^## Unreleased$$/{print; print ""; print "## v$(VERSION)"; next}1' CHANGELOG.md > "$$tmp_file" && mv "$$tmp_file" CHANGELOG.md
+	@git add $(SCRIPT) CHANGELOG.md
+	@git commit -m "🔖 chore(release): bump to v$(VERSION)"
+	@git push -u origin release/v$(VERSION)
+	@printf 'Release v$(VERSION).\n\nAfter merge, push the tag to trigger the GitHub release workflow:\n```\nmake tag VERSION=$(VERSION)\n```\n' | \
+	  gh pr create --title "🔖 chore(release): v$(VERSION)" --body-file - --base $(BASE_BRANCH)
 
 tag: ## Push the release tag after the release PR is merged — make tag VERSION=x.y.z
 	@test -n "$(VERSION)" || { echo "Usage: make tag VERSION=x.y.z" >&2; exit 1; }
-	git fetch origin
-	git tag v$(VERSION) origin/master
-	git push origin v$(VERSION)
+	@git fetch origin
+	@git tag v$(VERSION) origin/$(BASE_BRANCH)
+	@git push origin v$(VERSION)
