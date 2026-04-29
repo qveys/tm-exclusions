@@ -22,6 +22,10 @@ All notable changes to this project will be documented in this file.
 - Static paths for `/Applications` and `$HOME/Applications`.
 - Default config now ships ~102 rules across 17 categories (up from 39). Path style normalized to `$HOME/...`. New `#@CategoryName` section markers (cosmetic in 1.x; future report grouping tracked in #34). Several entries ship commented (opt-in): `pattern|.cache`, `pattern|site-packages`, `path|$HOME/.docker` (keeps registry credentials), the `App Support` Application Support roots (mix of user data and caches), and `path|/private/var/folders` (`du`/pipefail abort, see #45). `$HOME/.ollama/models` replaces the parent `$HOME/.ollama` (preserves `id_ed25519` and chat history). Cloud-sync prunes deferred to user opt-in (#44). (#37)
 
+### Fixed
+
+- Dynamic scan no longer emits redundant child exclusions under an already-excluded parent. After the parent (e.g. `~/Git/<repo>/node_modules`) is kept, descendants matched by the same or another pattern (e.g. `.pnpm/<pkg>/node_modules`) are silently skipped — they're already covered transitively by the parent. Saves hundreds of lines per pnpm workspace and avoids duplicate `tmutil addexclusion` calls. ([#23](https://github.com/qveys/tm-exclusions/issues/23))
+
 ### Docs
 
 - Architecture and README updated for the above. Ongoing parity checklist: GitHub issue [#34](https://github.com/qveys/tm-exclusions/issues/34).

@@ -732,6 +732,32 @@ EOF
     return 1
 }
 
+# Returns 0 if $1 is the same as $2 or a descendant of $2.
+# Pure string check — quoted "$2" is treated literally inside the case pattern,
+# so paths containing glob chars are matched safely.
+path_under() {
+    local descendant="$1"
+    local ancestor="$2"
+    case "$descendant" in
+        "$ancestor"|"$ancestor"/*) return 0 ;;
+    esac
+    return 1
+}
+
+# Returns 0 if $1 is covered by an entry in the kept-paths file ($2).
+# An entry covers $1 when $1 == entry, or $1 lies under entry.
+is_covered_by_kept() {
+    local check="$1"
+    local kept_file="$2"
+    [[ -z "$kept_file" || ! -s "$kept_file" ]] && return 1
+    local entry
+    while IFS= read -r entry; do
+        [[ -z "$entry" ]] && continue
+        path_under "$check" "$entry" && return 0
+    done < "$kept_file"
+    return 1
+}
+
 scan_dynamic_patterns() {
     log_info ""
     log_info "${MSG_SCANNING}"
@@ -740,58 +766,97 @@ scan_dynamic_patterns() {
         return 0
     fi
 
-    # Build find arguments for pattern matching
     # We scan from $HOME, respecting prune paths
     local scan_root="${HOME}"
 
-    # Use a simpler approach: for each pattern, use find
+    # Prefix-prune state: every path we decide to keep is appended here so that
+    # subsequent candidates falling under it are skipped (issue #23).
+    # Seed with CONF_PATHS so dynamic candidates under an already-known static
+    # exclusion (e.g. ~/.npm covers ~/.npm/_npx/X/node_modules) are also pruned.
+    local kept_file
+    kept_file="$(mktemp "${TMPDIR:-/tmp}/tm_exc_kept.XXXXXX")"
+    if [[ -n "${CONF_PATHS}" ]]; then
+        printf '%s\n' "${CONF_PATHS}" | grep -v '^[[:space:]]*$' > "$kept_file" || true
+    fi
+
+    # Collect all dynamic matches up-front (across all patterns) so we can sort
+    # them globally — lexical sort puts ancestors before descendants because an
+    # ancestor path is a strict string prefix of any descendant.
+    local all_results
+    all_results="$(mktemp "${TMPDIR:-/tmp}/tm_exc_all.XXXXXX")"
+
     local pattern_name
     while IFS= read -r pattern_name; do
         [[ -z "$pattern_name" ]] && continue
-
-        # Use find to locate directories matching pattern_name
-        # -maxdepth 6 keeps it practical
-        # Write found directories to a temp file to avoid subshell variable scope issues
-        local tmp_results
-        tmp_results="$(mktemp "${TMPDIR:-/tmp}/tm_exc.XXXXXX")"
-        find "$scan_root" -maxdepth 6 -type d -name "$pattern_name" > "$tmp_results" 2>/dev/null || true
-
+        local tmp_pattern
+        tmp_pattern="$(mktemp "${TMPDIR:-/tmp}/tm_exc.XXXXXX")"
+        find "$scan_root" -maxdepth 6 -type d -name "$pattern_name" > "$tmp_pattern" 2>/dev/null || true
+        # Tag each match with its pattern so pattern_match_allowed can re-check later.
+        # Tab-separated; pattern names never contain tabs in our config schema.
+        local found_dir
         while IFS= read -r found_dir; do
             [[ -z "$found_dir" ]] && continue
-
-            if ! pattern_match_allowed "$pattern_name" "$found_dir"; then
-                continue
-            fi
-
-            # Check if this path is under a pruned directory
-            if is_pruned "$found_dir"; then
-                log_info "  ${MSG_PRUNE_SKIP} ${found_dir}"
-                continue
-            fi
-
-            if [[ "${MODE}" = "uninstall" ]]; then
-                remove_exclusion "$found_dir"
-            elif [[ "${MODE}" = "report-only" ]]; then
-                TOTAL_CHECKED=$((TOTAL_CHECKED + 1))
-                du_track_path "$found_dir"
-                if cannot_privileged_tmutil "$found_dir"; then
-                    TOTAL_SKIPPED=$((TOTAL_SKIPPED + 1))
-                    add_report_line "SKIP  ${found_dir} (needs sudo for system path)"
-                elif tm_is_excluded "$found_dir"; then
-                    TOTAL_ALREADY=$((TOTAL_ALREADY + 1))
-                    add_report_line "OK    ${found_dir} (excluded)"
-                else
-                    TOTAL_EXCLUDED=$((TOTAL_EXCLUDED + 1))
-                    add_report_line "NEED  ${found_dir} (not excluded)"
-                fi
-            else
-                apply_exclusion "$found_dir"
-            fi
-        done < "$tmp_results"
-        rm -f "$tmp_results"
+            printf '%s\t%s\n' "$found_dir" "$pattern_name" >> "$all_results"
+        done < "$tmp_pattern"
+        rm -f "$tmp_pattern"
     done <<EOF
 ${CONF_PATTERNS}
 EOF
+
+    # Sort by path so that a parent directory precedes its descendants and is
+    # therefore kept first; descendants are then dropped by is_covered_by_kept.
+    local sorted_results
+    sorted_results="$(mktemp "${TMPDIR:-/tmp}/tm_exc_sorted.XXXXXX")"
+    LC_ALL=C sort -t$'\t' -k1,1 "$all_results" > "$sorted_results"
+    rm -f "$all_results"
+
+    local line found_dir matched_pattern
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        found_dir="${line%%$'\t'*}"
+        matched_pattern="${line#*$'\t'}"
+
+        if ! pattern_match_allowed "$matched_pattern" "$found_dir"; then
+            continue
+        fi
+
+        # Skip if a config-level prune zone covers this path.
+        if is_pruned "$found_dir"; then
+            log_info "  ${MSG_PRUNE_SKIP} ${found_dir}"
+            continue
+        fi
+
+        # Skip if a previously-kept path (static or earlier dynamic) already
+        # covers this one — prevents the redundant child-of-node_modules storm.
+        if is_covered_by_kept "$found_dir" "$kept_file"; then
+            continue
+        fi
+
+        # Record before applying so later siblings/descendants in the same scan
+        # see this path as "already kept".
+        printf '%s\n' "$found_dir" >> "$kept_file"
+
+        if [[ "${MODE}" = "uninstall" ]]; then
+            remove_exclusion "$found_dir"
+        elif [[ "${MODE}" = "report-only" ]]; then
+            TOTAL_CHECKED=$((TOTAL_CHECKED + 1))
+            du_track_path "$found_dir"
+            if cannot_privileged_tmutil "$found_dir"; then
+                TOTAL_SKIPPED=$((TOTAL_SKIPPED + 1))
+                add_report_line "SKIP  ${found_dir} (needs sudo for system path)"
+            elif tm_is_excluded "$found_dir"; then
+                TOTAL_ALREADY=$((TOTAL_ALREADY + 1))
+                add_report_line "OK    ${found_dir} (excluded)"
+            else
+                TOTAL_EXCLUDED=$((TOTAL_EXCLUDED + 1))
+                add_report_line "NEED  ${found_dir} (not excluded)"
+            fi
+        else
+            apply_exclusion "$found_dir"
+        fi
+    done < "$sorted_results"
+
+    rm -f "$sorted_results" "$kept_file"
 }
 
 apply_static_paths() {
