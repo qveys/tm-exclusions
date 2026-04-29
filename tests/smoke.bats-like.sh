@@ -487,6 +487,8 @@ fi
 rm -rf "${GLOB_HOME}"
 
 # ---- du -sk tolerance for partially-readable paths (#18) ----
+# NOTE: chmod 000 on the subdir is vacuous on root CI runners (root ignores
+# permission bits), so the test only exercises the pipefail fix on user runners.
 echo ""
 echo "--- du -sk tolerance for unreadable subdirs (#18) ---"
 
