@@ -316,11 +316,18 @@ pattern_match_allowed() {
             return 1
             ;;
         site-packages)
-            # Allow only when the immediate parent directory is a lib/pythonX.Y path,
-            # e.g. ~/.lulu-tool/lib/python3.14/site-packages — reject bare site-packages
-            # directories that have no lib/pythonX ancestor.
+            # Allow only when the immediate parent is a lib/pythonX.Y directory:
+            # ~/.<tool>/lib/pythonX.Y/site-packages (e.g. .lulu-tool/lib/python3.14/...).
+            # The lib/ grandparent guard rejects bare ~/<tool>/pythonX/site-packages
+            # layouts that would otherwise match by parent name alone.
             case "${parent##*/}" in
-                python[0-9]*) return 0 ;;
+                python[0-9]*)
+                    local grandparent
+                    grandparent="$(dirname "$parent")"
+                    case "${grandparent##*/}" in
+                        lib) return 0 ;;
+                    esac
+                    ;;
             esac
             return 1
             ;;

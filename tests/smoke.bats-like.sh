@@ -515,13 +515,15 @@ rm -rf "${DU_HOME}"
 
 # ---- site-packages filter (#26) ----
 # Test A: ~/.faketool/lib/python3.14/site-packages IS excluded (valid Python tool install)
-# Test B: ~/random/site-packages is NOT excluded (no lib/pythonX ancestor)
+# Test B: ~/random/site-packages is NOT excluded (bare site-packages, no python-versioned parent)
+# Test C: ~/.faketool/python3.14/site-packages is NOT excluded (parent is pythonX.Y but grandparent != lib)
 echo ""
 echo "--- site-packages pattern filter (#26) ---"
 
 SP_HOME="$(mktemp -d)"
 mkdir -p "${SP_HOME}/.faketool/lib/python3.14/site-packages"
 mkdir -p "${SP_HOME}/random/site-packages"
+mkdir -p "${SP_HOME}/.faketool/python3.14/site-packages"
 SP_CONF="${SP_HOME}/sp-test.conf"
 cat > "${SP_CONF}" << 'EOF'
 pattern|site-packages|Python tool installs (lib/pythonX.Y/site-packages under ~/.<tool>)
@@ -542,15 +544,26 @@ else
     printf '%b  FAIL%b expected 1 exclusion for valid site-packages, got %d\n' "$RED" "$NC" "${SP_VALID_HITS}"
 fi
 
-# Test B: bare ~/random/site-packages must NOT appear
+# Test B: bare ~/random/site-packages must NOT appear (no python-versioned parent)
 SP_BARE_HITS=$(printf '%s\n' "${SP_OUT}" | grep -cE "(Applying exclusion:|Already excluded:).*random/site-packages$" || true)
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ "${SP_BARE_HITS}" -eq 0 ]]; then
     TESTS_PASSED=$((TESTS_PASSED + 1))
-    printf '%b  PASS%b bare ~/random/site-packages is NOT excluded\n' "$GREEN" "$NC"
+    printf '%b  PASS%b bare ~/random/site-packages (no python-versioned parent) is NOT excluded\n' "$GREEN" "$NC"
 else
     TESTS_FAILED=$((TESTS_FAILED + 1))
     printf '%b  FAIL%b bare site-packages should not be excluded, got %d hit(s)\n' "$RED" "$NC" "${SP_BARE_HITS}"
+fi
+
+# Test C: ~/.faketool/python3.14/site-packages must NOT appear (parent is pythonX.Y but grandparent != lib)
+SP_NOLIB_HITS=$(printf '%s\n' "${SP_OUT}" | grep -cE "(Applying exclusion:|Already excluded:).*\.faketool/python3\.14/site-packages$" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${SP_NOLIB_HITS}" -eq 0 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b ~/.faketool/python3.14/site-packages (no lib/ grandparent) is NOT excluded\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b python3.14/site-packages without lib/ grandparent should not be excluded, got %d hit(s)\n' "$RED" "$NC" "${SP_NOLIB_HITS}"
 fi
 
 rm -rf "${SP_HOME}"
