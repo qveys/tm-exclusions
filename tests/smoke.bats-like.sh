@@ -513,5 +513,47 @@ assert_exit_code 0 \
 chmod 700 "${DU_HOME}/restrictedparent/unreadable_subdir"
 rm -rf "${DU_HOME}"
 
+# ---- site-packages filter (#26) ----
+# Test A: ~/.faketool/lib/python3.14/site-packages IS excluded (valid Python tool install)
+# Test B: ~/random/site-packages is NOT excluded (no lib/pythonX ancestor)
+echo ""
+echo "--- site-packages pattern filter (#26) ---"
+
+SP_HOME="$(mktemp -d)"
+mkdir -p "${SP_HOME}/.faketool/lib/python3.14/site-packages"
+mkdir -p "${SP_HOME}/random/site-packages"
+SP_CONF="${SP_HOME}/sp-test.conf"
+cat > "${SP_CONF}" << 'EOF'
+pattern|site-packages|Python tool installs (lib/pythonX.Y/site-packages under ~/.<tool>)
+EOF
+
+SP_OUT="$(env HOME="${SP_HOME}" \
+              TM_EXCLUSIONS_DEFAULT_CONF="${SP_CONF}" \
+              bash "$TM_EXCLUSIONS" --dry-run 2>&1 || true)"
+
+# Test A: valid lib/python3.14/site-packages must appear
+SP_VALID_HITS=$(printf '%s\n' "${SP_OUT}" | grep -cE "(Applying exclusion:|Already excluded:).*\.faketool/lib/python3\.14/site-packages$" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${SP_VALID_HITS}" -eq 1 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b lib/python3.14/site-packages under ~/.<tool> is excluded\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b expected 1 exclusion for valid site-packages, got %d\n' "$RED" "$NC" "${SP_VALID_HITS}"
+fi
+
+# Test B: bare ~/random/site-packages must NOT appear
+SP_BARE_HITS=$(printf '%s\n' "${SP_OUT}" | grep -cE "(Applying exclusion:|Already excluded:).*random/site-packages$" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${SP_BARE_HITS}" -eq 0 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b bare ~/random/site-packages is NOT excluded\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b bare site-packages should not be excluded, got %d hit(s)\n' "$RED" "$NC" "${SP_BARE_HITS}"
+fi
+
+rm -rf "${SP_HOME}"
+
 # ---- Summary ----
 test_summary

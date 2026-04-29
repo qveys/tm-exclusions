@@ -315,6 +315,15 @@ pattern_match_allowed() {
             fi
             return 1
             ;;
+        site-packages)
+            # Allow only when the immediate parent directory is a lib/pythonX.Y path,
+            # e.g. ~/.lulu-tool/lib/python3.14/site-packages — reject bare site-packages
+            # directories that have no lib/pythonX ancestor.
+            case "${parent##*/}" in
+                python[0-9]*) return 0 ;;
+            esac
+            return 1
+            ;;
         *)
             return 0
             ;;
