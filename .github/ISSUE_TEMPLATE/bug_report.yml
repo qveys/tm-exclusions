@@ -1,0 +1,80 @@
+name: 🐞 Bug report
+description: Report a reproducible bug in tm-exclusions.
+title: "🐞 fix: <short description>"
+labels: ["🐛 Type: Bug", "🟢 Status: Triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. Please fill in as much detail as you can — it speeds up triage considerably.
+
+        **Security issues**: do not file here. See the [security policy](https://github.com/qveys/tm-exclusions/security/policy).
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear and concise description of the bug.
+      placeholder: When I run `tm-exclusions --dry-run`, …
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      description: Minimal command sequence to reproduce.
+      placeholder: |
+        1. tm-exclusions --init
+        2. tm-exclusions --dry-run
+        3. observe …
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: tm-exclusions version
+      description: Output of `tm-exclusions --version`
+      placeholder: "1.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "macOS 15.4 (Sequoia)"
+    validations:
+      required: true
+
+  - type: input
+    id: bash
+    attributes:
+      label: Bash version
+      description: Output of `bash --version | head -1`
+      placeholder: "GNU bash, version 3.2.57(1)-release (arm64-apple-darwin24)"
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs / report excerpt
+      render: shell
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Pre-submission checklist
+      options:
+        - label: I searched [existing issues](https://github.com/qveys/tm-exclusions/issues?q=is%3Aissue) before opening this one.
+          required: true
+        - label: I tested with `--dry-run` and the latest release.
+          required: true
