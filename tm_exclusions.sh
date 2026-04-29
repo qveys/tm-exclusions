@@ -733,11 +733,16 @@ EOF
 }
 
 # Returns 0 if $1 is the same as $2 or a descendant of $2.
-# Pure string check — quoted "$2" is treated literally inside the case pattern,
-# so paths containing glob chars are matched safely.
+# Pure string check — the quoted "$ancestor" expansion is treated literally
+# inside the `case` pattern, so paths containing `*`, `?`, or `[…]` are
+# matched as plain characters (no glob promotion).
+# Trailing slashes are normalized so `/a/b` matches `/a/b/` as the same dir
+# and `/a/b/c` is correctly recognized as a descendant of `/a/b/`.
 path_under() {
-    local descendant="$1"
-    local ancestor="$2"
+    local descendant="${1%/}"
+    local ancestor="${2%/}"
+    [[ -z "$descendant" ]] && descendant="/"
+    [[ -z "$ancestor" ]] && ancestor="/"
     case "$descendant" in
         "$ancestor"|"$ancestor"/*) return 0 ;;
     esac
@@ -828,13 +833,19 @@ EOF
 
         # Skip if a previously-kept path (static or earlier dynamic) already
         # covers this one — prevents the redundant child-of-node_modules storm.
-        if is_covered_by_kept "$found_dir" "$kept_file"; then
+        # Bypassed in uninstall mode: each previously-added child exclusion
+        # must be removed individually, otherwise descendants of an excluded
+        # parent would be left behind in tmutil's exclusion list.
+        if [[ "${MODE}" != "uninstall" ]] && is_covered_by_kept "$found_dir" "$kept_file"; then
             continue
         fi
 
         # Record before applying so later siblings/descendants in the same scan
-        # see this path as "already kept".
-        printf '%s\n' "$found_dir" >> "$kept_file"
+        # see this path as "already kept". Skipped in uninstall mode so that no
+        # descendant is suppressed.
+        if [[ "${MODE}" != "uninstall" ]]; then
+            printf '%s\n' "$found_dir" >> "$kept_file"
+        fi
 
         if [[ "${MODE}" = "uninstall" ]]; then
             remove_exclusion "$found_dir"

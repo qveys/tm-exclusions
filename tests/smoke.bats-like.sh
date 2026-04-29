@@ -452,5 +452,39 @@ fi
 
 rm -rf "${PRUNE_HOME}"
 
+# ---- Prefix-prune handles glob metacharacters in paths (#23 review) ----
+# Defensive coverage: directory names containing `*`, `?`, `[`, `]` must not
+# accidentally match unrelated descendants. Quoted variable expansions in
+# `case` patterns are literal, but a regression here would silently over-prune.
+echo ""
+echo "--- Prefix-prune: glob meta in paths (#23) ---"
+
+GLOB_HOME="$(mktemp -d)"
+mkdir -p "${GLOB_HOME}/proj[a]/node_modules"
+mkdir -p "${GLOB_HOME}/projB/node_modules"
+GLOB_CONF="${GLOB_HOME}/glob.conf"
+cat > "${GLOB_CONF}" << 'EOF'
+pattern|node_modules|glob meta smoke
+EOF
+
+GLOB_OUT="$(env HOME="${GLOB_HOME}" \
+                TM_EXCLUSIONS_DEFAULT_CONF="${GLOB_CONF}" \
+                bash "$TM_EXCLUSIONS" --dry-run 2>&1 || true)"
+
+# Both literal-bracket and adjacent siblings must each be processed exactly
+# once. If `[a]` were treated as a glob class, `proj[a]/node_modules` would
+# also "cover" `projB/node_modules` and only one of the two would survive.
+GLOB_HITS=$(printf '%s\n' "${GLOB_OUT}" | grep -cE "(Applying exclusion:|Already excluded:).*node_modules$" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${GLOB_HITS}" -eq 2 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b glob-meta sibling paths processed independently (got %d)\n' "$GREEN" "$NC" "${GLOB_HITS}"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b expected 2 distinct exclusions, got %d\n' "$RED" "$NC" "${GLOB_HITS}"
+fi
+
+rm -rf "${GLOB_HOME}"
+
 # ---- Summary ----
 test_summary
