@@ -552,6 +552,39 @@ load_config() {
             log_error "Warning: TM_EXCLUSIONS_EXTRA_CONF is set but file is missing or unreadable: ${TM_EXCLUSIONS_EXTRA_CONF}"
         fi
     fi
+
+    # Derive .bak / .old prune entries from every static path rule so that
+    # shadow copies (e.g. ~/.bun.bak from a Bun reinstall) are silently skipped
+    # during the dynamic scan without requiring explicit catalog entries.
+    # Only path| entries are processed — pattern| and prune| are excluded.
+    derive_bak_old_prunes
+}
+
+# For every static 'path' catalog entry P, append P.bak and P.old to
+# CONF_PRUNES (if not already present).  These auto-derived prunes only
+# affect is_pruned() / scan_dynamic_patterns(); apply_static_paths() is
+# not changed — .bak/.old paths are never passed to tmutil addexclusion.
+derive_bak_old_prunes() {
+    [[ -z "${CONF_PATHS}" ]] && return 0
+    local p suffix candidate
+    while IFS= read -r p; do
+        [[ -z "$p" ]] && continue
+        for suffix in .bak .old; do
+            candidate="${p}${suffix}"
+            # Skip if already present in CONF_PRUNES
+            if printf '%s\n' "${CONF_PRUNES}" | grep -Fxq "${candidate}" 2>/dev/null; then
+                continue
+            fi
+            if [[ -z "${CONF_PRUNES}" ]]; then
+                CONF_PRUNES="${candidate}"
+            else
+                CONF_PRUNES="${CONF_PRUNES}
+${candidate}"
+            fi
+        done
+    done <<EOF
+${CONF_PATHS}
+EOF
 }
 
 # ---------------------------------------------------------------------------
