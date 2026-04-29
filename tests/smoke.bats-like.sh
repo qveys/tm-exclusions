@@ -65,6 +65,13 @@ assert_output_contains "--force" \
 echo ""
 echo "--- Version output ---"
 
+EXPECTED_VERSION=$(sed -n 's/^readonly VERSION="\([^"]*\)"/\1/p' "$TM_EXCLUSIONS")
+
+if [ -z "$EXPECTED_VERSION" ]; then
+    echo "FAIL: could not extract VERSION from $TM_EXCLUSIONS — refusing to assert against empty string" >&2
+    exit 1
+fi
+
 assert_exit_code 0 \
     "--version exits 0" \
     bash "$TM_EXCLUSIONS" --version
@@ -73,7 +80,7 @@ assert_output_contains "tm-exclusions" \
     "--version shows program name" \
     bash "$TM_EXCLUSIONS" --version
 
-assert_output_contains "1.1.0" \
+assert_output_contains "$EXPECTED_VERSION" \
     "--version shows version number" \
     bash "$TM_EXCLUSIONS" --version
 
@@ -352,7 +359,7 @@ else
 fi
 
 # Distinct #@ category labels == 17
-LABEL_COUNT=$(grep -E '^#@' "${CONF}" | sort -u | wc -l | tr -d ' ')
+LABEL_COUNT=$({ grep -E '^#@' "${CONF}" || true; } | sort -u | wc -l | tr -d ' ')
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ "${LABEL_COUNT}" -eq 17 ]]; then
     TESTS_PASSED=$((TESTS_PASSED + 1))
