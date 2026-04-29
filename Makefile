@@ -1,9 +1,10 @@
-.PHONY: setup check-hooks help test lint install uninstall check
+.PHONY: setup check-hooks help test lint install uninstall check release tag
 
 SCRIPT = tm_exclusions.sh
 PREFIX ?= /usr/local/bin
 INSTALL_NAME = tm-exclusions
 SHARE_DIR ?= $(abspath $(PREFIX)/../share/tm-exclusions)
+BASE_BRANCH ?= master
 
 # Auto-detect whether sudo is required for install/uninstall.
 # Override with: make install SUDO= (skip) or make install SUDO=sudo (force)
@@ -90,3 +91,62 @@ uninstall: ## Remove tm-exclusions from PREFIX
 	fi
 
 check: lint test ## Run all checks (lint + test)
+
+release: ## Cut a release PR — make release VERSION=x.y.z  (run make tag after merge)
+	@test -n "$(VERSION)" || { echo "Usage: make release VERSION=x.y.z" >&2; exit 1; }
+	@echo "$(VERSION)" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$' || \
+	  { echo "Error: VERSION must match X.Y.Z (got: $(VERSION))." >&2; exit 1; }
+	@command -v gh >/dev/null 2>&1 || { \
+	  echo "Error: gh CLI not installed." >&2; \
+	  echo "Install it with: brew install gh" >&2; \
+	  echo "Or see https://cli.github.com/" >&2; \
+	  exit 1; \
+	}
+	@git diff --quiet && git diff --cached --quiet || \
+	  { echo "Error: uncommitted changes — commit or stash first." >&2; exit 1; }
+	@git fetch origin $(BASE_BRANCH)
+	@if git show-ref --verify --quiet refs/heads/release/v$(VERSION) || \
+	    git ls-remote --exit-code --heads origin "release/v$(VERSION)" >/dev/null 2>&1; then \
+	  echo "Error: branch release/v$(VERSION) already exists (locally or on origin)." >&2; \
+	  exit 1; \
+	fi
+	@grep -q '^## Unreleased$$' CHANGELOG.md || \
+	  { echo "Error: CHANGELOG.md is missing a '## Unreleased' section to roll into v$(VERSION)." >&2; exit 1; }
+	@$(MAKE) check
+	@git checkout -b release/v$(VERSION) origin/$(BASE_BRANCH)
+	@current_version="$$(sed -n 's/^readonly VERSION="\([^"]*\)"/\1/p' $(SCRIPT))"; \
+	  test -n "$$current_version" || { echo "Error: could not determine current version from $(SCRIPT)." >&2; exit 1; }; \
+	  tmp_file="$$(mktemp)"; \
+	  sed 's|^readonly VERSION=".*"|readonly VERSION="$(VERSION)"|' $(SCRIPT) > "$$tmp_file" && mv "$$tmp_file" $(SCRIPT)
+	@tmp_file="$$(mktemp)"; \
+	  awk '/^## Unreleased$$/{print; print ""; print "## v$(VERSION)"; next}1' CHANGELOG.md > "$$tmp_file" && mv "$$tmp_file" CHANGELOG.md
+	@git add $(SCRIPT) CHANGELOG.md
+	@git commit -m "🔖 chore(release): bump to v$(VERSION)"
+	@git push -u origin release/v$(VERSION)
+	@printf 'Release v$(VERSION).\n\nAfter merge, push the tag to trigger the GitHub release workflow:\n```\nmake tag VERSION=$(VERSION)\n```\n' | \
+	  gh pr create --title "🔖 chore(release): v$(VERSION)" --body-file - --base $(BASE_BRANCH)
+
+tag: ## Push the signed release tag after the release PR is merged — make tag VERSION=x.y.z
+	@test -n "$(VERSION)" || { echo "Usage: make tag VERSION=x.y.z" >&2; exit 1; }
+	@echo "$(VERSION)" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$' || \
+	  { echo "Error: VERSION must match X.Y.Z (got: $(VERSION))." >&2; exit 1; }
+	@signing_key="$$(git config --get user.signingkey)"; \
+	  test -n "$$signing_key" || { \
+	    echo "Error: user.signingkey is empty or unset — required for signed tags (the 'tag' ruleset enforces signatures)." >&2; \
+	    echo "Configure with: git config --global user.signingkey <KEYID>" >&2; \
+	    exit 1; \
+	  }
+	@git fetch origin
+	@if git rev-parse --verify --quiet "v$(VERSION)" >/dev/null || \
+	    git ls-remote --exit-code --tags origin "v$(VERSION)" >/dev/null 2>&1; then \
+	  echo "Error: tag v$(VERSION) already exists (locally or on origin)." >&2; \
+	  exit 1; \
+	fi
+	@base_version="$$(git show "origin/$(BASE_BRANCH):$(SCRIPT)" | sed -n 's/^readonly VERSION="\([^"]*\)"/\1/p')"; \
+	  if [ "$$base_version" != "$(VERSION)" ]; then \
+	    echo "Error: $(SCRIPT) on origin/$(BASE_BRANCH) has VERSION=\"$$base_version\", expected \"$(VERSION)\"." >&2; \
+	    echo "Make sure 'make release VERSION=$(VERSION)' was merged before tagging." >&2; \
+	    exit 1; \
+	  fi
+	@git tag -s v$(VERSION) origin/$(BASE_BRANCH) -m "Release v$(VERSION)"
+	@git push origin v$(VERSION)

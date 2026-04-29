@@ -21,7 +21,7 @@ On macOS, with [Homebrew](https://brew.sh/) installed:
 brew install --formula ./Formula/tm-exclusions.rb
 ```
 
-Bump `url`, `version`, and `sha256` in `Formula/tm-exclusions.rb` when cutting a new tag (or let the tap automation below handle the tap copy).
+The local formula is mainly a development install fixture. Do not bump only its `version` during a release PR; the tap automation below updates `url`, `version`, and `sha256` together after the tag exists.
 
 ### From the tap (`qveys/homebrew-tools`)
 
@@ -42,4 +42,4 @@ The `install` stanza in the tap **must** match this repo’s `Formula/tm-exclusi
 
 ## Relationship to epic #34
 
-Homebrew ships the **current 1.x** CLI. Broader behavior parity with the archived 2.x script is tracked in GitHub issue **#34**; packaging does not wait on that epic, but version bumps should stay consistent across `tm_exclusions.sh` `VERSION`, `CHANGELOG.md`, and the formula.
+Homebrew ships the **current 1.x** CLI. Broader behavior parity with the archived 2.x script is tracked in GitHub issue **#34**; packaging does not wait on that epic. Release PRs should keep `tm_exclusions.sh` `VERSION`, `CHANGELOG.md`, and version smoke tests in sync; the Homebrew tap formula is updated by release automation after the tag is pushed.
