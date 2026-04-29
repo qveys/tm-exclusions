@@ -22,7 +22,7 @@ See [`AGENTS.md`](AGENTS.md) for the full architecture, build commands, and Bash
 
 ## Commit style
 
-Conventional Commits with a leading emoji, enforced by the local `commit-msg` hook (`.githooks/commit-msg-fallback`). Examples:
+Conventional Commits with a leading emoji, enforced by the local [`commit-msg`](.githooks/commit-msg) hook (active when `core.hooksPath = .githooks`, set up by `make setup`). Examples:
 
 ```
 ✨ feat(config): expand default catalog to N rules

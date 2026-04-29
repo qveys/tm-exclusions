@@ -8,7 +8,7 @@ body:
       value: |
         Thanks for taking the time to file a bug. Please fill in as much detail as you can — it speeds up triage considerably.
 
-        **Security issues**: do not file here. See [`SECURITY.md`](../../blob/master/SECURITY.md).
+        **Security issues**: do not file here. See the [security policy](https://github.com/qveys/tm-exclusions/security/policy).
 
   - type: textarea
     id: what-happened
