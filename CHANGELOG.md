@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Config
+
+- **`TM_EXCLUSIONS_EXTRA_CONF`**: opt-in mechanism for power users with large cloud-sync trees. Set the env var to any config file (e.g. a copy of `config/extra-prunes.example.conf`) to load it after `default.conf` and `custom.conf`. Missing or unreadable file emits a stderr warning and continues. `config/default.conf` is unchanged. ([#17](https://github.com/qveys/tm-exclusions/issues/17))
+
 ### CLI
 
 - Desktop report policy made explicit: the `~/Desktop` copy is **off by default** (avoids clutter on unattended cron/launchd runs). Opt in with the new `--desktop-report` CLI flag or the existing `TM_EXCLUSIONS_REPORT_DESKTOP=1` env var; both are equivalent. ([#15](https://github.com/qveys/tm-exclusions/issues/15))

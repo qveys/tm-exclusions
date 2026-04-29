@@ -604,5 +604,65 @@ fi
 
 rm -rf "${SP_HOME}"
 
+# ---- TM_EXCLUSIONS_EXTRA_CONF (#17) ----
+echo ""
+echo "--- TM_EXCLUSIONS_EXTRA_CONF (#17) ---"
+
+EXTRA_HOME="$(mktemp -d "${TEST_HOME}/extra-conf-test.XXXXXX")"
+EXTRA_CONF="${EXTRA_HOME}/extra.conf"
+EXTRA_DEFAULT="${EXTRA_HOME}/default.conf"
+# A directory that will be matched by the pattern and then pruned
+mkdir -p "${EXTRA_HOME}/FakeDropbox/Code/node_modules"
+
+# Default config: scan for node_modules so the prune filter can fire
+cat > "${EXTRA_DEFAULT}" << 'EOF'
+pattern|node_modules|JS dependency tree — regenerable
+EOF
+
+# Extra config: prune the FakeDropbox subtree using its real path
+cat > "${EXTRA_CONF}" << EOF
+# Cloud-sync prune opt-in
+prune|${EXTRA_HOME}/FakeDropbox|Cloud-sync tree — skip regenerable sub-directories
+EOF
+
+assert_exit_code 0 \
+    "TM_EXCLUSIONS_EXTRA_CONF valid file — script exits 0" \
+    env HOME="${EXTRA_HOME}" \
+        TM_EXCLUSIONS_DEFAULT_CONF="${EXTRA_DEFAULT}" \
+        TM_EXCLUSIONS_EXTRA_CONF="${EXTRA_CONF}" \
+        bash "$TM_EXCLUSIONS" --dry-run
+
+assert_output_contains "Pruning" \
+    "TM_EXCLUSIONS_EXTRA_CONF prune rule is applied (prune message emitted)" \
+    env HOME="${EXTRA_HOME}" \
+        TM_EXCLUSIONS_DEFAULT_CONF="${EXTRA_DEFAULT}" \
+        TM_EXCLUSIONS_EXTRA_CONF="${EXTRA_CONF}" \
+        bash "$TM_EXCLUSIONS" --dry-run
+
+# Test: missing file → script does NOT abort, warns on stderr
+MISSING_CONF="${EXTRA_HOME}/does-not-exist.conf"
+
+assert_exit_code 0 \
+    "TM_EXCLUSIONS_EXTRA_CONF missing file — script exits 0 (does not abort)" \
+    env HOME="${EXTRA_HOME}" \
+        TM_EXCLUSIONS_DEFAULT_CONF="${EXTRA_DEFAULT}" \
+        TM_EXCLUSIONS_EXTRA_CONF="${MISSING_CONF}" \
+        bash "$TM_EXCLUSIONS" --dry-run
+
+EXTRA_WARN_OUT="$(env HOME="${EXTRA_HOME}" \
+    TM_EXCLUSIONS_DEFAULT_CONF="${EXTRA_DEFAULT}" \
+    TM_EXCLUSIONS_EXTRA_CONF="${MISSING_CONF}" \
+    bash "$TM_EXCLUSIONS" --dry-run 2>&1 || true)"
+TESTS_RUN=$((TESTS_RUN + 1))
+if printf '%s\n' "${EXTRA_WARN_OUT}" | grep -q "Warning:.*TM_EXCLUSIONS_EXTRA_CONF"; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b TM_EXCLUSIONS_EXTRA_CONF missing file prints warning to stderr\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b TM_EXCLUSIONS_EXTRA_CONF missing file should print warning\n' "$RED" "$NC"
+fi
+
+rm -rf "${EXTRA_HOME}"
+
 # ---- Summary ----
 test_summary
