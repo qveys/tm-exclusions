@@ -486,5 +486,30 @@ fi
 
 rm -rf "${GLOB_HOME}"
 
+# ---- du -sk tolerance for partially-readable paths (#18) ----
+echo ""
+echo "--- du -sk tolerance for unreadable subdirs (#18) ---"
+
+DU_HOME="$(mktemp -d)"
+mkdir -p "${DU_HOME}/restrictedparent/unreadable_subdir"
+chmod 000 "${DU_HOME}/restrictedparent/unreadable_subdir"
+DU_CONF="${DU_HOME}/du-test.conf"
+cat > "${DU_CONF}" << EOF
+path|${DU_HOME}/restrictedparent|du tolerance test
+EOF
+
+assert_exit_code 0 \
+    "--dry-run exits 0 with partially-unreadable path in config" \
+    env HOME="${DU_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${DU_CONF}" \
+        bash "$TM_EXCLUSIONS" --dry-run
+
+assert_exit_code 0 \
+    "--report-only exits 0 with partially-unreadable path in config" \
+    env HOME="${DU_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${DU_CONF}" \
+        bash "$TM_EXCLUSIONS" --report-only
+
+chmod 700 "${DU_HOME}/restrictedparent/unreadable_subdir"
+rm -rf "${DU_HOME}"
+
 # ---- Summary ----
 test_summary
