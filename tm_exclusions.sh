@@ -315,6 +315,24 @@ pattern_match_allowed() {
             fi
             return 1
             ;;
+        site-packages)
+            # Allow only the canonical Python install shape:
+            # .../lib/pythonX.Y/site-packages (pip's output dir, always
+            # regenerable). Common matches: ~/.<tool>/lib/python3.14/...,
+            # /opt/homebrew/lib/python3.X/..., ~/.pyenv/versions/.../lib/...
+            # The lib/ grandparent guard rejects bare <tool>/pythonX/site-packages
+            # layouts that would match by parent name alone.
+            local grandparent
+            grandparent="${parent%/*}"
+            case "${parent##*/}" in
+                python[0-9]*)
+                    case "${grandparent##*/}" in
+                        lib) return 0 ;;
+                    esac
+                    ;;
+            esac
+            return 1
+            ;;
         *)
             return 0
             ;;
