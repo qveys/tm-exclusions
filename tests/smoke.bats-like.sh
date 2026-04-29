@@ -520,13 +520,13 @@ rm -rf "${DU_HOME}"
 echo ""
 echo "--- site-packages pattern filter (#26) ---"
 
-SP_HOME="$(mktemp -d)"
+SP_HOME="$(mktemp -d "${TEST_HOME}/sp-test.XXXXXX")"
 mkdir -p "${SP_HOME}/.faketool/lib/python3.14/site-packages"
 mkdir -p "${SP_HOME}/random/site-packages"
 mkdir -p "${SP_HOME}/.faketool/python3.14/site-packages"
 SP_CONF="${SP_HOME}/sp-test.conf"
 cat > "${SP_CONF}" << 'EOF'
-pattern|site-packages|Python tool installs (lib/pythonX.Y/site-packages under ~/.<tool>)
+pattern|site-packages|Python lib/pythonX.Y/site-packages trees (regenerable pip output)
 EOF
 
 SP_OUT="$(env HOME="${SP_HOME}" \

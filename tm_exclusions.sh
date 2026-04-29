@@ -316,14 +316,16 @@ pattern_match_allowed() {
             return 1
             ;;
         site-packages)
-            # Allow only when the immediate parent is a lib/pythonX.Y directory:
-            # ~/.<tool>/lib/pythonX.Y/site-packages (e.g. .lulu-tool/lib/python3.14/...).
-            # The lib/ grandparent guard rejects bare ~/<tool>/pythonX/site-packages
-            # layouts that would otherwise match by parent name alone.
+            # Allow only the canonical Python install shape:
+            # .../lib/pythonX.Y/site-packages (pip's output dir, always
+            # regenerable). Common matches: ~/.<tool>/lib/python3.14/...,
+            # /opt/homebrew/lib/python3.X/..., ~/.pyenv/versions/.../lib/...
+            # The lib/ grandparent guard rejects bare <tool>/pythonX/site-packages
+            # layouts that would match by parent name alone.
+            local grandparent
+            grandparent="${parent%/*}"
             case "${parent##*/}" in
                 python[0-9]*)
-                    local grandparent
-                    grandparent="$(dirname "$parent")"
                     case "${grandparent##*/}" in
                         lib) return 0 ;;
                     esac
