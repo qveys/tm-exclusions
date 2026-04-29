@@ -408,5 +408,83 @@ else
     printf '%b  FAIL%b default.conf has %d rule(s) outside any #@ category\n' "$RED" "$NC" "${ORPHAN_COUNT}"
 fi
 
+# ---- Prefix-prune of redundant child exclusions (#23) ----
+echo ""
+echo "--- Prefix-prune (#23) ---"
+
+PRUNE_HOME="$(mktemp -d)"
+mkdir -p "${PRUNE_HOME}/Git/proj/node_modules/.pnpm/foo/node_modules"
+mkdir -p "${PRUNE_HOME}/Git/proj/node_modules/.pnpm/bar/node_modules"
+PRUNE_CONF="${PRUNE_HOME}/prune-test.conf"
+cat > "${PRUNE_CONF}" << 'EOF'
+pattern|node_modules|prefix-prune smoke
+EOF
+
+PRUNE_OUT="$(env HOME="${PRUNE_HOME}" \
+                TM_EXCLUSIONS_DEFAULT_CONF="${PRUNE_CONF}" \
+                bash "$TM_EXCLUSIONS" --dry-run 2>&1 || true)"
+
+# Parent must be processed exactly once (Applying ... OR Already excluded ...),
+# not 3 times — once for /node_modules plus twice for .pnpm/{foo,bar}/node_modules
+# under it. Match either log line because tmutil may already report the path as
+# excluded on macOS hosts where the test root inherits an ancestor exclusion
+# (e.g. /var/folders/* is auto-excluded by Time Machine).
+PARENT_HITS=$(printf '%s\n' "${PRUNE_OUT}" | grep -cE "(Applying exclusion:|Already excluded:).*Git/proj/node_modules$" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${PARENT_HITS}" -eq 1 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b parent node_modules processed exactly once\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b expected 1 parent line, got %d\n' "$RED" "$NC" "${PARENT_HITS}"
+fi
+
+# Nested .pnpm/<pkg>/node_modules must NOT be processed — covered by parent.
+NESTED_HITS=$(printf '%s\n' "${PRUNE_OUT}" | grep -cE "(Applying exclusion:|Already excluded:).*\.pnpm/.*/node_modules" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${NESTED_HITS}" -eq 0 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b nested .pnpm/<pkg>/node_modules not re-excluded\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b nested .pnpm exclusions emitted: %d\n' "$RED" "$NC" "${NESTED_HITS}"
+fi
+
+rm -rf "${PRUNE_HOME}"
+
+# ---- Prefix-prune handles glob metacharacters in paths (#23 review) ----
+# Defensive coverage: directory names containing `*`, `?`, `[`, `]` must not
+# accidentally match unrelated descendants. Quoted variable expansions in
+# `case` patterns are literal, but a regression here would silently over-prune.
+echo ""
+echo "--- Prefix-prune: glob meta in paths (#23) ---"
+
+GLOB_HOME="$(mktemp -d)"
+mkdir -p "${GLOB_HOME}/proj[a]/node_modules"
+mkdir -p "${GLOB_HOME}/projB/node_modules"
+GLOB_CONF="${GLOB_HOME}/glob.conf"
+cat > "${GLOB_CONF}" << 'EOF'
+pattern|node_modules|glob meta smoke
+EOF
+
+GLOB_OUT="$(env HOME="${GLOB_HOME}" \
+                TM_EXCLUSIONS_DEFAULT_CONF="${GLOB_CONF}" \
+                bash "$TM_EXCLUSIONS" --dry-run 2>&1 || true)"
+
+# Both literal-bracket and adjacent siblings must each be processed exactly
+# once. If `[a]` were treated as a glob class, `proj[a]/node_modules` would
+# also "cover" `projB/node_modules` and only one of the two would survive.
+GLOB_HITS=$(printf '%s\n' "${GLOB_OUT}" | grep -cE "(Applying exclusion:|Already excluded:).*node_modules$" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${GLOB_HITS}" -eq 2 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b glob-meta sibling paths processed independently (got %d)\n' "$GREEN" "$NC" "${GLOB_HITS}"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b expected 2 distinct exclusions, got %d\n' "$RED" "$NC" "${GLOB_HITS}"
+fi
+
+rm -rf "${GLOB_HOME}"
+
 # ---- Summary ----
 test_summary
