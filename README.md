@@ -200,6 +200,39 @@ tm-exclusions --add pattern .angular "Angular CLI cache"
 tm-exclusions --add prune ~/VMs
 ```
 
+### Power users: cloud-sync prune opt-in
+
+If you have a massive cloud-sync tree (Dropbox, Google Drive, OneDrive) and want dynamic-scan results under those roots to be skipped, use **`TM_EXCLUSIONS_EXTRA_CONF`**:
+
+```bash
+# 1. Copy the example file to your preferred location.
+#    The example file location depends on how you installed tm-exclusions:
+#
+#    From a source checkout:
+#      config/extra-prunes.example.conf
+#
+#    From `brew install tm-exclusions`:
+#      $(brew --prefix)/share/tm-exclusions/extra-prunes.example.conf
+#
+#    From `make install` (default PREFIX=/usr/local):
+#      /usr/local/share/tm-exclusions/extra-prunes.example.conf
+
+cp /usr/local/share/tm-exclusions/extra-prunes.example.conf \
+   ~/.config/tm_exclusions/extra.conf
+
+# 2. Uncomment the prune lines that apply to your setup (editor of your choice):
+#    prune|$HOME/Dropbox|...
+#    prune|$HOME/Google Drive|...
+#    prune|$HOME/OneDrive|...
+
+# 3. Point the env var at your file (add to ~/.zshrc or ~/.bash_profile):
+export TM_EXCLUSIONS_EXTRA_CONF=~/.config/tm_exclusions/extra.conf
+```
+
+The extra config is loaded **after** `default.conf` and `custom.conf`, so entries there are additive. If the file is missing or unreadable a warning is printed to stderr and the script continues normally.
+
+> `config/default.conf` intentionally does **not** include cloud-sync prunes — those trees contain user data that you may want backed up.
+
 ---
 
 ## 🔇 Quiet Mode (cron / launchd)
@@ -272,6 +305,7 @@ launchctl load ~/Library/LaunchAgents/com.tm-exclusions.weekly.plist
 | Variable | Effect |
 |---|---|
 | `TM_EXCLUSIONS_DEFAULT_CONF` | Override default rules file path |
+| `TM_EXCLUSIONS_EXTRA_CONF` | Load an additional config file after default + custom (opt-in cloud-sync prunes, see [Power users](#power-users-cloud-sync-prune-opt-in)) |
 | `TM_EXCLUSIONS_REPORT` | Override report output path |
 | `TM_EXCLUSIONS_REPORT_DESKTOP=1` | Also write a report copy to `~/Desktop` (opt-in; equivalent to `--desktop-report`) |
 | `TM_EXCLUSIONS_SKIP_INVENTORY=1` | Skip inventory block in report |

@@ -20,10 +20,12 @@ class TmExclusions < Formula
   def install
     bin.install "tm_exclusions.sh" => "tm-exclusions"
     (share/"tm-exclusions").install "config/default.conf"
+    (share/"tm-exclusions").install "config/extra-prunes.example.conf"
   end
 
   test do
     assert_match version.to_s, shell_output("#{bin}/tm-exclusions --version")
     assert_path_exists share/"tm-exclusions/default.conf"
+    assert_path_exists share/"tm-exclusions/extra-prunes.example.conf"
   end
 end
