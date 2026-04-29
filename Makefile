@@ -120,8 +120,13 @@ release: ## Cut a release PR — make release VERSION=x.y.z  (run make tag after
 	@printf 'Release v$(VERSION).\n\nAfter merge, push the tag to trigger the GitHub release workflow:\n```\nmake tag VERSION=$(VERSION)\n```\n' | \
 	  gh pr create --title "🔖 chore(release): v$(VERSION)" --body-file - --base $(BASE_BRANCH)
 
-tag: ## Push the release tag after the release PR is merged — make tag VERSION=x.y.z
+tag: ## Push the signed release tag after the release PR is merged — make tag VERSION=x.y.z
 	@test -n "$(VERSION)" || { echo "Usage: make tag VERSION=x.y.z" >&2; exit 1; }
+	@git config --get user.signingkey >/dev/null || { \
+	  echo "Error: user.signingkey not set — required for signed tags (the 'tag' ruleset enforces signatures)." >&2; \
+	  echo "Configure with: git config --global user.signingkey <KEYID>" >&2; \
+	  exit 1; \
+	}
 	@git fetch origin
-	@git tag v$(VERSION) origin/$(BASE_BRANCH)
+	@git tag -s v$(VERSION) origin/$(BASE_BRANCH) -m "Release v$(VERSION)"
 	@git push origin v$(VERSION)

@@ -313,9 +313,11 @@ make install  # Install to /usr/local
 # 1. Open a release PR that bumps VERSION and CHANGELOG:
 make release VERSION=1.1.0
 
-# 2. After merging the release PR, tag the merge commit:
+# 2. After merging the release PR, tag the merge commit (GPG-signed):
 make tag VERSION=1.1.0
 ```
+
+> Tags must be GPG-signed (enforced by the `tag` ruleset). Set `user.signingkey` in your git config first.
 
 CI handles the rest: creates GitHub release, computes tarball SHA256, and updates the [Homebrew formula](https://github.com/qveys/homebrew-tools).
 
