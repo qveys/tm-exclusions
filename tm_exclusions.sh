@@ -1046,7 +1046,10 @@ PATH: ${path_dirs} existing directories (of ${path_total} colon-separated entrie
         total_k=0
         while IFS= read -r p; do
             [[ -z "$p" || ! -e "$p" ]] && continue
-            szk="$(du -sk "$p" 2>/dev/null | awk '{print $1}')"
+            # du exits non-zero when a subdir is unreadable (e.g. /private/var/folders);
+            # || true prevents set -euo pipefail from aborting the script (#18).
+            # `--` guards against paths starting with `-` being parsed as options.
+            szk="$(du -sk -- "$p" 2>/dev/null | awk '{print $1}' || true)"
             [[ -z "$szk" ]] && continue
             total_k=$((total_k + szk))
             sh="$(awk -v k="$szk" 'BEGIN {
