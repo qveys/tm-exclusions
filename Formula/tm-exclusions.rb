@@ -10,10 +10,10 @@
 class TmExclusions < Formula
   desc "Time Machine exclusion manager for developer Macs"
   homepage "https://github.com/qveys/tm-exclusions"
-  url "https://github.com/qveys/tm-exclusions/archive/refs/tags/v1.1.0.tar.gz"
+  url "https://github.com/qveys/tm-exclusions/archive/refs/tags/v1.1.1.tar.gz"
   sha256 "93d9f89e76f0b4c645340a1191d3d77d12a3156e0cbbd496a998d4c587b1cee2"
   license "MIT"
-  version "1.1.0"
+  version "1.1.1"
 
   depends_on :macos
 

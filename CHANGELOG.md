@@ -26,7 +26,7 @@ All notable changes to this project will be documented in this file.
 
 - Architecture and README updated for the above. Ongoing parity checklist: GitHub issue [#34](https://github.com/qveys/tm-exclusions/issues/34).
 
-## v1.1.0
+## v1.1.1
 
 ### CLI
 
