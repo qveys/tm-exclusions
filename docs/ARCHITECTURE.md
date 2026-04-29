@@ -45,17 +45,31 @@ Targets may use leading `~` (expanded to `$HOME`) or the literal substring `$HOM
 
 ## Scan Logic
 
-Dynamic scanning uses `find` from `$HOME` with `-maxdepth 6` to keep execution time practical. For each configured pattern name (e.g., `node_modules`), matching directories are collected and processed.
+Dynamic scanning uses `find` from `$HOME` with `-maxdepth 6` to keep execution time practical. The `scan_dynamic_patterns()` function uses a two-phase approach to collect and process matches:
 
-Matches named **`target`** are accepted only when the parent directory looks like a Rust/Cargo, Maven, or Gradle project (`Cargo.toml`, `pom.xml`, `build.gradle`, or `build.gradle.kts` next to the `target` directory). Matches named **`worktrees`** are narrowed to typical Git/Cursor layouts (e.g. under `.git/worktrees` or `.cursor`).
+**Phase 1: Collect**  
+For each configured pattern name (e.g., `node_modules`), `find` locates matching directories. Each match is tagged with its pattern name and written to a temporary file. All patterns are collected before any processing begins.
 
-Before processing a found directory, it is checked against prune paths. If the directory falls under a pruned prefix, it is skipped silently (or with a log message).
+**Phase 2: Sort and process**  
+The aggregated results are sorted lexically (`LC_ALL=C sort`). Because an ancestor path is always a strict string prefix of any descendant, this sort order guarantees parents precede their children. Each candidate is then processed in order:
+
+1. Validate with `pattern_match_allowed` (e.g., **`target`** is accepted only when the parent directory looks like a Rust/Cargo, Maven, or Gradle project; **`worktrees`** is narrowed to typical Git/Cursor layouts).
+2. Skip if the path falls under a config-level prune zone (`is_pruned` — logs `MSG_PRUNE_SKIP`).
+3. Skip silently if the path is already covered by a previously-kept path (`is_covered_by_kept`). This prevents redundant exclusions for descendants of an already-excluded parent (e.g., if `~/Git/proj/node_modules` is kept, then `~/Git/proj/node_modules/.pnpm/foo/node_modules` is automatically skipped).
+4. If the path passes all checks, record it in the kept-paths file and apply the exclusion.
+
+**Kept-paths tracking**  
+A temporary file (`kept_file`) tracks all paths that have been kept. This file is seeded with `CONF_PATHS` (static exclusions) at the start, so dynamic candidates falling under a static rule (e.g., `~/.npm/_npx/X/node_modules` under `~/.npm`) are also pruned. Each path that passes validation is appended to the kept-file before applying the exclusion, ensuring later matches in the same scan see it as already covered.
+
+**Helper functions**  
+- `path_under(descendant, ancestor)`: Returns 0 if `descendant` is the same as or under `ancestor`. Uses a quoted case pattern so paths with glob metacharacters (`*`, `[`, `?`) are matched literally.
+- `is_covered_by_kept(check, kept_file)`: Returns 0 if `check` is covered by any entry in the kept-paths file (i.e., if any kept path is a prefix of `check`).
 
 ## Prune Logic
 
 Prune entries prevent the scanner from processing found directories under certain trees. For example, `prune|~/Library` prevents the tool from applying exclusions to `node_modules` directories inside `~/Library`, which are better handled by static path rules.
 
-Prune does NOT apply a Time Machine exclusion. It only filters the dynamic scan results.
+Prune does NOT apply a Time Machine exclusion. It only filters the dynamic scan results. Within `scan_dynamic_patterns()`, the prune check (`is_pruned`) runs after `pattern_match_allowed` validation but before the prefix-prune (`is_covered_by_kept`). Paths under a prune zone emit a `MSG_PRUNE_SKIP` log message; paths pruned by prefix are dropped silently.
 
 ## Exclusion Application Strategy
 
