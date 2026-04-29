@@ -67,6 +67,11 @@ echo "--- Version output ---"
 
 EXPECTED_VERSION=$(sed -n 's/^readonly VERSION="\([^"]*\)"/\1/p' "$TM_EXCLUSIONS")
 
+if [ -z "$EXPECTED_VERSION" ]; then
+    echo "FAIL: could not extract VERSION from $TM_EXCLUSIONS — refusing to assert against empty string" >&2
+    exit 1
+fi
+
 assert_exit_code 0 \
     "--version exits 0" \
     bash "$TM_EXCLUSIONS" --version

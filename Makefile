@@ -94,6 +94,8 @@ check: lint test ## Run all checks (lint + test)
 
 release: ## Cut a release PR — make release VERSION=x.y.z  (run make tag after merge)
 	@test -n "$(VERSION)" || { echo "Usage: make release VERSION=x.y.z" >&2; exit 1; }
+	@echo "$(VERSION)" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$' || \
+	  { echo "Error: VERSION must match X.Y.Z (got: $(VERSION))." >&2; exit 1; }
 	@command -v gh >/dev/null 2>&1 || { \
 	  echo "Error: gh CLI not installed." >&2; \
 	  echo "Install it with: brew install gh" >&2; \
@@ -102,12 +104,16 @@ release: ## Cut a release PR — make release VERSION=x.y.z  (run make tag after
 	}
 	@git diff --quiet && git diff --cached --quiet || \
 	  { echo "Error: uncommitted changes — commit or stash first." >&2; exit 1; }
-	@if git show-ref --verify --quiet refs/heads/release/v$(VERSION); then \
-	  echo "Error: branch release/v$(VERSION) already exists." >&2; \
+	@git fetch origin $(BASE_BRANCH)
+	@if git show-ref --verify --quiet refs/heads/release/v$(VERSION) || \
+	    git ls-remote --exit-code --heads origin "release/v$(VERSION)" >/dev/null 2>&1; then \
+	  echo "Error: branch release/v$(VERSION) already exists (locally or on origin)." >&2; \
 	  exit 1; \
 	fi
+	@grep -q '^## Unreleased$$' CHANGELOG.md || \
+	  { echo "Error: CHANGELOG.md is missing a '## Unreleased' section to roll into v$(VERSION)." >&2; exit 1; }
 	@$(MAKE) check
-	@git checkout -b release/v$(VERSION)
+	@git checkout -b release/v$(VERSION) origin/$(BASE_BRANCH)
 	@current_version="$$(sed -n 's/^readonly VERSION="\([^"]*\)"/\1/p' $(SCRIPT))"; \
 	  test -n "$$current_version" || { echo "Error: could not determine current version from $(SCRIPT)." >&2; exit 1; }; \
 	  tmp_file="$$(mktemp)"; \
@@ -122,11 +128,25 @@ release: ## Cut a release PR — make release VERSION=x.y.z  (run make tag after
 
 tag: ## Push the signed release tag after the release PR is merged — make tag VERSION=x.y.z
 	@test -n "$(VERSION)" || { echo "Usage: make tag VERSION=x.y.z" >&2; exit 1; }
-	@git config --get user.signingkey >/dev/null || { \
-	  echo "Error: user.signingkey not set — required for signed tags (the 'tag' ruleset enforces signatures)." >&2; \
-	  echo "Configure with: git config --global user.signingkey <KEYID>" >&2; \
-	  exit 1; \
-	}
+	@echo "$(VERSION)" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$' || \
+	  { echo "Error: VERSION must match X.Y.Z (got: $(VERSION))." >&2; exit 1; }
+	@signing_key="$$(git config --get user.signingkey)"; \
+	  test -n "$$signing_key" || { \
+	    echo "Error: user.signingkey is empty or unset — required for signed tags (the 'tag' ruleset enforces signatures)." >&2; \
+	    echo "Configure with: git config --global user.signingkey <KEYID>" >&2; \
+	    exit 1; \
+	  }
 	@git fetch origin
+	@if git rev-parse --verify --quiet "v$(VERSION)" >/dev/null || \
+	    git ls-remote --exit-code --tags origin "v$(VERSION)" >/dev/null 2>&1; then \
+	  echo "Error: tag v$(VERSION) already exists (locally or on origin)." >&2; \
+	  exit 1; \
+	fi
+	@base_version="$$(git show "origin/$(BASE_BRANCH):$(SCRIPT)" | sed -n 's/^readonly VERSION="\([^"]*\)"/\1/p')"; \
+	  if [ "$$base_version" != "$(VERSION)" ]; then \
+	    echo "Error: $(SCRIPT) on origin/$(BASE_BRANCH) has VERSION=\"$$base_version\", expected \"$(VERSION)\"." >&2; \
+	    echo "Make sure 'make release VERSION=$(VERSION)' was merged before tagging." >&2; \
+	    exit 1; \
+	  fi
 	@git tag -s v$(VERSION) origin/$(BASE_BRANCH) -m "Release v$(VERSION)"
 	@git push origin v$(VERSION)
