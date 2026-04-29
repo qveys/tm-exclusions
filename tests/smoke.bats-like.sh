@@ -492,7 +492,7 @@ rm -rf "${GLOB_HOME}"
 echo ""
 echo "--- du -sk tolerance for unreadable subdirs (#18) ---"
 
-DU_HOME="$(mktemp -d)"
+DU_HOME="$(mktemp -d "${TEST_HOME}/du-test.XXXXXX")"
 mkdir -p "${DU_HOME}/restrictedparent/unreadable_subdir"
 chmod 000 "${DU_HOME}/restrictedparent/unreadable_subdir"
 DU_CONF="${DU_HOME}/du-test.conf"
