@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### CLI
 
+- Desktop report policy made explicit: the `~/Desktop` copy is **off by default** (avoids clutter on unattended cron/launchd runs). Opt in with the new `--desktop-report` CLI flag or the existing `TM_EXCLUSIONS_REPORT_DESKTOP=1` env var; both are equivalent. ([#15](https://github.com/qveys/tm-exclusions/issues/15))
 - Paths outside `$HOME` use `sudo tmutil addexclusion -p` / `removeexclusion -p` when interactive sudo or a passwordless sudo cache is available; background `sudo -v` refresh for long runs. Non-interactive runs without `sudo -n` **skip** those paths instead of blocking.
 - `-h` accepted as an alias for `--help`.
 - Config: expand `$HOME` in rule targets (same idea as legacy `default.conf`); optional `#@…` lines remain comments.

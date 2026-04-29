@@ -108,8 +108,10 @@ After processing all paths, a human-readable report is printed and saved to `~/.
 | Variable | Effect |
 |----------|--------|
 | `TM_EXCLUSIONS_REPORT` | Absolute or relative path for the saved report file instead of `~/.config/tm_exclusions/last_report.txt` |
-| `TM_EXCLUSIONS_REPORT_DESKTOP=1` | Also write `~/Desktop/tm-exclusions_last_report.txt` |
+| `TM_EXCLUSIONS_REPORT_DESKTOP=1` | Also write `~/Desktop/tm-exclusions_last_report.txt` (opt-in; equivalent to `--desktop-report`) |
 | `TM_EXCLUSIONS_DEBUG_FIFO` | If set to a path, append the same `log_info` lines to **FD 5**. For a **named FIFO**, the script opens **read+write** (`exec 5<>`) so `open` does not block waiting for another process; regular files use append-only open. |
+
+**Desktop report policy**: the Desktop copy is **off by default**. Enabling it on every run would clutter the user's Desktop during unattended cron/launchd executions. Opt in with the `--desktop-report` CLI flag or `TM_EXCLUSIONS_REPORT_DESKTOP=1` environment variable; both are equivalent.
 
 ## First-run custom config
 

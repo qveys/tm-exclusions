@@ -33,6 +33,7 @@ CONFIG_CMD=""         # add | list | edit | init
 CONFIG_ADD_TYPE=""
 CONFIG_ADD_PATH=""
 CONFIG_ADD_REASON=""
+DESKTOP_REPORT=0
 
 # Counters for report
 TOTAL_CHECKED=0
@@ -70,6 +71,7 @@ declare_i18n_en() {
     MSG_HELP_OPTIONS="Options:"
     MSG_HELP_QUIET="  -q, --quiet        Suppress non-essential output"
     MSG_HELP_FORCE="  --force            With --uninstall, also remove matched paths that no longer exist"
+    MSG_HELP_DESKTOP_REPORT="  --desktop-report   Write a report copy to ~/Desktop (default: off)"
     MSG_HELP_LANG="  --lang <en|fr>     Set output language"
     MSG_HELP_VERSION="  --version          Show version"
     MSG_HELP_HELP="  --help             Show this help"
@@ -130,6 +132,7 @@ declare_i18n_fr() {
     MSG_HELP_OPTIONS="Options :"
     MSG_HELP_QUIET="  -q, --quiet        Mode silencieux"
     MSG_HELP_FORCE="  --force            Avec --uninstall, supprimer aussi les chemins correspondants absents"
+    MSG_HELP_DESKTOP_REPORT="  --desktop-report   Écrire une copie du rapport sur le Bureau (défaut : désactivé)"
     MSG_HELP_LANG="  --lang <en|fr>     Langue de sortie"
     MSG_HELP_VERSION="  --version          Afficher la version"
     MSG_HELP_HELP="  --help             Afficher cette aide"
@@ -1143,7 +1146,7 @@ ${raw_list}"
     log_info ""
     log_info "${MSG_REPORT_SAVED} ${out_path}"
 
-    if [[ "${TM_EXCLUSIONS_REPORT_DESKTOP:-}" = "1" ]]; then
+    if [[ "${TM_EXCLUSIONS_REPORT_DESKTOP:-}" = "1" || "${DESKTOP_REPORT}" -eq 1 ]]; then
         desk_copy="${HOME}/Desktop/tm-exclusions_last_report.txt"
         mkdir -p "${HOME}/Desktop" 2>/dev/null || true
         echo "$report" > "${desk_copy}" 2>/dev/null || true
@@ -1167,6 +1170,7 @@ show_help() {
     echo "${MSG_HELP_OPTIONS}"
     echo "${MSG_HELP_QUIET}"
     echo "${MSG_HELP_FORCE}"
+    echo "${MSG_HELP_DESKTOP_REPORT}"
     echo "${MSG_HELP_LANG}"
     echo "${MSG_HELP_VERSION}"
     echo "${MSG_HELP_HELP}"
@@ -1210,6 +1214,9 @@ parse_args() {
                 ;;
             --force)
                 FORCE=1
+                ;;
+            --desktop-report)
+                DESKTOP_REPORT=1
                 ;;
             --quiet|-q)
                 QUIET=1

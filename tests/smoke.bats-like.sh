@@ -61,6 +61,10 @@ assert_output_contains "--force" \
     "--help mentions --force" \
     bash "$TM_EXCLUSIONS" --help
 
+assert_output_contains "--desktop-report" \
+    "--help mentions --desktop-report" \
+    bash "$TM_EXCLUSIONS" --help
+
 # ---- Version ----
 echo ""
 echo "--- Version output ---"
@@ -175,6 +179,38 @@ else
     TESTS_RUN=$((TESTS_RUN + 1))
     TESTS_PASSED=$((TESTS_PASSED + 1))
     printf '%b  PASS%b Desktop report copy created\n' "$GREEN" "$NC"
+fi
+
+# --desktop-report flag (equivalent to TM_EXCLUSIONS_REPORT_DESKTOP=1)
+rm -f "${DESK_COPY}"
+assert_exit_code 0 \
+    "--desktop-report exits 0" \
+    bash "$TM_EXCLUSIONS" --desktop-report --dry-run
+
+if [[ ! -f "${DESK_COPY}" ]]; then
+    TESTS_RUN=$((TESTS_RUN + 1))
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b --desktop-report: Desktop copy missing\n' "$RED" "$NC"
+else
+    TESTS_RUN=$((TESTS_RUN + 1))
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b --desktop-report: Desktop copy created\n' "$GREEN" "$NC"
+fi
+
+# Default-OFF: without --desktop-report and without the env var, no Desktop copy
+rm -f "${DESK_COPY}"
+assert_exit_code 0 \
+    "default run (no flag, no env var) exits 0" \
+    bash "$TM_EXCLUSIONS" --dry-run
+
+if [[ -f "${DESK_COPY}" ]]; then
+    TESTS_RUN=$((TESTS_RUN + 1))
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b default run: Desktop copy should NOT exist\n' "$RED" "$NC"
+else
+    TESTS_RUN=$((TESTS_RUN + 1))
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b default run: no Desktop copy (default OFF)\n' "$GREEN" "$NC"
 fi
 
 # ---- Quiet mode ----

@@ -62,16 +62,6 @@ Optional environment variables (see **`docs/ARCHITECTURE.md`**): `TM_EXCLUSIONS_
 | 🔄 | **Idempotent** | Safe to re-run — skips already-excluded paths |
 | 🐚 | **Bash 3.2** | Works with macOS stock shell — no dependencies |
 
-<details>
-<summary>📝 Brouillon (pas encore d'actualité)</summary>
-
-| Item | Statut |
-|---|---|
-| **Triple-layer pruning** | Brouillon |
-| **tmux dual-pane UI** | Brouillon |
-| **Desktop report generated on each run** | Brouillon (desktop copy via `TM_EXCLUSIONS_REPORT_DESKTOP=1`) |
-
-</details>
 
 ---
 
@@ -164,6 +154,7 @@ Uninstall (idempotent — missing xattrs/paths silently skipped):
 
 Other:
   --quiet, -q      Quiet mode (no banner, no colors, no spinners)
+  --desktop-report Write a report copy to ~/Desktop (default: off; avoids clutter on cron/launchd runs)
   --version        Show version
   --lang <fr|en>   Force language
   --help           Show help
@@ -217,7 +208,7 @@ Use `--quiet` (or `-q`) for unattended execution:
 
 - No banner, no colors, no spinners, no tmux
 - Report is still printed to stdout (summary/report output is not suppressed)
-- Desktop report copy is generated only with `TM_EXCLUSIONS_REPORT_DESKTOP=1`
+- Desktop report copy is **off by default** — opt in with `--desktop-report` or `TM_EXCLUSIONS_REPORT_DESKTOP=1`
 
 ```bash
 # Weekly cron job
@@ -282,7 +273,7 @@ launchctl load ~/Library/LaunchAgents/com.tm-exclusions.weekly.plist
 |---|---|
 | `TM_EXCLUSIONS_DEFAULT_CONF` | Override default rules file path |
 | `TM_EXCLUSIONS_REPORT` | Override report output path |
-| `TM_EXCLUSIONS_REPORT_DESKTOP=1` | Also write a report copy to Desktop |
+| `TM_EXCLUSIONS_REPORT_DESKTOP=1` | Also write a report copy to `~/Desktop` (opt-in; equivalent to `--desktop-report`) |
 | `TM_EXCLUSIONS_SKIP_INVENTORY=1` | Skip inventory block in report |
 | `TM_EXCLUSIONS_SKIP_DU=1` | Skip per-path `du` disk-usage section in report |
 | `TM_EXCLUSIONS_DEBUG_FIFO` | Mirror `log_info` output to FD 5 |
