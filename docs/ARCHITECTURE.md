@@ -15,7 +15,8 @@ main()
   ├── check_environment()
   ├── load_config()
   │   ├── parse_config_file(default.conf)
-  │   └── parse_config_file(custom.conf)  [merged]
+  │   ├── parse_config_file(custom.conf)  [merged]
+  │   └── parse_config_file($TM_EXCLUSIONS_EXTRA_CONF)  [optional, append]
   ├── collect_post_scan_paths()  ← brew --cache + large VM/disk images (deduped list)
   ├── apply_static_paths()       ← process 'path' entries
   ├── scan_dynamic_patterns()    ← process 'pattern' entries with find
@@ -212,7 +213,7 @@ Uncomment them in your installed `default.conf` if you have specific use cases.
 
 ### Cloud-sync prunes
 
-Pruning `$HOME/Dropbox`, `$HOME/Google Drive`, `$HOME/OneDrive` is **not** part of the default config — those directories typically contain non-regenerable user data, and pruning them at scan time risks masking caches/build artifacts that should be excluded. An opt-in mechanism is tracked in [#44](https://github.com/qveys/tm-exclusions/issues/44).
+Pruning `$HOME/Dropbox`, `$HOME/Google Drive`, `$HOME/OneDrive` is **not** part of the default config — those directories typically contain non-regenerable user data, and pruning them at scan time risks masking caches/build artifacts that should be excluded. An opt-in mechanism is available via TM_EXCLUSIONS_EXTRA_CONF (see #17 / config/extra-prunes.example.conf); point it at a copy of the example file to activate cloud-sync prunes.
 
 ### Catalog invariants
 

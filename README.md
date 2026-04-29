@@ -217,7 +217,7 @@ cp config/extra-prunes.example.conf ~/.config/tm_exclusions/extra.conf
 export TM_EXCLUSIONS_EXTRA_CONF=~/.config/tm_exclusions/extra.conf
 ```
 
-The extra config is loaded **after** `default.conf` and `custom.conf`, so entries there are additive and have the lowest precedence. If the file is missing or unreadable a warning is printed to stderr and the script continues normally.
+The extra config is loaded **after** `default.conf` and `custom.conf`, so entries there are additive. If the file is missing or unreadable a warning is printed to stderr and the script continues normally.
 
 > `config/default.conf` intentionally does **not** include cloud-sync prunes — those trees contain user data that you may want backed up.
 

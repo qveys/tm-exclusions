@@ -649,18 +649,24 @@ assert_exit_code 0 \
         TM_EXCLUSIONS_EXTRA_CONF="${MISSING_CONF}" \
         bash "$TM_EXCLUSIONS" --dry-run
 
-EXTRA_WARN_OUT="$(env HOME="${EXTRA_HOME}" \
+EXTRA_WARN_STDERR="$(env HOME="${EXTRA_HOME}" \
     TM_EXCLUSIONS_DEFAULT_CONF="${EXTRA_DEFAULT}" \
     TM_EXCLUSIONS_EXTRA_CONF="${MISSING_CONF}" \
-    bash "$TM_EXCLUSIONS" --dry-run 2>&1 || true)"
+    bash "$TM_EXCLUSIONS" --dry-run 2>&1 1>/dev/null || true)"
 TESTS_RUN=$((TESTS_RUN + 1))
-if printf '%s\n' "${EXTRA_WARN_OUT}" | grep -q "Warning:.*TM_EXCLUSIONS_EXTRA_CONF"; then
+if printf '%s\n' "${EXTRA_WARN_STDERR}" | grep -q "Warning:.*TM_EXCLUSIONS_EXTRA_CONF"; then
     TESTS_PASSED=$((TESTS_PASSED + 1))
     printf '%b  PASS%b TM_EXCLUSIONS_EXTRA_CONF missing file prints warning to stderr\n' "$GREEN" "$NC"
 else
     TESTS_FAILED=$((TESTS_FAILED + 1))
     printf '%b  FAIL%b TM_EXCLUSIONS_EXTRA_CONF missing file should print warning\n' "$RED" "$NC"
 fi
+
+assert_output_not_contains "TM_EXCLUSIONS_EXTRA_CONF" \
+    "no warning when extra conf not set" \
+    env -u TM_EXCLUSIONS_EXTRA_CONF HOME="${EXTRA_HOME}" \
+        TM_EXCLUSIONS_DEFAULT_CONF="${EXTRA_DEFAULT}" \
+        bash "$TM_EXCLUSIONS" --dry-run
 
 rm -rf "${EXTRA_HOME}"
 
