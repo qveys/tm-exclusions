@@ -213,7 +213,17 @@ Uncomment them in your installed `default.conf` if you have specific use cases.
 
 ### Cloud-sync prunes
 
-Pruning `$HOME/Dropbox`, `$HOME/Google Drive`, `$HOME/OneDrive` is **not** part of the default config — those directories typically contain non-regenerable user data, and pruning them at scan time risks masking caches/build artifacts that should be excluded. An opt-in mechanism is available via TM_EXCLUSIONS_EXTRA_CONF (see #17 / config/extra-prunes.example.conf); point it at a copy of the example file to activate cloud-sync prunes.
+Pruning `$HOME/Dropbox`, `$HOME/Google Drive`, `$HOME/OneDrive` is **not** part of the default config — those directories typically contain non-regenerable user data, and pruning them at scan time risks masking caches/build artifacts that should be excluded. An opt-in mechanism is available via `TM_EXCLUSIONS_EXTRA_CONF` (see [#17](https://github.com/qveys/tm-exclusions/issues/17)); point it at a copy of the example file to activate cloud-sync prunes.
+
+The example file (`extra-prunes.example.conf`) ships in three locations depending on installation method:
+
+| Installation | Location |
+|---|---|
+| Source checkout | `config/extra-prunes.example.conf` (repo root) |
+| `make install` | `${SHARE_DIR}/extra-prunes.example.conf` (default: `/usr/local/share/tm-exclusions/`) |
+| `brew install tm-exclusions` | `$(brew --prefix)/share/tm-exclusions/extra-prunes.example.conf` |
+
+The `TM_EXCLUSIONS_EXTRA_CONF` loader requires the value to be **both a regular file (`-f`) and readable (`-r`)**. A directory path, a missing path, or an unreadable path all trigger a stderr warning and continue; no silent no-op occurs.
 
 ### Catalog invariants
 

@@ -546,7 +546,7 @@ load_config() {
     # Load extra config last (lowest precedence; additive)
     # Users point TM_EXCLUSIONS_EXTRA_CONF to an additional config file.
     if [[ -n "${TM_EXCLUSIONS_EXTRA_CONF:-}" ]]; then
-        if [[ -r "${TM_EXCLUSIONS_EXTRA_CONF}" ]]; then
+        if [[ -f "${TM_EXCLUSIONS_EXTRA_CONF}" && -r "${TM_EXCLUSIONS_EXTRA_CONF}" ]]; then
             parse_config_file "${TM_EXCLUSIONS_EXTRA_CONF}"
         else
             log_error "Warning: TM_EXCLUSIONS_EXTRA_CONF is set but file is missing or unreadable: ${TM_EXCLUSIONS_EXTRA_CONF}"

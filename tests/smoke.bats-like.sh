@@ -668,6 +668,30 @@ assert_output_not_contains "TM_EXCLUSIONS_EXTRA_CONF" \
         TM_EXCLUSIONS_DEFAULT_CONF="${EXTRA_DEFAULT}" \
         bash "$TM_EXCLUSIONS" --dry-run
 
+# Test: directory path → -r passes but -f fails → must warn (not silently no-op)
+DIR_AS_CONF="${EXTRA_HOME}/some-dir"
+mkdir -p "${DIR_AS_CONF}"
+
+assert_exit_code 0 \
+    "TM_EXCLUSIONS_EXTRA_CONF is a directory — script exits 0" \
+    env HOME="${EXTRA_HOME}" \
+        TM_EXCLUSIONS_DEFAULT_CONF="${EXTRA_DEFAULT}" \
+        TM_EXCLUSIONS_EXTRA_CONF="${DIR_AS_CONF}" \
+        bash "$TM_EXCLUSIONS" --dry-run
+
+DIR_WARN_STDERR="$(env HOME="${EXTRA_HOME}" \
+    TM_EXCLUSIONS_DEFAULT_CONF="${EXTRA_DEFAULT}" \
+    TM_EXCLUSIONS_EXTRA_CONF="${DIR_AS_CONF}" \
+    bash "$TM_EXCLUSIONS" --dry-run 2>&1 1>/dev/null || true)"
+TESTS_RUN=$((TESTS_RUN + 1))
+if printf '%s\n' "${DIR_WARN_STDERR}" | grep -q "Warning:.*TM_EXCLUSIONS_EXTRA_CONF"; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b TM_EXCLUSIONS_EXTRA_CONF directory path prints warning to stderr\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b TM_EXCLUSIONS_EXTRA_CONF directory path should print warning\n' "$RED" "$NC"
+fi
+
 rm -rf "${EXTRA_HOME}"
 
 # ---- Summary ----

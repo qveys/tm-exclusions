@@ -205,8 +205,20 @@ tm-exclusions --add prune ~/VMs
 If you have a massive cloud-sync tree (Dropbox, Google Drive, OneDrive) and want dynamic-scan results under those roots to be skipped, use **`TM_EXCLUSIONS_EXTRA_CONF`**:
 
 ```bash
-# 1. Copy the example file to your preferred location:
-cp config/extra-prunes.example.conf ~/.config/tm_exclusions/extra.conf
+# 1. Copy the example file to your preferred location.
+#    The example file location depends on how you installed tm-exclusions:
+#
+#    From a source checkout:
+#      config/extra-prunes.example.conf
+#
+#    From `brew install tm-exclusions`:
+#      $(brew --prefix)/share/tm-exclusions/extra-prunes.example.conf
+#
+#    From `make install` (default PREFIX=/usr/local):
+#      /usr/local/share/tm-exclusions/extra-prunes.example.conf
+
+cp /usr/local/share/tm-exclusions/extra-prunes.example.conf \
+   ~/.config/tm_exclusions/extra.conf
 
 # 2. Uncomment the prune lines that apply to your setup (editor of your choice):
 #    prune|$HOME/Dropbox|...
