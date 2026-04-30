@@ -58,128 +58,59 @@ SUDO_KEEPALIVE_PID=""
 DEBUG_LOG_FD=0
 
 # ---------------------------------------------------------------------------
-# i18n strings
+# i18n locale resolution
 # ---------------------------------------------------------------------------
-declare_i18n_en() {
-    MSG_HELP_USAGE="Usage: ${PROGRAM_NAME} [OPTIONS]"
-    MSG_HELP_DESC="macOS Time Machine exclusion manager for developer machines."
-    MSG_HELP_MODES="Modes:"
-    MSG_HELP_DEFAULT="  (default)          Apply exclusions"
-    MSG_HELP_DRY_RUN="  --dry-run          Show what would be done without making changes"
-    MSG_HELP_REPORT="  --report-only      Scan and report without applying exclusions"
-    MSG_HELP_UNINSTALL="  --uninstall        Remove exclusions matching the current configured rules"
-    MSG_HELP_OPTIONS="Options:"
-    MSG_HELP_QUIET="  -q, --quiet        Suppress non-essential output"
-    MSG_HELP_FORCE="  --force            With --uninstall, also remove matched paths that no longer exist"
-    MSG_HELP_DESKTOP_REPORT="  --desktop-report   Write a report copy to ~/Desktop (default: off)"
-    MSG_HELP_LANG="  --lang <en|fr>     Set output language"
-    MSG_HELP_VERSION="  --version          Show version"
-    MSG_HELP_HELP="  --help             Show this help"
-    MSG_HELP_HELP_SHORT="  -h                 Same as --help"
-    MSG_HELP_CONFIG="Config management:"
-    MSG_HELP_ADD="  --add <type> <path> <reason>  Add a custom exclusion rule"
-    MSG_HELP_LIST="  --list             List custom exclusion rules"
-    MSG_HELP_EDIT="  --edit             Open custom config in \$EDITOR"
-    MSG_HELP_INIT="  --init             Create custom config directory"
-    MSG_HELP_TYPES="Supported types: path, pattern, prune"
-    MSG_DRY_RUN_PREFIX="[DRY-RUN]"
-    MSG_APPLYING="Applying exclusion:"
-    MSG_ALREADY="Already excluded:"
-    MSG_REMOVING="Removing exclusion:"
-    MSG_NOT_EXCLUDED="Not currently excluded:"
-    MSG_SCANNING="Scanning for regenerable directories..."
-    MSG_STATIC="Applying static exclusion rules..."
-    MSG_EXTRA_PATHS="Applying discovered paths (brew cache, large VM images)..."
-    MSG_REPORT_TITLE="=== tm-exclusions Report ==="
-    MSG_REPORT_CHECKED="Paths checked:"
-    MSG_REPORT_EXCLUDED="Newly excluded:"
-    MSG_REPORT_WOULD_EXCLUDE="Would exclude:"
-    MSG_REPORT_NEED_EXCLUSION="Paths not yet excluded (action needed):"
-    MSG_REPORT_ALREADY="Already excluded:"
-    MSG_REPORT_SKIPPED="Skipped:"
-    MSG_REPORT_ERRORS="Errors:"
-    MSG_REPORT_REMOVED="Removed:"
-    MSG_REPORT_SAVED="Report saved to:"
-    MSG_REPORT_DESKTOP_COPY="Also saved report copy to:"
-    MSG_UNINSTALL_START="Removing tm-exclusions applied exclusions..."
-    MSG_UNINSTALL_DONE="Uninstall complete."
-    MSG_UNINSTALL_FORCE="Force mode: removing all matched exclusions."
-    MSG_CONFIG_CREATED="Custom config directory created:"
-    MSG_CONFIG_EXISTS="Custom config directory already exists:"
-    MSG_CONFIG_AUTO_CREATED="Created default custom config (first run):"
-    MSG_CONFIG_ADDED="Rule added to custom config:"
-    MSG_CONFIG_EMPTY="No custom rules found."
-    MSG_CONFIG_NO_FILE="Custom config file not found. Run --init first."
-    MSG_ERROR_INVALID_ARG="Unknown argument:"
-    MSG_ERROR_INVALID_TYPE="Invalid type. Supported: path, pattern, prune"
-    MSG_ERROR_INVALID_LANG="Unsupported language for --lang. Supported values: en, fr."
-    MSG_ERROR_MISSING_ARGS="Missing required arguments."
-    MSG_ERROR_NOT_MACOS="Warning: Not running on macOS. Some features will be simulated."
-    MSG_ERROR_NO_TMUTIL="Warning: tmutil not found. Running in simulation mode."
-    MSG_PATH_NOT_FOUND="Path not found, skipping:"
-    MSG_PRUNE_SKIP="Pruning (skipping scan of):"
-    MSG_SKIP_PRIVILEGED="Skipping (non-interactive / no sudo cache) for system path:"
+# Finds the locales/ directory. Tries in order:
+#   1. <script_dir>/locales/          (source-checkout layout)
+#   2. <script_dir>/../share/tm-exclusions/locales/  (installed layout)
+#   3. TM_EXCLUSIONS_LOCALES_DIR env var (escape hatch for tests / unusual installs)
+resolve_locales_dir() {
+    local script_dir candidate
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+    # Env-var override takes precedence when set
+    if [[ -n "${TM_EXCLUSIONS_LOCALES_DIR:-}" ]]; then
+        echo "${TM_EXCLUSIONS_LOCALES_DIR}"
+        return 0
+    fi
+
+    for candidate in \
+        "${script_dir}/locales" \
+        "${script_dir}/../share/tm-exclusions/locales"
+    do
+        if [[ -d "${candidate}" ]]; then
+            echo "${candidate}"
+            return 0
+        fi
+    done
+
+    return 1
 }
 
-declare_i18n_fr() {
-    MSG_HELP_USAGE="Utilisation : ${PROGRAM_NAME} [OPTIONS]"
-    MSG_HELP_DESC="Gestionnaire d'exclusions Time Machine pour machines de développement macOS."
-    MSG_HELP_MODES="Modes :"
-    MSG_HELP_DEFAULT="  (défaut)           Appliquer les exclusions"
-    MSG_HELP_DRY_RUN="  --dry-run          Montrer les actions sans les exécuter"
-    MSG_HELP_REPORT="  --report-only      Scanner et rapporter sans appliquer"
-    MSG_HELP_UNINSTALL="  --uninstall        Supprimer les exclusions correspondant aux règles configurées"
-    MSG_HELP_OPTIONS="Options :"
-    MSG_HELP_QUIET="  -q, --quiet        Mode silencieux"
-    MSG_HELP_FORCE="  --force            Avec --uninstall, supprimer aussi les chemins correspondants absents"
-    MSG_HELP_DESKTOP_REPORT="  --desktop-report   Écrire une copie du rapport sur le Bureau (défaut : désactivé)"
-    MSG_HELP_LANG="  --lang <en|fr>     Langue de sortie"
-    MSG_HELP_VERSION="  --version          Afficher la version"
-    MSG_HELP_HELP="  --help             Afficher cette aide"
-    MSG_HELP_HELP_SHORT="  -h                 Identique à --help"
-    MSG_HELP_CONFIG="Gestion de la configuration :"
-    MSG_HELP_ADD="  --add <type> <chemin> <raison>  Ajouter une règle personnalisée"
-    MSG_HELP_LIST="  --list             Lister les règles personnalisées"
-    MSG_HELP_EDIT="  --edit             Ouvrir la configuration dans \$EDITOR"
-    MSG_HELP_INIT="  --init             Créer le répertoire de configuration"
-    MSG_HELP_TYPES="Types supportés : path, pattern, prune"
-    MSG_DRY_RUN_PREFIX="[SIMULATION]"
-    MSG_APPLYING="Application de l'exclusion :"
-    MSG_ALREADY="Déjà exclu :"
-    MSG_REMOVING="Suppression de l'exclusion :"
-    MSG_NOT_EXCLUDED="Non exclu actuellement :"
-    MSG_SCANNING="Recherche des répertoires régénérables..."
-    MSG_STATIC="Application des règles d'exclusion statiques..."
-    MSG_EXTRA_PATHS="Application des chemins découverts (cache brew, grosses images VM)..."
-    MSG_REPORT_TITLE="=== Rapport tm-exclusions ==="
-    MSG_REPORT_CHECKED="Chemins vérifiés :"
-    MSG_REPORT_EXCLUDED="Nouvellement exclus :"
-    MSG_REPORT_WOULD_EXCLUDE="Seraient exclus :"
-    MSG_REPORT_NEED_EXCLUSION="Chemins pas encore exclus (action requise) :"
-    MSG_REPORT_ALREADY="Déjà exclus :"
-    MSG_REPORT_SKIPPED="Ignorés :"
-    MSG_REPORT_ERRORS="Erreurs :"
-    MSG_REPORT_REMOVED="Supprimés :"
-    MSG_REPORT_SAVED="Rapport sauvegardé dans :"
-    MSG_REPORT_DESKTOP_COPY="Copie du rapport également enregistrée dans :"
-    MSG_UNINSTALL_START="Suppression des exclusions tm-exclusions..."
-    MSG_UNINSTALL_DONE="Désinstallation terminée."
-    MSG_UNINSTALL_FORCE="Mode forcé : suppression de toutes les exclusions correspondantes."
-    MSG_CONFIG_CREATED="Répertoire de configuration créé :"
-    MSG_CONFIG_EXISTS="Répertoire de configuration existant :"
-    MSG_CONFIG_AUTO_CREATED="Configuration personnalisée par défaut créée (premier lancement) :"
-    MSG_CONFIG_ADDED="Règle ajoutée à la configuration :"
-    MSG_CONFIG_EMPTY="Aucune règle personnalisée trouvée."
-    MSG_CONFIG_NO_FILE="Fichier de configuration non trouvé. Exécutez --init d'abord."
-    MSG_ERROR_INVALID_ARG="Argument inconnu :"
-    MSG_ERROR_INVALID_TYPE="Type invalide. Supportés : path, pattern, prune"
-    MSG_ERROR_INVALID_LANG="Langue non supportée pour --lang. Valeurs supportées : en, fr."
-    MSG_ERROR_MISSING_ARGS="Arguments requis manquants."
-    MSG_ERROR_NOT_MACOS="Attention : pas sous macOS. Certaines fonctions seront simulées."
-    MSG_ERROR_NO_TMUTIL="Attention : tmutil introuvable. Mode simulation activé."
-    MSG_PATH_NOT_FOUND="Chemin introuvable, ignoré :"
-    MSG_PRUNE_SKIP="Élagage (scan ignoré pour) :"
-    MSG_SKIP_PRIVILEGED="Ignoré (non interactif / pas de cache sudo) pour chemin système :"
+# Source the locale file for the given language and call its declare function.
+# Exits non-zero with a clear error if the locale file cannot be found.
+load_i18n() {
+    local lang="$1"
+    local locales_dir locale_file
+
+    locales_dir="$(resolve_locales_dir)" || {
+        echo "Error: locale files not found; expected locales/${lang}.sh in <script-dir>/locales or installed share dir" >&2
+        exit 1
+    }
+
+    locale_file="${locales_dir}/${lang}.sh"
+    if [[ ! -f "${locale_file}" ]]; then
+        echo "Error: locale files not found; expected locales/${lang}.sh in ${locales_dir}" >&2
+        exit 1
+    fi
+
+    # shellcheck source=/dev/null
+    source "${locale_file}"
+
+    case "${lang}" in
+        fr) declare_i18n_fr ;;
+        *)  declare_i18n_en ;;
+    esac
 }
 
 # ---------------------------------------------------------------------------
@@ -390,10 +321,7 @@ detect_language() {
         fi
     fi
 
-    case "${CURRENT_LANG}" in
-        fr) declare_i18n_fr ;;
-        *)  declare_i18n_en ;;
-    esac
+    load_i18n "${CURRENT_LANG}"
 }
 
 # Check if running on macOS with tmutil available

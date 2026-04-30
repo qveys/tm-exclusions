@@ -694,5 +694,50 @@ fi
 
 rm -rf "${EXTRA_HOME}"
 
+# ---- Locale loading (#16) ----
+echo ""
+echo "--- Locale loading (#16) ---"
+
+# Test: TM_EXCLUSIONS_LOCALES_DIR=/nonexistent causes non-zero exit with clear error
+LOCALE_MISSING_STDERR="$(env TM_EXCLUSIONS_LOCALES_DIR=/nonexistent \
+    bash "$TM_EXCLUSIONS" --lang en --help 2>&1 1>/dev/null || true)"
+TESTS_RUN=$((TESTS_RUN + 1))
+LOCALE_EXIT=0
+env TM_EXCLUSIONS_LOCALES_DIR=/nonexistent bash "$TM_EXCLUSIONS" --lang en --help >/dev/null 2>&1 || LOCALE_EXIT=$?
+if [[ "${LOCALE_EXIT}" -ne 0 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b TM_EXCLUSIONS_LOCALES_DIR=/nonexistent exits non-zero\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b TM_EXCLUSIONS_LOCALES_DIR=/nonexistent should exit non-zero\n' "$RED" "$NC"
+fi
+
+TESTS_RUN=$((TESTS_RUN + 1))
+if printf '%s\n' "${LOCALE_MISSING_STDERR}" | grep -q "locale files not found"; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b missing locales dir prints clear error to stderr\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b missing locales dir should print clear error to stderr (got: %s)\n' "$RED" "$NC" "${LOCALE_MISSING_STDERR}"
+fi
+
+# Test: TM_EXCLUSIONS_LOCALES_DIR=<repo>/locales explicitly (env-var override works)
+REPO_LOCALES_DIR="${SCRIPT_DIR}/locales"
+assert_exit_code 0 \
+    "TM_EXCLUSIONS_LOCALES_DIR=<repo>/locales --lang en --help exits 0" \
+    env TM_EXCLUSIONS_LOCALES_DIR="${REPO_LOCALES_DIR}" bash "$TM_EXCLUSIONS" --lang en --help
+
+assert_output_contains "Usage:" \
+    "TM_EXCLUSIONS_LOCALES_DIR env-var override loads English locale" \
+    env TM_EXCLUSIONS_LOCALES_DIR="${REPO_LOCALES_DIR}" bash "$TM_EXCLUSIONS" --lang en --help
+
+assert_exit_code 0 \
+    "TM_EXCLUSIONS_LOCALES_DIR=<repo>/locales --lang fr --help exits 0" \
+    env TM_EXCLUSIONS_LOCALES_DIR="${REPO_LOCALES_DIR}" bash "$TM_EXCLUSIONS" --lang fr --help
+
+assert_output_contains "Utilisation" \
+    "TM_EXCLUSIONS_LOCALES_DIR env-var override loads French locale" \
+    env TM_EXCLUSIONS_LOCALES_DIR="${REPO_LOCALES_DIR}" bash "$TM_EXCLUSIONS" --lang fr --help
+
 # ---- Summary ----
 test_summary
