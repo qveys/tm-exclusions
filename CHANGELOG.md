@@ -31,6 +31,10 @@ All notable changes to this project will be documented in this file.
 
 - Dynamic scan no longer emits redundant child exclusions under an already-excluded parent. After the parent (e.g. `~/Git/<repo>/node_modules`) is kept, descendants matched by the same or another pattern (e.g. `.pnpm/<pkg>/node_modules`) are silently skipped — they're already covered transitively by the parent. Saves hundreds of lines per pnpm workspace and avoids duplicate `tmutil addexclusion` calls. ([#23](https://github.com/qveys/tm-exclusions/issues/23))
 
+### CI and automation
+
+- Release workflow (`release.yml`) now fully syncs `Formula/tm-exclusions.rb` from this repo to `qveys/homebrew-tools` on every tag, then patches `url`/`sha256`/`version`. Previously only those three lines were rewritten, so a stale `install` stanza in the tap (e.g. a leftover `locales/` reference from the archived 2.x layout) caused `brew install tm-exclusions` to abort with `Errno::ENOENT: No such file or directory - locales`. Also adds a `workflow_dispatch` input to re-run the workflow against a past tag and re-sync the tap without cutting a new release.
+
 ### Docs
 
 - Architecture and README updated for the above. Ongoing parity checklist: GitHub issue [#34](https://github.com/qveys/tm-exclusions/issues/34).
