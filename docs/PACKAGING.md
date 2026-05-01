@@ -40,7 +40,7 @@ brew install tm-exclusions
 
 The release job (`.github/workflows/release.yml`) **fully replaces** `Formula/tm-exclusions.rb` in the tap with this repo’s copy at the released tag, then patches the `url`, `sha256`, and `version` lines. The install stanza therefore always matches what the release tarball actually ships — no manual sync required when the install layout changes.
 
-If a past release (e.g. before this auto-sync was in place) left a stale install stanza in the tap, re-run the workflow manually against that tag to re-sync without cutting a new release: **Actions → Release → Run workflow → tag: `vX.Y.Z`**.
+If a past release (e.g. before this auto-sync was in place) left a stale install stanza in the tap, re-run the workflow manually against that tag to re-sync without cutting a new release: **Actions → Release → Run workflow** (select `master` as the branch — older tags predate the `workflow_dispatch` trigger) **→ tag: `vX.Y.Z`**.
 
 ## Relationship to epic #34
 
