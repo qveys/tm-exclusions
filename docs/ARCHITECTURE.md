@@ -72,6 +72,8 @@ Prune entries prevent the scanner from processing found directories under certai
 
 Prune does NOT apply a Time Machine exclusion. It only filters the dynamic scan results. Within `scan_dynamic_patterns()`, the prune check (`is_pruned`) runs after `pattern_match_allowed` validation but before the prefix-prune (`is_covered_by_kept`). Paths under a prune zone emit a `MSG_PRUNE_SKIP` log message; paths pruned by prefix are dropped silently.
 
+Package-manager reinstalls often leave a sibling of a catalogued cache (e.g. `~/.bun.bak` next to `~/.bun`). Those trees are not covered by the live-path prune (`~/.bun` does not match `~/.bun.bak`), so the default catalog ships explicit prune zones for `.bak` / `.old` siblings of `.bun`, `.npm`, `.yarn`, `.pnpm-store`, and `.cargo` ([#25](https://github.com/qveys/tm-exclusions/issues/25)). This stops the `dist` / `node_modules` scan from emitting one exclusion per nested package without excluding the backup directory from Time Machine.
+
 ## Exclusion Application Strategy
 
 For each path to exclude:
@@ -174,7 +176,7 @@ The current architecture (config-driven, function-based) supports these addition
 
 ## Default rule catalog
 
-`config/default.conf` ships approximately 102 rules organized in 17 categories. Categories use `#@CategoryName` markers — cosmetic in 1.x (treated as comments by the loader), forward-compatible with the category-aware report grouping tracked in [#34](https://github.com/qveys/tm-exclusions/issues/34).
+`config/default.conf` ships approximately 113 rules organized in 17 categories. Categories use `#@CategoryName` markers — cosmetic in 1.x (treated as comments by the loader), forward-compatible with the category-aware report grouping tracked in [#34](https://github.com/qveys/tm-exclusions/issues/34).
 
 | # | Category | Section(s) | Sample entries |
 |---|---|---|---|
@@ -194,7 +196,7 @@ The current architecture (config-driven, function-based) supports these addition
 | 14 | App Support | path (opt-in) | Application Support entries for Cursor, JetBrains, Zed, … (commented out — see Opt-in entries) |
 | 15 | Claude Code / Codex | pattern | `.auto-claude`, `.codex`, `worktrees` |
 | 16 | Generic caches | pattern (opt-in) | `.cache` (commented out — uncomment to enable) |
-| 17 | Prune zones | prune | `$HOME/Library`, `$HOME/.Trash`, `$HOME/.nvm`, … |
+| 17 | Prune zones | prune | `$HOME/Library`, `$HOME/.Trash`, `$HOME/.nvm`, `$HOME/.bun.bak`, … |
 
 ### Path style
 
@@ -228,7 +230,7 @@ The `TM_EXCLUSIONS_EXTRA_CONF` loader requires the value to be **both a regular 
 ### Catalog invariants
 
 The smoke test suite (`tests/smoke.bats-like.sh`) guards five invariants:
-- ≥ 102 active rules (path/pattern/prune lines).
+- ≥ 113 active rules (path/pattern/prune lines).
 - Exactly 17 distinct `#@` category labels.
 - Three section banners present (`# ── STATIC EXCLUSIONS (path) ──`, `# ── DYNAMIC SCAN PATTERNS (pattern) ──`, `# ── SCAN PRUNE ZONES (prune) ──`); the smoke test matches them by prefix.
 - No rule uses the `~/` home prefix (must be `$HOME/`).

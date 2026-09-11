@@ -28,6 +28,7 @@ All notable changes to this project will be documented in this file.
 
 ### Default rules
 
+- Default prune zones now cover package-manager reinstall/migration shadow copies (`.bun.bak`, `.npm.bak`, `.yarn.bak`, `.pnpm-store.bak`, `.cargo.bak`, and matching `.old` siblings). These trees are disposable duplicates of catalogued caches; pruning them stops the dynamic scan from emitting one exclusion per nested `dist`/`node_modules` without excluding the parent from Time Machine. ([#25](https://github.com/qveys/tm-exclusions/issues/25))
 - Static paths for `/Applications` and `$HOME/Applications`.
 - Default config now ships ~102 rules across 17 categories (up from 39). Path style normalized to `$HOME/...`. New `#@CategoryName` section markers (cosmetic in 1.x; future report grouping tracked in #34). Several entries ship commented (opt-in): `pattern|.cache`, `pattern|site-packages`, `path|$HOME/.docker` (keeps registry credentials), the `App Support` Application Support roots (mix of user data and caches), and `path|/private/var/folders` (`du`/pipefail abort, see #45). `$HOME/.ollama/models` replaces the parent `$HOME/.ollama` (preserves `id_ed25519` and chat history). Cloud-sync prunes deferred to user opt-in (#44). (#37)
 

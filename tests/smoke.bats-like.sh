@@ -405,7 +405,7 @@ CONF="${SCRIPT_DIR}/config/default.conf"
 # Active rules (path/pattern/prune lines, ignoring comments).
 # Floor is pinned to the documented baseline so silent regressions fail CI.
 # Bump this constant when intentionally growing the catalog.
-MIN_ACTIVE_RULES=102
+MIN_ACTIVE_RULES=113
 RULE_COUNT=$(grep -cE '^(path|pattern|prune)\|' "${CONF}" || true)
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ "${RULE_COUNT}" -ge "${MIN_ACTIVE_RULES}" ]]; then
@@ -465,6 +465,124 @@ else
     TESTS_FAILED=$((TESTS_FAILED + 1))
     printf '%b  FAIL%b default.conf has %d rule(s) outside any #@ category\n' "$RED" "$NC" "${ORPHAN_COUNT}"
 fi
+
+# ---- Backup cache prune zones (#25) ----
+echo ""
+echo "--- Backup cache prune zones (#25) ---"
+
+# Shipped default.conf must list the package-manager .bak/.old prune zones.
+# Quoted heredoc keeps the literal $HOME prefix used in config/default.conf.
+while IFS= read -r bak_target; do
+    [[ -z "$bak_target" ]] && continue
+    TESTS_RUN=$((TESTS_RUN + 1))
+    if grep -qF "prune|${bak_target}|" "${CONF}"; then
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        printf '%b  PASS%b default.conf prunes %s\n' "$GREEN" "$NC" "${bak_target}"
+    else
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        printf '%b  FAIL%b default.conf missing prune for %s\n' "$RED" "$NC" "${bak_target}"
+    fi
+done <<'EOF'
+$HOME/.bun.bak
+$HOME/.bun.old
+$HOME/.npm.bak
+$HOME/.npm.old
+$HOME/.yarn.bak
+$HOME/.yarn.old
+$HOME/.pnpm-store.bak
+$HOME/.pnpm-store.old
+$HOME/.cargo.bak
+$HOME/.cargo.old
+EOF
+
+BAK_HOME="$(mktemp -d)"
+# Reproduce the real-world noise: ~/.bun.bak/install/cache/<pkg>/dist
+mkdir -p "${BAK_HOME}/.bun.bak/install/cache/pkg/dist"
+mkdir -p "${BAK_HOME}/.npm.bak/foo/node_modules"
+mkdir -p "${BAK_HOME}/.yarn.bak/cache/node_modules"
+mkdir -p "${BAK_HOME}/.bun.old/install/cache/pkg/dist"
+# Control: a non-catalog .bak tree must still be scanned.
+mkdir -p "${BAK_HOME}/.unrelated.bak/pkg/dist"
+# Control: a normal project tree must still be excluded.
+mkdir -p "${BAK_HOME}/Git/proj/node_modules"
+
+BAK_OUT="$(env HOME="${BAK_HOME}" \
+                TM_EXCLUSIONS_DEFAULT_CONF="${CONF}" \
+                bash "$TM_EXCLUSIONS" --dry-run 2>&1 || true)"
+
+# Nested dist under .bun.bak must be pruned, not applied as an exclusion.
+BAK_BUN_APPLY=$(printf '%s\n' "${BAK_OUT}" | grep -cE "(Applying exclusion:|Already excluded:).*\.bun\.bak/" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${BAK_BUN_APPLY}" -eq 0 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b ~/.bun.bak nested matches are not excluded\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b ~/.bun.bak should not emit exclusions, got %d\n' "$RED" "$NC" "${BAK_BUN_APPLY}"
+fi
+
+BAK_BUN_PRUNE=$(printf '%s\n' "${BAK_OUT}" | grep -cE "Pruning \(skipping scan of\):.*\.bun\.bak/" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${BAK_BUN_PRUNE}" -ge 1 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b ~/.bun.bak nested matches emit prune skip\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b expected prune skip under ~/.bun.bak\n' "$RED" "$NC"
+fi
+
+BAK_NPM_APPLY=$(printf '%s\n' "${BAK_OUT}" | grep -cE "(Applying exclusion:|Already excluded:).*\.npm\.bak/" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${BAK_NPM_APPLY}" -eq 0 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b ~/.npm.bak nested matches are not excluded\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b ~/.npm.bak should not emit exclusions, got %d\n' "$RED" "$NC" "${BAK_NPM_APPLY}"
+fi
+
+BAK_YARN_APPLY=$(printf '%s\n' "${BAK_OUT}" | grep -cE "(Applying exclusion:|Already excluded:).*\.yarn\.bak/" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${BAK_YARN_APPLY}" -eq 0 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b ~/.yarn.bak nested matches are not excluded\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b ~/.yarn.bak should not emit exclusions, got %d\n' "$RED" "$NC" "${BAK_YARN_APPLY}"
+fi
+
+BAK_OLD_APPLY=$(printf '%s\n' "${BAK_OUT}" | grep -cE "(Applying exclusion:|Already excluded:).*\.bun\.old/" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${BAK_OLD_APPLY}" -eq 0 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b ~/.bun.old nested matches are not excluded\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b ~/.bun.old should not emit exclusions, got %d\n' "$RED" "$NC" "${BAK_OLD_APPLY}"
+fi
+
+# Non-catalog .unrelated.bak must still receive the dist exclusion.
+UNRELATED_HITS=$(printf '%s\n' "${BAK_OUT}" | grep -cE "(Applying exclusion:|Already excluded:).*\.unrelated\.bak/pkg/dist$" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${UNRELATED_HITS}" -eq 1 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b non-catalog ~/.unrelated.bak/pkg/dist is still excluded\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b expected 1 exclusion for ~/.unrelated.bak/pkg/dist, got %d\n' "$RED" "$NC" "${UNRELATED_HITS}"
+fi
+
+PROJ_HITS=$(printf '%s\n' "${BAK_OUT}" | grep -cE "(Applying exclusion:|Already excluded:).*Git/proj/node_modules$" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${PROJ_HITS}" -eq 1 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b normal Git/proj/node_modules is still excluded\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b expected 1 exclusion for Git/proj/node_modules, got %d\n' "$RED" "$NC" "${PROJ_HITS}"
+fi
+
+rm -rf "${BAK_HOME}"
 
 # ---- Prefix-prune of redundant child exclusions (#23) ----
 echo ""
