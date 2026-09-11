@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Build
+
+- **`make install` / `make uninstall`**: default `PREFIX` is `$(brew --prefix)/bin` when writable, otherwise `/usr/local/bin`. Elevation no longer uses `sudo sh -c` (blocked by restricted sudoers). Cascade: unprivileged `install`/`rm` when the destination is writable, else `sudo /usr/bin/install` (or `/bin/rm`) per file, else a macOS admin dialog via `osascript`.
+
 ### Config
 
 - **`TM_EXCLUSIONS_EXTRA_CONF`**: opt-in mechanism for power users with large cloud-sync trees. Set the env var to any config file to load it after `default.conf` and `custom.conf`. A missing, non-regular-file (e.g. a directory path), or unreadable value emits a stderr warning and continues — the loader now requires both `-f` (regular file) and `-r` (readable). The example file (`extra-prunes.example.conf`) is installed alongside `default.conf`: in a source checkout under `config/`, via `make install` under `${SHARE_DIR}/` (default `/usr/local/share/tm-exclusions/`), and via `brew install` under `$(brew --prefix)/share/tm-exclusions/`. `config/default.conf` is unchanged. ([#17](https://github.com/qveys/tm-exclusions/issues/17))

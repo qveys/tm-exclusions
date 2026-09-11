@@ -78,6 +78,7 @@ brew install tm-exclusions
 git clone https://github.com/qveys/tm-exclusions.git
 cd tm-exclusions
 make install
+# PREFIX = Homebrew bin if writable, else /usr/local/bin (macOS admin prompt if needed)
 # Or run directly: bash tm_exclusions.sh --dry-run
 ```
 
@@ -214,10 +215,11 @@ If you have a massive cloud-sync tree (Dropbox, Google Drive, OneDrive) and want
 #    From `brew install tm-exclusions`:
 #      $(brew --prefix)/share/tm-exclusions/extra-prunes.example.conf
 #
-#    From `make install` (default PREFIX=/usr/local):
-#      /usr/local/share/tm-exclusions/extra-prunes.example.conf
+#    From `make install` (Homebrew prefix if writable, else /usr/local):
+#      $(PREFIX)/../share/tm-exclusions/extra-prunes.example.conf
+#      e.g. /opt/homebrew/share/tm-exclusions/extra-prunes.example.conf
 
-cp /usr/local/share/tm-exclusions/extra-prunes.example.conf \
+cp "$(brew --prefix)/share/tm-exclusions/extra-prunes.example.conf" \
    ~/.config/tm_exclusions/extra.conf
 
 # 2. Uncomment the prune lines that apply to your setup (editor of your choice):
@@ -329,7 +331,7 @@ launchctl load ~/Library/LaunchAgents/com.tm-exclusions.weekly.plist
 ```bash
 make test     # Run TAP-format smoke tests (--dry-run, no tmutil calls)
 make lint     # ShellCheck on all .sh files
-make install  # Install to /usr/local
+make install  # Homebrew bin if writable, else /usr/local (admin prompt if needed)
 ```
 
 ### Releasing

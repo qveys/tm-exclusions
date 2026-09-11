@@ -1,12 +1,22 @@
 .PHONY: setup check-hooks help test lint install uninstall check release tag
 
 SCRIPT = tm_exclusions.sh
-PREFIX ?= /usr/local/bin
+# Homebrew bin if writable (typical Apple Silicon), else /usr/local/bin.
+# Override with: make install PREFIX=/some/bin
+PREFIX ?= $(shell \
+  bp=""; \
+  if [ -n "$$HOMEBREW_PREFIX" ]; then bp="$$HOMEBREW_PREFIX"; \
+  elif command -v brew >/dev/null 2>&1; then bp=$$(brew --prefix 2>/dev/null); fi; \
+  if [ -n "$$bp" ] && [ -d "$$bp/bin" ] && [ -w "$$bp/bin" ]; then echo "$$bp/bin"; \
+  else echo /usr/local/bin; fi)
 INSTALL_NAME = tm-exclusions
 SHARE_DIR ?= $(abspath $(PREFIX)/../share/tm-exclusions)
 BASE_BRANCH ?= master
+INSTALL_BIN = /usr/bin/install
+RM_BIN = /bin/rm
+RMDIR_BIN = /bin/rmdir
 
-# Auto-detect whether sudo is required for install/uninstall.
+# Auto-detect whether elevation is required for install/uninstall.
 # Override with: make install SUDO= (skip) or make install SUDO=sudo (force)
 SUDO := $(shell \
   prefix_ok=''; share_ok=''; \
@@ -22,6 +32,20 @@ SUDO := $(shell \
   fi; \
   if [ -n "$$prefix_ok" ] && [ -n "$$share_ok" ]; then echo ''; \
   else echo 'sudo'; fi)
+
+# Shell snippet: request macOS admin (Authorization Services), else print fallback.
+# Expects $$cmd (POSIX command string, absolute paths). Bypasses sudoers whitelist.
+OSASCRIPT_OR_DIE = \
+	echo "Requesting administrator privileges..."; \
+	quoted=$$(printf '%s' "$$cmd" | sed 's/\\/\\\\/g; s/"/\\"/g'); \
+	if command -v osascript >/dev/null 2>&1 && osascript -e "do shell script \"$$quoted\" with administrator privileges"; then \
+	  :; \
+	else \
+	  echo "Error: could not modify $(PREFIX) (privilege elevation failed)." >&2; \
+	  echo "Try:  make install PREFIX=\"\$$(brew --prefix)/bin\"" >&2; \
+	  echo "  or: brew install --formula ./Formula/tm-exclusions.rb" >&2; \
+	  exit 1; \
+	fi
 
 # Auto-bootstrap the versioned hooks path on every `make` invocation so the
 # local Conventional Commit hooks are active without requiring manual setup.
@@ -74,10 +98,19 @@ lint: ## Run ShellCheck on all shell scripts
 	@shellcheck -x -s bash scripts/check-auto-patch.sh
 	@echo "ShellCheck passed."
 
-install: setup ## Install tm-exclusions to PREFIX (default: /usr/local/bin)
+install: setup ## Install tm-exclusions to PREFIX (Homebrew bin if writable, else /usr/local/bin)
 	@echo "Installing $(INSTALL_NAME) to $(PREFIX)..."
-	@if [ -n "$(SUDO)" ]; then $(SUDO) -v; fi
-	@$(SUDO) sh -c 'install -d "$(SHARE_DIR)" && install -m 755 "$(SCRIPT)" "$(PREFIX)/$(INSTALL_NAME)" && install -m 644 config/default.conf "$(SHARE_DIR)/default.conf" && install -m 644 config/extra-prunes.example.conf "$(SHARE_DIR)/extra-prunes.example.conf"'
+	@cmd='install -d "$(SHARE_DIR)" && install -m 755 "$(CURDIR)/$(SCRIPT)" "$(PREFIX)/$(INSTALL_NAME)" && install -m 644 "$(CURDIR)/config/default.conf" "$(SHARE_DIR)/default.conf" && install -m 644 "$(CURDIR)/config/extra-prunes.example.conf" "$(SHARE_DIR)/extra-prunes.example.conf"'; \
+	if [ -z "$(SUDO)" ]; then \
+	  sh -c "$$cmd"; \
+	elif $(SUDO) $(INSTALL_BIN) -d "$(SHARE_DIR)" \
+	  && $(SUDO) $(INSTALL_BIN) -m 755 "$(CURDIR)/$(SCRIPT)" "$(PREFIX)/$(INSTALL_NAME)" \
+	  && $(SUDO) $(INSTALL_BIN) -m 644 "$(CURDIR)/config/default.conf" "$(SHARE_DIR)/default.conf" \
+	  && $(SUDO) $(INSTALL_BIN) -m 644 "$(CURDIR)/config/extra-prunes.example.conf" "$(SHARE_DIR)/extra-prunes.example.conf"; then \
+	  :; \
+	else \
+	  $(OSASCRIPT_OR_DIE); \
+	fi
 	@echo "Installed. Run '$(INSTALL_NAME) --help' to get started."
 
 uninstall: ## Remove tm-exclusions from PREFIX
@@ -85,9 +118,14 @@ uninstall: ## Remove tm-exclusions from PREFIX
 	  echo "$(INSTALL_NAME) is not installed. Nothing to remove."; \
 	else \
 	  echo "Removing $(INSTALL_NAME) from $(PREFIX)..."; \
-	  if [ -n "$(SUDO)" ]; then $(SUDO) -v; fi; \
-	  $(SUDO) rm -f "$(PREFIX)/$(INSTALL_NAME)" "$(SHARE_DIR)/default.conf" "$(SHARE_DIR)/extra-prunes.example.conf"; \
-	  if [ -d "$(SHARE_DIR)" ]; then $(SUDO) rmdir "$(SHARE_DIR)" 2>/dev/null || true; fi; \
+	  cmd='$(RM_BIN) -f "$(PREFIX)/$(INSTALL_NAME)" "$(SHARE_DIR)/default.conf" "$(SHARE_DIR)/extra-prunes.example.conf"; if [ -d "$(SHARE_DIR)" ]; then $(RMDIR_BIN) "$(SHARE_DIR)" 2>/dev/null || true; fi'; \
+	  if [ -z "$(SUDO)" ]; then \
+	    sh -c "$$cmd"; \
+	  elif $(SUDO) $(RM_BIN) -f "$(PREFIX)/$(INSTALL_NAME)" "$(SHARE_DIR)/default.conf" "$(SHARE_DIR)/extra-prunes.example.conf"; then \
+	    if [ -d "$(SHARE_DIR)" ]; then $(SUDO) $(RMDIR_BIN) "$(SHARE_DIR)" 2>/dev/null || true; fi; \
+	  else \
+	    $(OSASCRIPT_OR_DIE); \
+	  fi; \
 	  echo "Removed."; \
 	fi
 
