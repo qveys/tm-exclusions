@@ -1,0 +1,9 @@
+# Custom labels for repo self-hosted runners (vps-dokploy, vps-openclaw).
+# https://github.com/rhysd/actionlint/blob/main/docs/config.md
+self-hosted-runner:
+  labels:
+    - hostinger
+    - vps-dokploy
+    - dokploy
+    - vps-openclaw
+    - openclaw

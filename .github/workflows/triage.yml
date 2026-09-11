@@ -9,12 +9,12 @@ on:
 jobs:
   label:
     if: github.event_name == 'pull_request_target'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, hostinger]
     permissions:
       contents: read
       pull-requests: write
     steps:
-      - uses: actions/labeler@v6
+      - uses: actions/labeler@bf12e9b00b37c5c0ca2b87b79b2daf7891dbda13 # v7.0.0
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           # sync-labels true can remove labels not listed in labeler.yml (Types, Priority, etc.)
@@ -22,13 +22,13 @@ jobs:
 
   normalize-title:
     if: github.event_name == 'issues' || (github.event_name == 'pull_request_target' && github.event.action != 'synchronize')
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, hostinger]
     permissions:
       issues: write
       pull-requests: write
     steps:
       - name: Normalize title
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const ccTypes = [
@@ -167,14 +167,14 @@ jobs:
     if: |
       (github.event_name == 'issues' || github.event_name == 'pull_request_target') &&
       (needs.normalize-title.result == 'success' || needs.normalize-title.result == 'skipped')
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, hostinger]
     permissions:
       contents: read
       issues: write
       pull-requests: write
     steps:
       - name: Apply labels from reference catalog
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const isPr = Boolean(context.payload.pull_request);
