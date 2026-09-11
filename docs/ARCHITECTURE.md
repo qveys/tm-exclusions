@@ -72,6 +72,8 @@ Prune entries prevent the scanner from processing found directories under certai
 
 Prune does NOT apply a Time Machine exclusion. It only filters the dynamic scan results. Within `scan_dynamic_patterns()`, the prune check (`is_pruned`) runs after `pattern_match_allowed` validation but before the prefix-prune (`is_covered_by_kept`). Paths under a prune zone emit a `MSG_PRUNE_SKIP` log message; paths pruned by prefix are dropped silently.
 
+Package-manager reinstalls often leave a sibling of a catalogued cache (e.g. `~/.bun.bak` next to `~/.bun`). Those trees are not covered by the live-path prune (`~/.bun` does not match `~/.bun.bak`), so the default catalog ships explicit prune zones for `.bak` / `.old` siblings of `.bun`, `.npm`, `.yarn`, `.pnpm-store`, and `.cargo` ([#25](https://github.com/qveys/tm-exclusions/issues/25)). This stops the `dist` / `node_modules` scan from emitting one exclusion per nested package without excluding the backup directory from Time Machine.
+
 ## Exclusion Application Strategy
 
 For each path to exclude:
@@ -183,7 +185,7 @@ The current architecture (config-driven, function-based) supports these addition
 
 ## Default rule catalog
 
-`config/default.conf` ships approximately 102 rules organized in 17 categories. Categories use `#@CategoryName` markers — cosmetic in 1.x (treated as comments by the loader), forward-compatible with the category-aware report grouping tracked in [#34](https://github.com/qveys/tm-exclusions/issues/34).
+`config/default.conf` ships approximately 116 rules organized in 17 categories. Categories use `#@CategoryName` markers — cosmetic in 1.x (treated as comments by the loader), forward-compatible with the category-aware report grouping tracked in [#34](https://github.com/qveys/tm-exclusions/issues/34).
 
 | # | Category | Section(s) | Sample entries |
 |---|---|---|---|
@@ -196,14 +198,14 @@ The current architecture (config-driven, function-based) supports these addition
 | 7 | Java / JVM | path + pattern | `$HOME/.m2/repository`, `$HOME/.gradle/caches`, `.gradle` |
 | 8 | Go | path | `$HOME/go/pkg/mod`, `$HOME/.cache/go-build` |
 | 9 | Ruby / iOS | path + pattern | `$HOME/.rbenv/versions`, `$HOME/.cocoapods`, `Pods` |
-| 10 | Xcode / Apple Dev Tools | path | `$HOME/Library/Developer/Xcode/DerivedData`, `…/CoreSimulator` |
+| 10 | Xcode / Apple Dev Tools | path | `$HOME/Library/Developer/Xcode/DerivedData`, `…/CoreSimulator/{Caches,Temp,Volumes,Devices}` |
 | 11 | macOS Caches | path | `$HOME/Library/Caches`, `$HOME/Library/Logs` |
 | 12 | Dev Tools | path | `$HOME/.terraform.d/plugin-cache`, IDE extensions and caches |
 | 13 | AI / LLM | path | `$HOME/.cache/huggingface`, `$HOME/.ollama/models`, Claude VM bundles |
 | 14 | App Support | path (opt-in) | Application Support entries for Cursor, JetBrains, Zed, … (commented out — see Opt-in entries) |
 | 15 | Claude Code / Codex | pattern | `.auto-claude`, `.codex`, `worktrees` |
 | 16 | Generic caches | pattern (opt-in) | `.cache` (commented out — uncomment to enable) |
-| 17 | Prune zones | prune | `$HOME/Library`, `$HOME/.Trash`, `$HOME/.nvm`, … |
+| 17 | Prune zones | prune | `$HOME/Library`, `$HOME/.Trash`, `$HOME/.nvm`, `$HOME/.bun.bak`, … |
 
 ### Path style
 
@@ -219,6 +221,12 @@ Several entries ship commented out:
 - `pattern|site-packages` — already covered by `.venv` patterns.
 
 Uncomment them in your installed `default.conf` if you have specific use cases.
+
+### CoreSimulator subtrees
+
+`$HOME/Library/Developer/CoreSimulator` is **not** excluded as a parent tree. The default catalog targets `Caches`, `Temp`, `Volumes`, and `Devices` so root-level simulator metadata stays in backups. To keep device containers in Time Machine while still excluding caches, comment out the `Devices` line in a local catalog copy (or point `TM_EXCLUSIONS_DEFAULT_CONF` at that copy) — `custom.conf` is additive and cannot drop a default rule. `/Library/Developer/CoreSimulator` remains a whole-tree exclusion (system runtimes, not user device metadata).
+
+Upgrades from a catalog that excluded the HOME parent: apply, `--dry-run`, and `--uninstall` call `tmutil removeexclusion` on `$HOME/Library/Developer/CoreSimulator` when that path is still excluded. Manual equivalent: `tmutil removeexclusion "$HOME/Library/Developer/CoreSimulator"`. Commenting out `Devices` does not undo an already-applied parent exclusion.
 
 ### Cloud-sync prunes
 
@@ -236,11 +244,12 @@ The `TM_EXCLUSIONS_EXTRA_CONF` loader requires the value to be **both a regular 
 
 ### Catalog invariants
 
-The smoke test suite (`tests/smoke.bats-like.sh`) guards five invariants:
-- ≥ 102 active rules (path/pattern/prune lines).
+The smoke test suite (`tests/smoke.bats-like.sh`) guards these catalog invariants:
+- ≥ 116 active rules (path/pattern/prune lines).
 - Exactly 17 distinct `#@` category labels.
 - Three section banners present (`# ── STATIC EXCLUSIONS (path) ──`, `# ── DYNAMIC SCAN PATTERNS (pattern) ──`, `# ── SCAN PRUNE ZONES (prune) ──`); the smoke test matches them by prefix.
 - No rule uses the `~/` home prefix (must be `$HOME/`).
 - Every rule sits under a `#@` marker.
+- HOME CoreSimulator is split into `Caches` / `Temp` / `Volumes` / `Devices` (no parent-tree rule); `/Library/Developer/CoreSimulator` stays whole-tree.
 
 Adjusting the taxonomy therefore forces a coordinated update of the docs and the test thresholds.

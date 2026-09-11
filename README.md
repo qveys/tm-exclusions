@@ -54,7 +54,7 @@ Optional environment variables (see **`docs/ARCHITECTURE.md`**): `TM_EXCLUSIONS_
 
 | | Feature | Details |
 |---|---|---|
-| 📦 | **Built-in rules** | ~102 rules across 17 categories (Node.js, Python, Rust, Java, Xcode, AI/LLM, Docker, Homebrew, …) |
+| 📦 | **Built-in rules** | ~116 rules across 17 categories (Node.js, Python, Rust, Java, Xcode, AI/LLM, Docker, Homebrew, …) |
 | 🔍 | **Dynamic scan** | Recursively finds `node_modules`, `.venv`, `__pycache__`, build dirs |
 | 🔒 | **Dual tmutil strategy** | User paths via `tmutil addexclusion`; system paths via `sudo tmutil ... -p` |
 | 🌍 | **Multilingual** | French / English (auto-detected from `$LANG`) |
@@ -118,14 +118,14 @@ Config files are loaded, merged, then applied via a dual `tmutil` strategy (user
 | ☕ **Java / JVM** | Maven, Gradle, Ivy, SBT, Coursier caches; dynamic `.gradle` |
 | 🐹 **Go** | Go module cache, build cache |
 | 💎 **Ruby / iOS** | rbenv, RVM, gems, CocoaPods repo; dynamic `Pods` |
-| 🔨 **Xcode / Apple Dev Tools** | DerivedData, Archives, iOS/watchOS/tvOS/visionOS DeviceSupport, CoreSimulator |
+| 🔨 **Xcode / Apple Dev Tools** | DerivedData, Archives, iOS/watchOS/tvOS/visionOS DeviceSupport, CoreSimulator Caches/Temp/Volumes/Devices (not the parent tree) |
 | 🗄️ **macOS Caches** | `~/Library/Caches`, `~/Library/Logs` |
 | 🛠️ **Dev Tools** | IDE caches (JetBrains, VS Code), Terraform, Pulumi, Helm, kubectl plugin caches |
 | 🤖 **AI / LLM** | Hugging Face, LM Studio, Ollama models, Claude Code VM bundles, SuperWhisper |
 | 🧰 **App Support** | (opt-in — see config) Application Support roots for Cursor, JetBrains, Zed, … |
 | 🤝 **Claude Code / Codex** | Dynamic `.auto-claude`, `.codex`, `worktrees` |
 | 🧼 **Generic caches** | (opt-in — see config) Pattern `.cache` |
-| 🚫 **Prune zones** | Skip-scan-only: `~/Library`, `~/.Trash`, `~/.bun`, `~/.nvm`, … |
+| 🚫 **Prune zones** | Skip-scan-only: `~/Library`, `~/.Trash`, `~/.bun`, `~/.nvm`, package-manager `.bak`/`.old` shadow copies (`.bun.bak`, `.npm.bak`, …) |
 
 </details>
 
@@ -317,7 +317,8 @@ launchctl load ~/Library/LaunchAgents/com.tm-exclusions.weekly.plist
 ## 🔎 Current behavior notes
 
 - In non-interactive runs without cached/passwordless sudo (`sudo -n`), system paths are skipped (no blocking prompt).
-- `--uninstall` removes exclusions matching current configured static rules, dynamic matches, and discovered extra paths.
+- `--uninstall` removes exclusions matching current configured static rules, dynamic matches, and discovered extra paths. It also drops retired catalog paths that are still excluded (today: the former `$HOME/Library/Developer/CoreSimulator` parent).
+- Apply and `--dry-run` drop that same retired parent exclusion when `tmutil` still has it, then add the granular CoreSimulator subdirs. Manual equivalent: `tmutil removeexclusion "$HOME/Library/Developer/CoreSimulator"`.
 - Dynamic scan depth is intentionally capped to `find -maxdepth 6`.
 - Report output always prints to stdout, including with `--quiet`.
 - On non-macOS or without `tmutil`, behavior is simulated (useful for tests).
@@ -329,6 +330,7 @@ launchctl load ~/Library/LaunchAgents/com.tm-exclusions.weekly.plist
 ```bash
 make test     # Run TAP-format smoke tests (--dry-run, no tmutil calls)
 make lint     # ShellCheck on all .sh files
+make version  # Print the current tm-exclusions version
 make install  # Install to /usr/local
 ```
 
