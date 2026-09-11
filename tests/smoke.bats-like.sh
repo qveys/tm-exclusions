@@ -1049,10 +1049,10 @@ assert_exit_code 0 \
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ -f "${REPSET_HOME}/Documents/from-home-token.txt" ]]; then
     TESTS_PASSED=$((TESTS_PASSED + 1))
-    printf '%b  PASS%b setting|report_path expands $HOME in value\n' "$GREEN" "$NC"
+    printf "%b  PASS%b setting|report_path expands \$HOME in value\n" "$GREEN" "$NC"
 else
     TESTS_FAILED=$((TESTS_FAILED + 1))
-    printf '%b  FAIL%b setting|report_path $HOME expansion missing file\n' "$RED" "$NC"
+    printf "%b  FAIL%b setting|report_path \$HOME expansion missing file\n" "$RED" "$NC"
 fi
 
 # Env TM_EXCLUSIONS_REPORT overrides config report_path
