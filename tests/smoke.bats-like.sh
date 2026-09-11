@@ -449,13 +449,9 @@ echo ""
 echo "--- Backup cache prune zones (#25) ---"
 
 # Shipped default.conf must list the package-manager .bak/.old prune zones.
-for bak_target in \
-    '$HOME/.bun.bak' '$HOME/.bun.old' \
-    '$HOME/.npm.bak' '$HOME/.npm.old' \
-    '$HOME/.yarn.bak' '$HOME/.yarn.old' \
-    '$HOME/.pnpm-store.bak' '$HOME/.pnpm-store.old' \
-    '$HOME/.cargo.bak' '$HOME/.cargo.old'
-do
+# Quoted heredoc keeps the literal $HOME prefix used in config/default.conf.
+while IFS= read -r bak_target; do
+    [[ -z "$bak_target" ]] && continue
     TESTS_RUN=$((TESTS_RUN + 1))
     if grep -qF "prune|${bak_target}|" "${CONF}"; then
         TESTS_PASSED=$((TESTS_PASSED + 1))
@@ -464,7 +460,18 @@ do
         TESTS_FAILED=$((TESTS_FAILED + 1))
         printf '%b  FAIL%b default.conf missing prune for %s\n' "$RED" "$NC" "${bak_target}"
     fi
-done
+done <<'EOF'
+$HOME/.bun.bak
+$HOME/.bun.old
+$HOME/.npm.bak
+$HOME/.npm.old
+$HOME/.yarn.bak
+$HOME/.yarn.old
+$HOME/.pnpm-store.bak
+$HOME/.pnpm-store.old
+$HOME/.cargo.bak
+$HOME/.cargo.old
+EOF
 
 BAK_HOME="$(mktemp -d)"
 # Reproduce the real-world noise: ~/.bun.bak/install/cache/<pkg>/dist
