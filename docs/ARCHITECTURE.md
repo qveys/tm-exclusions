@@ -90,6 +90,13 @@ All `tmutil` interaction goes through wrapper functions (`tm_is_excluded`, `tm_a
 
 A background **sudo credential refresh** loop may start when a privileged path is processed, mirroring long interactive runs.
 
+### Cleanup and Signal Traps
+
+The tool traps `EXIT`, `INT` (SIGINT), `TERM` (SIGTERM), and `HUP` (SIGHUP) via `cleanup()` and `on_signal()`:
+- **Temporary file tracking**: All temporary files created during dynamic scanning and disk inspection (`mktemp`) are registered in `TMP_FILES` and removed on normal completion or when receiving an interruption signal.
+- **Sudo keepalive**: The background `sudo -n -v` keepalive loop is automatically terminated on exit or signal to prevent orphan background processes.
+- **Signal propagation**: On trapped signals, cleanup executes and the signal is re-delivered to the process to preserve standard POSIX exit status.
+
 ### Note on Time Machine UI
 
 Some exclusions applied via `tmutil addexclusion` (user-level "sticky" exclusions) may not be visible in System Settings > Time Machine. This is expected macOS behavior. Use `tmutil isexcluded <path>` to verify exclusion status.
@@ -117,6 +124,8 @@ After processing all paths, a human-readable report is printed and saved to `~/.
 ## First-run custom config
 
 Before normal runs (default apply, `--dry-run`, `--report-only`, `--uninstall`) and before `--add` / `--list` / `--edit`, the tool ensures `~/.config/tm_exclusions/` exists and creates **`custom.conf`** from the same template as `--init` if the file is missing. This matches legacy “auto init” behavior.
+
+When editing the config via `--edit`, `$EDITOR` (default: `vi`) is parsed into an argument array without `eval`, properly supporting multi-word commands (e.g. `code --wait`, `subl -w`, `nano -B`).
 
 ## Discovered extra paths (`collect_post_scan_paths`)
 

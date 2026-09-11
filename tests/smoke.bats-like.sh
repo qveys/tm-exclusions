@@ -275,6 +275,11 @@ assert_exit_code 1 \
     "--add rejects trailing args" \
     bash "$TM_EXCLUSIONS" --add path "/tmp/test" "test reason" --quiet
 
+# Test --edit with multi-word EDITOR
+assert_output_contains "MOCK_EDIT:arg1:" \
+    "--edit supports EDITOR with arguments" \
+    env EDITOR="printf MOCK_EDIT:%s:%s arg1" bash "$TM_EXCLUSIONS" --edit
+
 # ---- Uninstall dry-run ----
 echo ""
 echo "--- Uninstall dry-run ---"
@@ -693,6 +698,50 @@ else
 fi
 
 rm -rf "${EXTRA_HOME}"
+
+# ---- Temporary file cleanup and signal trap ----
+echo ""
+echo "--- Temporary file cleanup and signal trap ---"
+
+CLEANUP_DIR="$(mktemp -d "${TEST_HOME}/cleanup-test.XXXXXX")"
+TMP_HOLD="${CLEANUP_DIR}/tmp"
+mkdir -p "${TMP_HOLD}"
+
+# Normal run leaves no temp files in TMPDIR
+env TMPDIR="${TMP_HOLD}" bash "$TM_EXCLUSIONS" --dry-run >/dev/null 2>&1
+REMAINING_TMP=$(find "${TMP_HOLD}" -name 'tm_exc_*' 2>/dev/null | wc -l | tr -d ' ')
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${REMAINING_TMP}" -eq 0 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b no temp files leaked in TMPDIR after normal run\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b %d temp files leaked in TMPDIR after normal run\n' "$RED" "$NC" "${REMAINING_TMP}"
+fi
+
+# Signal trap (SIGTERM) removes registered temp files and terminates
+SIG_TMP_FILE="${TMP_HOLD}/tm_exc_signal_test.tmp"
+touch "${SIG_TMP_FILE}"
+
+bash -c "
+source <(sed -n '/^register_tmp_file/,/^on_signal/p; /^sudo_keepalive_stop/,/^}/p' \"${TM_EXCLUSIONS}\")
+TMP_FILES=\"\"
+register_tmp_file \"${SIG_TMP_FILE}\"
+trap \"cleanup\" EXIT
+trap \"on_signal TERM\" TERM
+kill -TERM \$\$
+" >/dev/null 2>&1 || true
+
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ ! -e "${SIG_TMP_FILE}" ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b signal handler removes registered temp files on SIGTERM\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b registered temp file was not cleaned up on SIGTERM\n' "$RED" "$NC"
+fi
+
+rm -rf "${CLEANUP_DIR}"
 
 # ---- Summary ----
 test_summary

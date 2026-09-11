@@ -54,6 +54,8 @@ EXTRA_PATHS=""
 # Unique existing paths for optional du summary in report
 DU_PATHS=""
 SUDO_KEEPALIVE_PID=""
+# Temporary files to remove on exit/signal
+TMP_FILES=""
 # When 1, log_info also appends to FD 5 (opened from TM_EXCLUSIONS_DEBUG_FIFO)
 DEBUG_LOG_FD=0
 
@@ -252,6 +254,47 @@ sudo_keepalive_start() {
         done
     ) &
     SUDO_KEEPALIVE_PID=$!
+}
+
+register_tmp_file() {
+    local f="$1"
+    [[ -z "$f" ]] && return 0
+    if [[ -z "${TMP_FILES}" ]]; then
+        TMP_FILES="$f"
+    else
+        TMP_FILES="${TMP_FILES}
+$f"
+    fi
+}
+
+unregister_tmp_file() {
+    local f="$1"
+    [[ -z "$f" || -z "${TMP_FILES}" ]] && return 0
+    TMP_FILES="$(printf '%s\n' "${TMP_FILES}" | grep -Fvx "$f" || true)"
+}
+
+cleanup_tmp_files() {
+    if [[ -n "${TMP_FILES}" ]]; then
+        local f
+        while IFS= read -r f; do
+            [[ -n "$f" && -e "$f" ]] && rm -f "$f" 2>/dev/null || true
+        done <<EOF
+${TMP_FILES}
+EOF
+        TMP_FILES=""
+    fi
+}
+
+cleanup() {
+    sudo_keepalive_stop
+    cleanup_tmp_files
+}
+
+on_signal() {
+    local sig="$1"
+    cleanup
+    trap - "$sig" EXIT
+    kill -s "$sig" "$$"
 }
 
 # Refresh sudo timestamp once before privileged tmutil calls (TTY may prompt)
@@ -640,7 +683,9 @@ cmd_config_edit() {
     fi
 
     local editor="${EDITOR:-vi}"
-    exec "${editor}" "${CUSTOM_CONF}"
+    local -a editor_cmd
+    read -r -a editor_cmd <<< "${editor}"
+    exec "${editor_cmd[@]}" "${CUSTOM_CONF}"
 }
 
 # ---------------------------------------------------------------------------
@@ -810,6 +855,7 @@ scan_dynamic_patterns() {
     # exclusion (e.g. ~/.npm covers ~/.npm/_npx/X/node_modules) are also pruned.
     local kept_file
     kept_file="$(mktemp "${TMPDIR:-/tmp}/tm_exc_kept.XXXXXX")"
+    register_tmp_file "$kept_file"
     if [[ -n "${CONF_PATHS}" ]]; then
         printf '%s\n' "${CONF_PATHS}" | grep -v '^[[:space:]]*$' > "$kept_file" || true
     fi
@@ -819,12 +865,14 @@ scan_dynamic_patterns() {
     # ancestor path is a strict string prefix of any descendant.
     local all_results
     all_results="$(mktemp "${TMPDIR:-/tmp}/tm_exc_all.XXXXXX")"
+    register_tmp_file "$all_results"
 
     local pattern_name
     while IFS= read -r pattern_name; do
         [[ -z "$pattern_name" ]] && continue
         local tmp_pattern
         tmp_pattern="$(mktemp "${TMPDIR:-/tmp}/tm_exc.XXXXXX")"
+        register_tmp_file "$tmp_pattern"
         find "$scan_root" -maxdepth 6 -type d -name "$pattern_name" > "$tmp_pattern" 2>/dev/null || true
         # Tag each match with its pattern so pattern_match_allowed can re-check later.
         # Tab-separated; pattern names never contain tabs in our config schema.
@@ -834,6 +882,7 @@ scan_dynamic_patterns() {
             printf '%s\t%s\n' "$found_dir" "$pattern_name" >> "$all_results"
         done < "$tmp_pattern"
         rm -f "$tmp_pattern"
+        unregister_tmp_file "$tmp_pattern"
     done <<EOF
 ${CONF_PATTERNS}
 EOF
@@ -842,8 +891,10 @@ EOF
     # therefore kept first; descendants are then dropped by is_covered_by_kept.
     local sorted_results
     sorted_results="$(mktemp "${TMPDIR:-/tmp}/tm_exc_sorted.XXXXXX")"
+    register_tmp_file "$sorted_results"
     LC_ALL=C sort -t$'\t' -k1,1 "$all_results" > "$sorted_results"
     rm -f "$all_results"
+    unregister_tmp_file "$all_results"
 
     local line found_dir matched_pattern
     while IFS= read -r line; do
@@ -898,6 +949,8 @@ EOF
     done < "$sorted_results"
 
     rm -f "$sorted_results" "$kept_file"
+    unregister_tmp_file "$sorted_results"
+    unregister_tmp_file "$kept_file"
 }
 
 apply_static_paths() {
@@ -967,6 +1020,7 @@ collect_post_scan_paths() {
     fi
 
     tmp="$(mktemp "${TMPDIR:-/tmp}/tm_exc_disk.XXXXXX")"
+    register_tmp_file "$tmp"
     # One tree walk from $HOME covers ~/Library. BSD/GNU find: uppercase M for megabytes.
     # .sparsebundle is a directory bundle on macOS — match with -type d; other images as files.
     find "$HOME" \( -path '*/Mobile Documents/*' -o -path '*/Library/Mobile Documents/*' \) -prune -o \
@@ -979,6 +1033,7 @@ collect_post_scan_paths() {
         extra_paths_append "$line"
     done < "$tmp"
     rm -f "$tmp"
+    unregister_tmp_file "$tmp"
 }
 
 apply_extra_paths() {
@@ -1290,6 +1345,11 @@ parse_args() {
 # Main
 # ---------------------------------------------------------------------------
 main() {
+    trap 'cleanup' EXIT
+    trap 'on_signal INT' INT
+    trap 'on_signal TERM' TERM
+    trap 'on_signal HUP' HUP
+
     # First pass: detect --lang and --quiet before i18n init
     local arg
     for arg in "$@"; do
@@ -1355,8 +1415,6 @@ main() {
             exit 0
             ;;
     esac
-
-    trap 'sudo_keepalive_stop' EXIT
 
     if [[ -n "${TM_EXCLUSIONS_DEBUG_FIFO:-}" ]]; then
         # FIFO: open read+write so open(2) does not block waiting for a separate reader.

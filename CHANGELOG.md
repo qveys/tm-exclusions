@@ -22,6 +22,11 @@ All notable changes to this project will be documented in this file.
 - `collect_post_scan_paths`: dedupe `EXTRA_PATHS`; **`find -size +512M`** (portable suffix); **`.sparsebundle`** matched as **directories**; **`worktrees`** glob matches `.git/worktrees` root.
 - Debug FIFO: open with **`exec 5<>`** (read+write) so named pipes do not block on open.
 
+### Security / Hardening
+
+- Signal handling and temp file cleanup: register all `mktemp` files and clean them up deterministically on `EXIT`, `INT` (SIGINT), `TERM` (SIGTERM), and `HUP` (SIGHUP), stopping background sudo keepalive and re-raising the signal cleanly.
+- `$EDITOR` support with arguments: parse `$EDITOR` into an indexed argument array (`read -r -a`) in `cmd_config_edit` so multi-word commands (e.g. `code --wait`, `subl -w`, `nano -B`) execute properly without invoking `eval`.
+
 ### Default rules
 
 - Static paths for `/Applications` and `$HOME/Applications`.
