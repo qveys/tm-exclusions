@@ -222,6 +222,18 @@ $p"
     fi
 }
 
+# KiB on disk for $1. Permission-denied children (typical of /private/var/folders)
+# make BSD/GNU du exit non-zero even when a partial total was printed. Capture
+# du independently so set -euo pipefail cannot abort report generation (#18, #55).
+du_size_kb() {
+    local raw=""
+    raw="$(du -sk -- "$1" 2>/dev/null || true)"
+    [[ -z "$raw" ]] && return 0
+    awk '{print $1; exit}' <<EOF
+${raw}
+EOF
+}
+
 # True if path is $HOME or under it (normalized, no trailing slash ambiguity)
 path_under_home() {
     local p="$1"
@@ -1076,11 +1088,11 @@ PATH: ${path_dirs} existing directories (of ${path_total} colon-separated entrie
         total_k=0
         while IFS= read -r p; do
             [[ -z "$p" || ! -e "$p" ]] && continue
-            # du exits non-zero when a subdir is unreadable (e.g. /private/var/folders);
-            # || true prevents set -euo pipefail from aborting the script (#18).
-            # `--` guards against paths starting with `-` being parsed as options.
-            szk="$(du -sk -- "$p" 2>/dev/null | awk '{print $1}' || true)"
-            [[ -z "$szk" ]] && continue
+            # `--` is applied inside du_size_kb; unreadable children must not abort.
+            szk="$(du_size_kb "$p")"
+            case "$szk" in
+                ''|*[!0-9]*) continue ;;
+            esac
             total_k=$((total_k + szk))
             sh="$(awk -v k="$szk" 'BEGIN {
                 if (k < 1024) { printf "%dK", k; exit }
