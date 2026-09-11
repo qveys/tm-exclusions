@@ -219,6 +219,9 @@ If you have a massive cloud-sync tree (Dropbox, Google Drive, OneDrive) and want
 #      $(PREFIX)/../share/tm-exclusions/extra-prunes.example.conf
 #      e.g. /opt/homebrew/share/tm-exclusions/extra-prunes.example.conf
 
+# If PREFIX isn't on PATH (e.g. a custom `make install PREFIX=...`),
+# `command -v` finds nothing and SHARE_DIR below is wrong — replace it
+# with the absolute path, e.g. SHARE_DIR="/custom/prefix/share/tm-exclusions".
 SHARE_DIR="$(dirname "$(command -v tm-exclusions)")/../share/tm-exclusions"
 cp "$SHARE_DIR/extra-prunes.example.conf" \
    ~/.config/tm_exclusions/extra.conf
