@@ -313,6 +313,11 @@ assert_exit_code 1 \
     "--add rejects trailing args" \
     bash "$TM_EXCLUSIONS" --add path "/tmp/test" "test reason" --quiet
 
+# Test --edit with multi-word EDITOR
+assert_output_contains "MOCK_EDIT:arg1:" \
+    "--edit supports EDITOR with arguments" \
+    env EDITOR="printf MOCK_EDIT:%s:%s arg1" bash "$TM_EXCLUSIONS" --edit
+
 # ---- Uninstall dry-run ----
 echo ""
 echo "--- Uninstall dry-run ---"
@@ -1009,6 +1014,62 @@ assert_exit_code 0 \
 assert_output_contains "Utilisation" \
     "TM_EXCLUSIONS_LOCALES_DIR env-var override loads French locale" \
     env TM_EXCLUSIONS_LOCALES_DIR="${REPO_LOCALES_DIR}" bash "$TM_EXCLUSIONS" --lang fr --help
+# ---- Temporary file cleanup and signal trap ----
+echo ""
+echo "--- Temporary file cleanup and signal trap ---"
+
+CLEANUP_DIR="$(mktemp -d "${TEST_HOME}/cleanup-test.XXXXXX")"
+TMP_HOLD="${CLEANUP_DIR}/tmp"
+mkdir -p "${TMP_HOLD}"
+
+# Normal run leaves no temp files in TMPDIR
+env TMPDIR="${TMP_HOLD}" bash "$TM_EXCLUSIONS" --dry-run >/dev/null 2>&1
+REMAINING_TMP=$(find "${TMP_HOLD}" -name 'tm_exc_*' 2>/dev/null | wc -l | tr -d ' ')
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${REMAINING_TMP}" -eq 0 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b no temp files leaked in TMPDIR after normal run\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b %d temp files leaked in TMPDIR after normal run\n' "$RED" "$NC" "${REMAINING_TMP}"
+fi
+
+# Signal trap (SIGTERM) removes registered temp files and terminates
+SIG_TMP_FILE="${TMP_HOLD}/tm_exc_signal_test.tmp"
+touch "${SIG_TMP_FILE}"
+
+# The handler must re-raise SIGTERM after cleanup (POSIX exit status 128+15=143),
+# not just remove the temp file, so a re-raise regression is caught even though
+# the file-removal path alone would still pass.
+# shellcheck disable=SC2016
+assert_exit_code 143 "signal handler re-raises SIGTERM (exit 143)" \
+    bash -c '
+source <(
+    sed -n \
+        -e "/^sudo_keepalive_stop()/,/^}/p" \
+        -e "/^register_tmp_file()/,/^}/p" \
+        -e "/^cleanup_tmp_files()/,/^}/p" \
+        -e "/^cleanup()/,/^}/p" \
+        -e "/^on_signal()/,/^}/p" \
+        "$1"
+)
+TMP_FILES=""
+register_tmp_file "$2"
+trap "cleanup" EXIT
+trap "on_signal TERM" TERM
+kill -TERM $$
+' _ "${TM_EXCLUSIONS}" "${SIG_TMP_FILE}"
+
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ ! -e "${SIG_TMP_FILE}" ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b signal handler removes registered temp files on SIGTERM\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b registered temp file was not cleaned up on SIGTERM\n' "$RED" "$NC"
+fi
+
+rm -rf "${CLEANUP_DIR}"
 # ---- Auto-prune .bak / .old shadow copies (#25) ----
 echo ""
 echo "--- Auto-prune .bak/.old shadow copies (#25) ---"
