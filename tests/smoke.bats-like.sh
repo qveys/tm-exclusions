@@ -589,20 +589,21 @@ echo ""
 echo "--- CoreSimulator subdirs (#54) ---"
 
 # Do not exclude the HOME parent tree.
-CSIM_PARENT_COUNT=$(grep -cE '^path\|\$HOME/Library/Developer/CoreSimulator\|' "${CONF}" || true)
+# Literal $HOME in the catalog (not expanded); [$] matches a dollar sign.
+CSIM_PARENT_COUNT=$(grep -cE '^path\|[$]HOME/Library/Developer/CoreSimulator\|' "${CONF}" || true)
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ "${CSIM_PARENT_COUNT}" -eq 0 ]]; then
     TESTS_PASSED=$((TESTS_PASSED + 1))
-    printf '%b  PASS%b default.conf does not exclude $HOME/.../CoreSimulator parent\n' "$GREEN" "$NC"
+    printf '%b  PASS%b default.conf does not exclude HOME CoreSimulator parent\n' "$GREEN" "$NC"
 else
     TESTS_FAILED=$((TESTS_FAILED + 1))
-    printf '%b  FAIL%b default.conf still excludes $HOME/.../CoreSimulator parent\n' "$RED" "$NC"
+    printf '%b  FAIL%b default.conf still excludes HOME CoreSimulator parent\n' "$RED" "$NC"
 fi
 
 CSIM_SUBDIRS='Caches Temp Volumes Devices'
 CSIM_MISSING=""
 for sub in ${CSIM_SUBDIRS}; do
-    if ! grep -qE "^path\\|\\\$HOME/Library/Developer/CoreSimulator/${sub}\\|" "${CONF}"; then
+    if ! grep -qE "^path\\|[$]HOME/Library/Developer/CoreSimulator/${sub}\\|" "${CONF}"; then
         CSIM_MISSING="${CSIM_MISSING} ${sub}"
     fi
 done
