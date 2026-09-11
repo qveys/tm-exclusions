@@ -112,7 +112,7 @@ After processing all paths, a human-readable report is printed and saved to `~/.
 - Hostname, user, program version, timestamp, and mode
 - Counts: checked, newly excluded, already excluded, skipped, errors
 - **Inventory** (optional): `/Applications` item count, Homebrew formula/cask counts when `brew` exists, PATH directory stats. Set **`TM_EXCLUSIONS_SKIP_INVENTORY=1`** to skip this block (faster smoke/CI; `brew list` can be slow).
-- **Disk usage**: `du -sh` per path touched in the run (existing paths only) and an approximate total in KiB
+- **Disk usage**: `du -sk` per path touched in the run (existing paths only), formatted for display, and an approximate total in KiB. `du_size_kb()` captures `du` independently of any pipeline so a non-zero exit from unreadable children (e.g. `/private/var/folders`) cannot trip `set -euo pipefail`.
 - Per-path detail lines
 - When `tmutil` is available: an excerpt of **`tmutil listexclusions`** (first 500 lines)
 
@@ -196,7 +196,7 @@ The current architecture (config-driven, function-based) supports these addition
 
 ## Default rule catalog
 
-`config/default.conf` ships approximately 116 rules organized in 17 categories. Categories use `#@CategoryName` markers — cosmetic in 1.x (treated as comments by the loader), forward-compatible with the category-aware report grouping tracked in [#34](https://github.com/qveys/tm-exclusions/issues/34).
+`config/default.conf` ships approximately 117 rules organized in 17 categories. Categories use `#@CategoryName` markers — cosmetic in 1.x (treated as comments by the loader), forward-compatible with the category-aware report grouping tracked in [#34](https://github.com/qveys/tm-exclusions/issues/34).
 
 | # | Category | Section(s) | Sample entries |
 |---|---|---|---|
@@ -210,7 +210,7 @@ The current architecture (config-driven, function-based) supports these addition
 | 8 | Go | path | `$HOME/go/pkg/mod`, `$HOME/.cache/go-build` |
 | 9 | Ruby / iOS | path + pattern | `$HOME/.rbenv/versions`, `$HOME/.cocoapods`, `Pods` |
 | 10 | Xcode / Apple Dev Tools | path | `$HOME/Library/Developer/Xcode/DerivedData`, `…/CoreSimulator/{Caches,Temp,Volumes,Devices}` |
-| 11 | macOS Caches | path | `$HOME/Library/Caches`, `$HOME/Library/Logs` |
+| 11 | macOS Caches | path | `$HOME/Library/Caches`, `$HOME/Library/Logs`, `/private/var/folders` |
 | 12 | Dev Tools | path | `$HOME/.terraform.d/plugin-cache`, IDE extensions and caches |
 | 13 | AI / LLM | path | `$HOME/.cache/huggingface`, `$HOME/.ollama/models`, Claude VM bundles |
 | 14 | App Support | path (opt-in) | Application Support entries for Cursor, JetBrains, Zed, … (commented out — see Opt-in entries) |
@@ -225,7 +225,6 @@ Home-rooted paths use `$HOME/...`. The loader also accepts the legacy `~/...` fo
 ### Opt-in entries
 
 Several entries ship commented out:
-- `path|/private/var/folders` — already covered by macOS Time Machine StdExclusions; `du` on it can fail on partially-readable subdirs and aborts the script (see [#45](https://github.com/qveys/tm-exclusions/issues/45)).
 - `path|$HOME/.docker` — kept in backups because it holds `config.json` (registry auth tokens). Bulky Docker data is covered by other rules.
 - All `path|$HOME/Library/Application Support/<app>` entries (Antigravity, auto-claude-ui, Cursor, discord, GitKrakenCLI, JetBrains, virtualenv, vscode-sqltools, Zed) — these directories mix user data (settings, keymaps, sessions) with regenerable caches; re-enable selectively only after confirming the app's specific layout is cache-only.
 - `pattern|.cache` — would match any project's `.cache/` directory (too broad as a default).
@@ -256,7 +255,7 @@ The `TM_EXCLUSIONS_EXTRA_CONF` loader requires the value to be **both a regular 
 ### Catalog invariants
 
 The smoke test suite (`tests/smoke.bats-like.sh`) guards these catalog invariants:
-- ≥ 116 active rules (path/pattern/prune lines).
+- ≥ 117 active rules (path/pattern/prune lines).
 - Exactly 17 distinct `#@` category labels.
 - Three section banners present (`# ── STATIC EXCLUSIONS (path) ──`, `# ── DYNAMIC SCAN PATTERNS (pattern) ──`, `# ── SCAN PRUNE ZONES (prune) ──`); the smoke test matches them by prefix.
 - No rule uses the `~/` home prefix (must be `$HOME/`).

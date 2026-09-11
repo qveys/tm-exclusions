@@ -41,14 +41,16 @@ All notable changes to this project will be documented in this file.
 
 ### Default rules
 
+- Re-enabled **`path|/private/var/folders`** under macOS Caches. Per-user kernel temp/caches are regenerable; privileged apply uses `sudo tmutil addexclusion -p` when credentials are available. ([#55](https://github.com/qveys/tm-exclusions/issues/55))
 - `$HOME/Library/Developer/CoreSimulator` is no longer excluded as a parent tree. The catalog now targets `Caches`, `Temp`, `Volumes`, and `Devices` so root-level simulator metadata stays in backups; comment out `Devices` in a local catalog copy to retain simulator device state. `/Library/Developer/CoreSimulator` is unchanged (system runtimes). Apply / `--dry-run` / `--uninstall` drop the retired parent `tmutil` exclusion when it is still present (manual equivalent: `tmutil removeexclusion "$HOME/Library/Developer/CoreSimulator"`). ([#54](https://github.com/qveys/tm-exclusions/issues/54))
 - Default prune zones now cover package-manager reinstall/migration shadow copies (`.bun.bak`, `.npm.bak`, `.yarn.bak`, `.pnpm-store.bak`, `.cargo.bak`, and matching `.old` siblings). These trees are disposable duplicates of catalogued caches; pruning them stops the dynamic scan from emitting one exclusion per nested `dist`/`node_modules` without excluding the parent from Time Machine. ([#25](https://github.com/qveys/tm-exclusions/issues/25))
 - Static paths for `/Applications` and `$HOME/Applications`.
-- Default config now ships ~102 rules across 17 categories (up from 39). Path style normalized to `$HOME/...`. New `#@CategoryName` section markers (cosmetic in 1.x; future report grouping tracked in #34). Several entries ship commented (opt-in): `pattern|.cache`, `pattern|site-packages`, `path|$HOME/.docker` (keeps registry credentials), the `App Support` Application Support roots (mix of user data and caches), and `path|/private/var/folders` (`du`/pipefail abort, see #45). `$HOME/.ollama/models` replaces the parent `$HOME/.ollama` (preserves `id_ed25519` and chat history). Cloud-sync prunes deferred to user opt-in (#44). (#37)
+- Default config now ships ~117 rules across 17 categories (up from 39). Path style normalized to `$HOME/...`. New `#@CategoryName` section markers (cosmetic in 1.x; future report grouping tracked in #34). Several entries ship commented (opt-in): `pattern|.cache`, `pattern|site-packages`, `path|$HOME/.docker` (keeps registry credentials), and the `App Support` Application Support roots (mix of user data and caches). `$HOME/.ollama/models` replaces the parent `$HOME/.ollama` (preserves `id_ed25519` and chat history). Cloud-sync prunes deferred to user opt-in (#44). (#37)
 
 ### Fixed
 
 - Dynamic scan no longer emits redundant child exclusions under an already-excluded parent. After the parent (e.g. `~/Git/<repo>/node_modules`) is kept, descendants matched by the same or another pattern (e.g. `.pnpm/<pkg>/node_modules`) are silently skipped — they're already covered transitively by the parent. Saves hundreds of lines per pnpm workspace and avoids duplicate `tmutil addexclusion` calls. ([#23](https://github.com/qveys/tm-exclusions/issues/23))
+- Report `du -sk` no longer aborts under `set -euo pipefail` when a path has unreadable children (e.g. `/private/var/folders`). `du_size_kb()` captures `du` independently of the formatting pipeline and keeps a partial total when one is printed. ([#55](https://github.com/qveys/tm-exclusions/issues/55), [#18](https://github.com/qveys/tm-exclusions/issues/18))
 
 ### CI and automation
 

@@ -426,7 +426,7 @@ CONF="${SCRIPT_DIR}/config/default.conf"
 # Active rules (path/pattern/prune lines, ignoring comments).
 # Floor is pinned to the documented baseline so silent regressions fail CI.
 # Bump this constant when intentionally growing the catalog.
-MIN_ACTIVE_RULES=116
+MIN_ACTIVE_RULES=117
 RULE_COUNT=$(grep -cE '^(path|pattern|prune)\|' "${CONF}" || true)
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ "${RULE_COUNT}" -ge "${MIN_ACTIVE_RULES}" ]]; then
@@ -485,6 +485,16 @@ if [[ "${ORPHAN_COUNT}" -eq 0 ]]; then
 else
     TESTS_FAILED=$((TESTS_FAILED + 1))
     printf '%b  FAIL%b default.conf has %d rule(s) outside any #@ category\n' "$RED" "$NC" "${ORPHAN_COUNT}"
+fi
+
+# /private/var/folders is an active system-cache rule (#55)
+TESTS_RUN=$((TESTS_RUN + 1))
+if grep -qE '^path\|/private/var/folders\|' "${CONF}"; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b default.conf actively excludes /private/var/folders\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b default.conf missing active path|/private/var/folders rule\n' "$RED" "$NC"
 fi
 
 # ---- Backup cache prune zones (#25) ----
@@ -776,11 +786,11 @@ fi
 
 rm -rf "${GLOB_HOME}"
 
-# ---- du -sk tolerance for partially-readable paths (#18) ----
+# ---- du -sk tolerance for partially-readable paths (#18, #55) ----
 # NOTE: chmod 000 on the subdir is vacuous on root CI runners (root ignores
 # permission bits), so the test only exercises the pipefail fix on user runners.
 echo ""
-echo "--- du -sk tolerance for unreadable subdirs (#18) ---"
+echo "--- du -sk tolerance for unreadable subdirs (#18, #55) ---"
 
 DU_HOME="$(mktemp -d "${TEST_HOME}/du-test.XXXXXX")"
 mkdir -p "${DU_HOME}/restrictedparent/unreadable_subdir"
@@ -802,6 +812,47 @@ assert_exit_code 0 \
 
 chmod 700 "${DU_HOME}/restrictedparent/unreadable_subdir"
 rm -rf "${DU_HOME}"
+
+# Stub `du` that prints a partial total then exits 1 — the /private/var/folders
+# failure mode — so the isolation in du_size_kb is covered even as root.
+echo ""
+echo "--- du -sk stub exits 1 without aborting (#55) ---"
+
+FAKE_DU_BIN="$(mktemp -d "${TEST_HOME}/fake-du.XXXXXX")"
+cat > "${FAKE_DU_BIN}/du" << 'EOF'
+#!/bin/sh
+# Mimic BSD/GNU du on /private/var/folders: partial total, then fail.
+echo "42	dummy"
+exit 1
+EOF
+chmod +x "${FAKE_DU_BIN}/du"
+
+FAKE_DU_HOME="$(mktemp -d "${TEST_HOME}/fake-du-home.XXXXXX")"
+mkdir -p "${FAKE_DU_HOME}/restrictedparent"
+FAKE_DU_CONF="${FAKE_DU_HOME}/du-test.conf"
+cat > "${FAKE_DU_CONF}" << EOF
+path|${FAKE_DU_HOME}/restrictedparent|du stub test
+EOF
+
+assert_exit_code 0 \
+    "--dry-run exits 0 when du -sk returns non-zero (#55)" \
+    env HOME="${FAKE_DU_HOME}" PATH="${FAKE_DU_BIN}:${PATH}" \
+        TM_EXCLUSIONS_DEFAULT_CONF="${FAKE_DU_CONF}" \
+        bash "$TM_EXCLUSIONS" --dry-run
+
+assert_output_contains "42K" \
+    "report keeps partial du size when du exits 1 (#55)" \
+    env HOME="${FAKE_DU_HOME}" PATH="${FAKE_DU_BIN}:${PATH}" \
+        TM_EXCLUSIONS_DEFAULT_CONF="${FAKE_DU_CONF}" \
+        bash "$TM_EXCLUSIONS" --dry-run
+
+assert_output_contains "Total (sum of du -sk, KiB): 42" \
+    "du total sums the partial KiB when du exits 1 (#55)" \
+    env HOME="${FAKE_DU_HOME}" PATH="${FAKE_DU_BIN}:${PATH}" \
+        TM_EXCLUSIONS_DEFAULT_CONF="${FAKE_DU_CONF}" \
+        bash "$TM_EXCLUSIONS" --dry-run
+
+rm -rf "${FAKE_DU_BIN}" "${FAKE_DU_HOME}"
 
 # ---- site-packages filter (#26) ----
 # Test A: ~/.faketool/lib/python3.14/site-packages IS excluded (valid Python tool install)
