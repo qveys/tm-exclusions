@@ -1,21 +1,28 @@
+# Dependabot version updates configuration.
+# Keeps GitHub Actions pins current in .github/workflows.
+# PRs update full commit SHAs in workflow `uses:` lines (and trailing version comments).
+# Docs: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates
 version: 2
+
 updates:
-  - package-ecosystem: github-actions
-    directory: /
+  - package-ecosystem: "github-actions"
+    directory: "/"
     schedule:
-      interval: weekly
-      day: monday
+      interval: "weekly"
+      day: "monday"
       time: "09:00"
-      timezone: Europe/Paris
-    target-branch: master
-    open-pull-requests-limit: 2
+      timezone: "Europe/Paris"
+    target-branch: "master"
+    open-pull-requests-limit: 5
     groups:
       actions:
         patterns:
           - "*"
     commit-message:
-      prefix: ci
-      include: scope
+      # Must match EMOJI + type for commit-lint (CC_PATTERN in .githooks/commit-format.sh).
+      # With include:scope, Dependabot produces "🤖 ci(deps): bump the actions group ...".
+      prefix: "🤖 ci"
+      include: "scope"
     labels:
       - "📦 Type: Dependency"
       - "🧩 Area: CI"
@@ -23,3 +30,4 @@ updates:
       - "🧰 Ecosystem: github-actions"
       - "⏱️ Effort: Small"
       - "🔥 Priority: Low"
+
