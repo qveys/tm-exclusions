@@ -1,4 +1,4 @@
-.PHONY: setup check-hooks help test lint install uninstall check release tag
+.PHONY: setup check-hooks help test lint install uninstall check release tag version
 
 SCRIPT = tm_exclusions.sh
 # Homebrew bin if writable (typical Apple Silicon), else /usr/local/bin.
@@ -74,6 +74,9 @@ check-hooks: ## Verify that the local Git hooks are active; exit 1 if not
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
+
+version: ## Print the tm-exclusions version (from tm_exclusions.sh)
+	@sed -n 's/^readonly VERSION="\([^"]*\)"/\1/p' $(SCRIPT)
 
 test: ## Run smoke tests
 	@echo "Running smoke tests..."

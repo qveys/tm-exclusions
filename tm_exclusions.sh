@@ -81,7 +81,7 @@ declare_i18n_en() {
     MSG_HELP_LIST="  --list             List custom exclusion rules"
     MSG_HELP_EDIT="  --edit             Open custom config in \$EDITOR"
     MSG_HELP_INIT="  --init             Create custom config directory"
-    MSG_HELP_TYPES="Supported types: path, pattern, prune"
+    MSG_HELP_TYPES="Supported types: path, pattern, prune, setting"
     MSG_DRY_RUN_PREFIX="[DRY-RUN]"
     MSG_APPLYING="Applying exclusion:"
     MSG_ALREADY="Already excluded:"
