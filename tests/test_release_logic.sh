@@ -335,9 +335,9 @@ NEW_URL="https://github.com/qveys/tm-exclusions/archive/refs/tags/v1.3.0.tar.gz"
 NEW_SHA="abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab"
 NEW_VER="1.3.0"
 
-sed -i "s|^  url \".*\"|  url \"${NEW_URL}\"|"       "$SED_FORMULA"
-sed -i "s|^  sha256 \".*\"|  sha256 \"${NEW_SHA}\"|" "$SED_FORMULA"
-sed -i "s|^  version \".*\"|  version \"${NEW_VER}\"|" "$SED_FORMULA"
+sed -i.bak "s|^  url \".*\"|  url \"${NEW_URL}\"|"       "$SED_FORMULA" && rm -f "${SED_FORMULA}.bak"
+sed -i.bak "s|^  sha256 \".*\"|  sha256 \"${NEW_SHA}\"|" "$SED_FORMULA" && rm -f "${SED_FORMULA}.bak"
+sed -i.bak "s|^  version \".*\"|  version \"${NEW_VER}\"|" "$SED_FORMULA" && rm -f "${SED_FORMULA}.bak"
 
 # 5a — url line is updated
 TESTS_RUN=$((TESTS_RUN + 1))
@@ -409,9 +409,9 @@ VER2="2.0.0"
 URL2="https://github.com/qveys/tm-exclusions/archive/refs/tags/v2.0.0.tar.gz"
 SHA2="aaaa1111bbbb2222cccc3333dddd4444eeee5555ffff6666000011112222333344"
 
-sed -i "s|^  url \".*\"|  url \"${URL2}\"|"           "$SED_FORMULA2"
-sed -i "s|^  sha256 \".*\"|  sha256 \"${SHA2}\"|"     "$SED_FORMULA2"
-sed -i "s|^  version \".*\"|  version \"${VER2}\"|"   "$SED_FORMULA2"
+sed -i.bak "s|^  url \".*\"|  url \"${URL2}\"|"           "$SED_FORMULA2" && rm -f "${SED_FORMULA2}.bak"
+sed -i.bak "s|^  sha256 \".*\"|  sha256 \"${SHA2}\"|"     "$SED_FORMULA2" && rm -f "${SED_FORMULA2}.bak"
+sed -i.bak "s|^  version \".*\"|  version \"${VER2}\"|"   "$SED_FORMULA2" && rm -f "${SED_FORMULA2}.bak"
 
 TESTS_RUN=$((TESTS_RUN + 1))
 if grep -q "  url \"${URL2}\""    "$SED_FORMULA2" &&
@@ -524,9 +524,9 @@ E2E_SHA="deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
     test -f Formula/tm-exclusions.rb || { echo "ERROR: Formula/tm-exclusions.rb missing in this repo"; exit 1; }
     cp Formula/tm-exclusions.rb "${E2E_TAP}/tm-exclusions.rb" && chmod 644 "${E2E_TAP}/tm-exclusions.rb"
     cd "${WORK}/e2e_tap"
-    sed -i "s|^  url \".*\"|  url \"${E2E_URL}\"|"           Formula/tm-exclusions.rb
-    sed -i "s|^  sha256 \".*\"|  sha256 \"${E2E_SHA}\"|"     Formula/tm-exclusions.rb
-    sed -i "s|^  version \".*\"|  version \"${E2E_VERSION}\"|" Formula/tm-exclusions.rb
+    sed -i.bak "s|^  url \".*\"|  url \"${E2E_URL}\"|"           Formula/tm-exclusions.rb && rm -f Formula/tm-exclusions.rb.bak
+    sed -i.bak "s|^  sha256 \".*\"|  sha256 \"${E2E_SHA}\"|"     Formula/tm-exclusions.rb && rm -f Formula/tm-exclusions.rb.bak
+    sed -i.bak "s|^  version \".*\"|  version \"${E2E_VERSION}\"|" Formula/tm-exclusions.rb && rm -f Formula/tm-exclusions.rb.bak
 )
 
 RESULT_FORMULA="${E2E_TAP}/tm-exclusions.rb"

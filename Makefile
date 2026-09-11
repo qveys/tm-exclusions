@@ -59,6 +59,8 @@ version: ## Print the current tm-exclusions version
 test: ## Run smoke tests
 	@echo "Running smoke tests..."
 	@bash tests/smoke.bats-like.sh
+	@echo "Running release logic tests..."
+	@bash tests/test_release_logic.sh
 
 lint: ## Run ShellCheck on all shell scripts
 	@if ! command -v shellcheck >/dev/null 2>&1; then \
