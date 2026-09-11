@@ -988,6 +988,60 @@ else
 fi
 
 rm -rf "${CLEANUP_DIR}"
+# ---- Auto-prune .bak / .old shadow copies (#25) ----
+echo ""
+echo "--- Auto-prune .bak/.old shadow copies (#25) ---"
+
+BAK_HOME="$(mktemp -d "${TEST_HOME}/bak-test.XXXXXX")"
+# Fake catalog tool directory and its .bak shadow copy with a matchable sub-path
+mkdir -p "${BAK_HOME}/.faketool"
+mkdir -p "${BAK_HOME}/.faketool.bak/install/cache/dist"
+# An unrelated .bak tree that has NO matching catalog path|~/random entry
+mkdir -p "${BAK_HOME}/random.bak/some/dist"
+BAK_CONF="${BAK_HOME}/bak-test.conf"
+cat > "${BAK_CONF}" << EOF
+path|${BAK_HOME}/.faketool|Fake tool directory
+pattern|dist|dist directories
+EOF
+
+BAK_OUT="$(env HOME="${BAK_HOME}" \
+               TM_EXCLUSIONS_DEFAULT_CONF="${BAK_CONF}" \
+               bash "$TM_EXCLUSIONS" --dry-run 2>&1 || true)"
+
+# Test A (positive): .faketool itself must be processed as a static path
+BAK_STATIC_HITS=$(printf '%s\n' "${BAK_OUT}" | grep -cE "(Applying exclusion:|Already excluded:|DRY-RUN.*Applying exclusion:|\[DRY-RUN\]).*\.faketool$" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${BAK_STATIC_HITS}" -ge 1 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b .faketool static path is processed\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b .faketool static path was not processed (got %d hits)\n' "$RED" "$NC" "${BAK_STATIC_HITS}"
+fi
+
+# Test B (negative): .faketool.bak/install/cache/dist must NOT appear as an exclusion
+BAK_SHADOW_HITS=$(printf '%s\n' "${BAK_OUT}" | grep -cE "(Applying exclusion:|Already excluded:).*\.faketool\.bak" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${BAK_SHADOW_HITS}" -eq 0 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b .faketool.bak shadow copy is pruned (not excluded)\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b .faketool.bak shadow copy was excluded (%d hit(s))\n' "$RED" "$NC" "${BAK_SHADOW_HITS}"
+fi
+
+# Test C: random.bak/some/dist (no catalog entry for ~/random) IS processed normally
+BAK_RANDOM_HITS=$(printf '%s\n' "${BAK_OUT}" | grep -cE "(Applying exclusion:|Already excluded:).*random\.bak/some/dist$" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${BAK_RANDOM_HITS}" -ge 1 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b random.bak (no catalog entry) is still scanned normally\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b random.bak should be scanned normally (got %d hits)\n' "$RED" "$NC" "${BAK_RANDOM_HITS}"
+fi
+
+rm -rf "${BAK_HOME}"
 
 # ---- Summary ----
 test_summary
