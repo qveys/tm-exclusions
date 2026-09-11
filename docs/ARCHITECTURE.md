@@ -231,7 +231,7 @@ The example file (`extra-prunes.example.conf`) ships in three locations dependin
 | Installation | Location |
 |---|---|
 | Source checkout | `config/extra-prunes.example.conf` (repo root) |
-| `make install` | `${SHARE_DIR}/extra-prunes.example.conf` (default: `/usr/local/share/tm-exclusions/`) |
+| `make install` | `${SHARE_DIR}/extra-prunes.example.conf` (`SHARE_DIR` follows `PREFIX`: Homebrew share if writable, else `/usr/local/share/tm-exclusions/`) |
 | `brew install tm-exclusions` | `$(brew --prefix)/share/tm-exclusions/extra-prunes.example.conf` |
 
 The `TM_EXCLUSIONS_EXTRA_CONF` loader requires the value to be **both a regular file (`-f`) and readable (`-r`)**. A directory path, a missing path, or an unreadable path all trigger a stderr warning and continue; no silent no-op occurs.
