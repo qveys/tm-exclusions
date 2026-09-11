@@ -1525,10 +1525,10 @@ do
     TESTS_RUN=$((TESTS_RUN + 1))
     if printf '%s\n' "${AS_OUT}" | grep -Fq "WOULD ${as_path}"; then
         TESTS_PASSED=$((TESTS_PASSED + 1))
-        printf '%b  PASS%b dry-run would exclude %s\n' "$GREEN" "$NC" "${as_path#${AS_HOME}/}"
+        printf '%b  PASS%b dry-run would exclude %s\n' "$GREEN" "$NC" "${as_path#"${AS_HOME}"/}"
     else
         TESTS_FAILED=$((TESTS_FAILED + 1))
-        printf '%b  FAIL%b dry-run did not exclude %s\n' "$RED" "$NC" "${as_path#${AS_HOME}/}"
+        printf '%b  FAIL%b dry-run did not exclude %s\n' "$RED" "$NC" "${as_path#"${AS_HOME}"/}"
     fi
 done
 
@@ -1544,10 +1544,10 @@ do
     TESTS_RUN=$((TESTS_RUN + 1))
     if printf '%s\n' "${AS_OUT}" | grep -Fqx "WOULD ${as_keep}"; then
         TESTS_FAILED=$((TESTS_FAILED + 1))
-        printf '%b  FAIL%b must not exclude settings/parent path %s\n' "$RED" "$NC" "${as_keep#${AS_HOME}/}"
+        printf '%b  FAIL%b must not exclude settings/parent path %s\n' "$RED" "$NC" "${as_keep#"${AS_HOME}"/}"
     else
         TESTS_PASSED=$((TESTS_PASSED + 1))
-        printf '%b  PASS%b keeps settings/parent %s\n' "$GREEN" "$NC" "${as_keep#${AS_HOME}/}"
+        printf '%b  PASS%b keeps settings/parent %s\n' "$GREEN" "$NC" "${as_keep#"${AS_HOME}"/}"
     fi
 done
 rm -rf "${AS_HOME}"
