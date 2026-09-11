@@ -241,6 +241,22 @@ assert_exit_code 1 \
     "--lang rejects unsupported values" \
     bash "$TM_EXCLUSIONS" --lang de --help
 
+assert_output_contains "Unsupported language" \
+    "--lang de reports unsupported language, not missing locale files" \
+    bash "$TM_EXCLUSIONS" --lang de --help
+
+assert_output_not_contains "locale files not found" \
+    "--lang de does not look like a broken locale install" \
+    bash "$TM_EXCLUSIONS" --lang de --help
+
+assert_output_contains "Unsupported language" \
+    "--lang with path-like value reports unsupported language" \
+    bash "$TM_EXCLUSIONS" --lang '../en' --help
+
+assert_output_not_contains "locale files not found" \
+    "--lang with path-like value does not look like a broken locale install" \
+    bash "$TM_EXCLUSIONS" --lang '../en' --help
+
 # ---- Config init ----
 echo ""
 echo "--- Config management ---"

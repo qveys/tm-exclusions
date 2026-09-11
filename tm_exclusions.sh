@@ -61,22 +61,29 @@ DEBUG_LOG_FD=0
 # i18n locale resolution
 # ---------------------------------------------------------------------------
 # Finds the locales/ directory. Tries in order:
-#   1. <script_dir>/locales/          (source-checkout layout)
-#   2. <script_dir>/../share/tm-exclusions/locales/  (installed layout)
-#   3. TM_EXCLUSIONS_LOCALES_DIR env var (escape hatch for tests / unusual installs)
+#   1. TM_EXCLUSIONS_LOCALES_DIR env var (escape hatch for tests / unusual installs;
+#      ignored when running as root to avoid sourcing an untrusted path)
+#   2. <script_dir>/locales/          (source-checkout layout)
+#   3. <script_dir>/../share/tm-exclusions/locales/  (installed layout)
+#   4. /usr/local/share, /opt/homebrew/share, /usr/share (Homebrew / system install roots)
 resolve_locales_dir() {
     local script_dir candidate
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-    # Env-var override takes precedence when set
-    if [[ -n "${TM_EXCLUSIONS_LOCALES_DIR:-}" ]]; then
+    # Env-var override takes precedence when set, but only for non-root runs.
+    # Under `sudo -E`, allowing this variable to control a `source`d path would be
+    # a privilege-escalation footgun.
+    if [[ -n "${TM_EXCLUSIONS_LOCALES_DIR:-}" && "${EUID}" -ne 0 ]]; then
         echo "${TM_EXCLUSIONS_LOCALES_DIR}"
         return 0
     fi
 
     for candidate in \
         "${script_dir}/locales" \
-        "${script_dir}/../share/tm-exclusions/locales"
+        "${script_dir}/../share/tm-exclusions/locales" \
+        "/usr/local/share/tm-exclusions/locales" \
+        "/opt/homebrew/share/tm-exclusions/locales" \
+        "/usr/share/tm-exclusions/locales"
     do
         if [[ -d "${candidate}" ]]; then
             echo "${candidate}"
@@ -89,9 +96,15 @@ resolve_locales_dir() {
 
 # Source the locale file for the given language and call its declare function.
 # Exits non-zero with a clear error if the locale file cannot be found.
+# lang is allowlisted (en|fr) so untrusted --lang values never become filenames.
 load_i18n() {
     local lang="$1"
     local locales_dir locale_file
+
+    case "$lang" in
+        en|fr) ;;
+        *) lang="en" ;;
+    esac
 
     locales_dir="$(resolve_locales_dir)" || {
         echo "Error: locale files not found; expected locales/${lang}.sh in <script-dir>/locales or installed share dir" >&2
@@ -107,10 +120,12 @@ load_i18n() {
     # shellcheck source=/dev/null
     source "${locale_file}"
 
-    case "${lang}" in
-        fr) declare_i18n_fr ;;
-        *)  declare_i18n_en ;;
-    esac
+    if ! declare -F "declare_i18n_${lang}" >/dev/null 2>&1; then
+        echo "Error: ${locale_file} does not define declare_i18n_${lang}()" >&2
+        exit 1
+    fi
+
+    "declare_i18n_${lang}"
 }
 
 # ---------------------------------------------------------------------------
@@ -303,7 +318,10 @@ detect_language() {
     local loc=""
 
     if [[ -n "${LANG_OVERRIDE}" ]]; then
-        CURRENT_LANG="${LANG_OVERRIDE}"
+        case "${LANG_OVERRIDE}" in
+            en|fr) CURRENT_LANG="${LANG_OVERRIDE}" ;;
+            *) CURRENT_LANG="en" ;;
+        esac
     else
         if [[ -n "${LC_ALL:-}" ]]; then
             loc="${LC_ALL}"
@@ -1236,6 +1254,9 @@ main() {
             for a2 in "$@"; do
                 j=$((j + 1))
                 if [[ "$j" -eq "$next_i" ]]; then
+                    # Capture raw value; detect_language/load_i18n allowlist
+                    # before any locale path is built. parse_args reports
+                    # MSG_ERROR_INVALID_LANG for unsupported codes.
                     LANG_OVERRIDE="$a2"
                     break
                 fi

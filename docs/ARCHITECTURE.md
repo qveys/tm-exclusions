@@ -139,13 +139,21 @@ Uninstall is idempotent: removing a non-excluded path is a no-op.
 
 ## Language Detection / Override
 
-1. If `--lang <code>` is passed, use that language.
-2. Otherwise, check the `LANG` environment variable (e.g., `fr_FR.UTF-8` → French).
+1. If `--lang en` or `--lang fr` is passed, use that language.
+2. Otherwise, check locale env vars (`LC_ALL`, `LC_MESSAGES`, `LC_CTYPE`, then `LANG`).
 3. Default to English.
 
-Supported languages: English (`en`), French (`fr`).
+Supported languages: English (`en`), French (`fr`). Unsupported `--lang` values
+are not used to build `locales/<code>.sh` paths; i18n falls back to English so
+`parse_args` can report `MSG_ERROR_INVALID_LANG` instead of a missing-file error.
 
-i18n is implemented as shell functions (`declare_i18n_en`, `declare_i18n_fr`) that set global message variables. Language detection runs before argument parsing to ensure error messages are localized.
+i18n strings live in external files `locales/en.sh` and `locales/fr.sh`; the
+matching `declare_i18n_<lang>` function is called after the file is sourced
+(`load_i18n`). The `locales/` directory is located by `resolve_locales_dir()` —
+via the `TM_EXCLUSIONS_LOCALES_DIR` env var (non-root), the source-checkout or
+installed layouts relative to the script, or absolute Homebrew/system share
+roots. Language detection runs before argument parsing to ensure error messages
+are localized.
 
 ## Testing Strategy
 
