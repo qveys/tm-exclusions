@@ -723,14 +723,22 @@ fi
 SIG_TMP_FILE="${TMP_HOLD}/tm_exc_signal_test.tmp"
 touch "${SIG_TMP_FILE}"
 
-bash -c "
-source <(sed -n '/^register_tmp_file/,/^on_signal/p; /^sudo_keepalive_stop/,/^}/p' \"${TM_EXCLUSIONS}\")
-TMP_FILES=\"\"
-register_tmp_file \"${SIG_TMP_FILE}\"
-trap \"cleanup\" EXIT
-trap \"on_signal TERM\" TERM
-kill -TERM \$\$
-" >/dev/null 2>&1 || true
+bash -c '
+source <(
+    sed -n \
+        -e "/^sudo_keepalive_stop()/,/^}/p" \
+        -e "/^register_tmp_file()/,/^}/p" \
+        -e "/^cleanup_tmp_files()/,/^}/p" \
+        -e "/^cleanup()/,/^}/p" \
+        -e "/^on_signal()/,/^}/p" \
+        "$1"
+)
+TMP_FILES=""
+register_tmp_file "$2"
+trap "cleanup" EXIT
+trap "on_signal TERM" TERM
+kill -TERM $$
+' _ "${TM_EXCLUSIONS}" "${SIG_TMP_FILE}" >/dev/null 2>&1 || true
 
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ ! -e "${SIG_TMP_FILE}" ]]; then

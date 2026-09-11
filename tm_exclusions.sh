@@ -277,7 +277,9 @@ cleanup_tmp_files() {
     if [[ -n "${TMP_FILES}" ]]; then
         local f
         while IFS= read -r f; do
-            [[ -n "$f" && -e "$f" ]] && rm -f "$f" 2>/dev/null || true
+            if [[ -n "$f" && -e "$f" ]]; then
+                rm -f "$f" 2>/dev/null || true
+            fi
         done <<EOF
 ${TMP_FILES}
 EOF
