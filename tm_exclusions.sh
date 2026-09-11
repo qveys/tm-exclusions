@@ -48,6 +48,9 @@ TOTAL_REMOVED=0
 CONF_PATHS=""
 CONF_PATTERNS=""
 CONF_PRUNES=""
+# Report destination preferences from setting|key|value (last file wins)
+CONF_REPORT_PATH=""
+CONF_DESKTOP_REPORT=0
 REPORT_LINES=""
 # Paths discovered after config (brew cache, large VM images); newline-separated
 EXTRA_PATHS=""
@@ -530,6 +533,39 @@ ${entry_target}"
 ${entry_target}"
                 fi
                 ;;
+            setting)
+                # Preferences (not Time Machine rules). Last occurrence wins.
+                # Keys live in the target field; values in the reason field.
+                case "$entry_target" in
+                    report_path)
+                        if [[ -z "$entry_reason" ]]; then
+                            log_error "Warning: Empty report_path setting at ${file}:${line_num}"
+                        else
+                            case "$entry_reason" in
+                                "~"*) entry_reason="${HOME}${entry_reason#\~}" ;;
+                            esac
+                            entry_reason="${entry_reason//${home_token}/$HOME}"
+                            CONF_REPORT_PATH="$entry_reason"
+                        fi
+                        ;;
+                    desktop_report)
+                        case "$entry_reason" in
+                            true|1|yes)
+                                CONF_DESKTOP_REPORT=1
+                                ;;
+                            false|0|no)
+                                CONF_DESKTOP_REPORT=0
+                                ;;
+                            *)
+                                log_error "Warning: Invalid desktop_report value '${entry_reason}' at ${file}:${line_num} (use true/false, 1/0, or yes/no)"
+                                ;;
+                        esac
+                        ;;
+                    *)
+                        log_error "Warning: Unknown setting '${entry_target}' at ${file}:${line_num}"
+                        ;;
+                esac
+                ;;
             *)
                 log_error "Warning: Unknown config entry type '${entry_type}' at ${file}:${line_num}"
                 ;;
@@ -541,12 +577,14 @@ load_config() {
     CONF_PATHS=""
     CONF_PATTERNS=""
     CONF_PRUNES=""
+    CONF_REPORT_PATH=""
+    CONF_DESKTOP_REPORT=0
 
     # Load default config first
     parse_config_file "$(resolve_default_conf)"
-    # Merge custom config (entries are appended)
+    # Merge custom config (path/pattern/prune append; setting last-wins)
     parse_config_file "${CUSTOM_CONF}"
-    # Load extra config last (lowest precedence; additive)
+    # Extra config last: rules are additive; settings override earlier files.
     # Users point TM_EXCLUSIONS_EXTRA_CONF to an additional config file.
     if [[ -n "${TM_EXCLUSIONS_EXTRA_CONF:-}" ]]; then
         if [[ -f "${TM_EXCLUSIONS_EXTRA_CONF}" && -r "${TM_EXCLUSIONS_EXTRA_CONF}" ]]; then
@@ -599,11 +637,14 @@ write_custom_config_if_absent() {
 # tm-exclusions custom configuration
 # Format: type|target|reason
 # Types: path (static path), pattern (directory name for scan), prune (skip during scan)
+#        setting (preferences: report_path, desktop_report)
 #
 # Examples:
 # path|~/MyLargeDataset|Large dataset not needed in backup
 # pattern|.myframework_cache|Framework cache directories
 # prune|~/Archive|Skip scanning archive directory
+# setting|report_path|~/Documents/tm-exclusions-last.txt
+# setting|desktop_report|true
 CONF_EOF
     return 0
 }
@@ -1090,6 +1131,41 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
+# Report destination (CLI > env > config setting > built-in default)
+# ---------------------------------------------------------------------------
+# There is no CLI flag for the primary report file path; TM_EXCLUSIONS_REPORT
+# is the env-level override. --desktop-report is the CLI flag for the Desktop copy.
+resolve_report_out_path() {
+    if [[ -n "${TM_EXCLUSIONS_REPORT:-}" ]]; then
+        printf '%s' "${TM_EXCLUSIONS_REPORT}"
+        return
+    fi
+    if [[ -n "${CONF_REPORT_PATH}" ]]; then
+        printf '%s' "${CONF_REPORT_PATH}"
+        return
+    fi
+    printf '%s' "${REPORT_FILE}"
+}
+
+desktop_report_enabled() {
+    # CLI flag always enables (there is no --no-desktop-report).
+    if [[ "${DESKTOP_REPORT}" -eq 1 ]]; then
+        return 0
+    fi
+    # When the env var is set (even to 0), it overrides config.
+    if [[ -n "${TM_EXCLUSIONS_REPORT_DESKTOP+x}" ]]; then
+        if [[ "${TM_EXCLUSIONS_REPORT_DESKTOP}" = "1" ]]; then
+            return 0
+        fi
+        return 1
+    fi
+    if [[ "${CONF_DESKTOP_REPORT}" -eq 1 ]]; then
+        return 0
+    fi
+    return 1
+}
+
+# ---------------------------------------------------------------------------
 # Report
 # ---------------------------------------------------------------------------
 generate_report() {
@@ -1213,17 +1289,14 @@ ${raw_list}"
     echo ""
     echo "$report"
 
-    out_path="${REPORT_FILE}"
-    if [[ -n "${TM_EXCLUSIONS_REPORT:-}" ]]; then
-        out_path="${TM_EXCLUSIONS_REPORT}"
-    fi
+    out_path="$(resolve_report_out_path)"
 
     mkdir -p "$(dirname "${out_path}")" 2>/dev/null || true
     echo "$report" > "${out_path}" 2>/dev/null || true
     log_info ""
     log_info "${MSG_REPORT_SAVED} ${out_path}"
 
-    if [[ "${TM_EXCLUSIONS_REPORT_DESKTOP:-}" = "1" || "${DESKTOP_REPORT}" -eq 1 ]]; then
+    if desktop_report_enabled; then
         desk_copy="${HOME}/Desktop/tm-exclusions_last_report.txt"
         mkdir -p "${HOME}/Desktop" 2>/dev/null || true
         echo "$report" > "${desk_copy}" 2>/dev/null || true

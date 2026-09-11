@@ -46,7 +46,7 @@ This file provides guidance to AI agentic LLM CLI tools when working with code i
   - Runs environment detection (`tmutil` availability, macOS check).
   - Loads merged config.
   - Applies static path processing, then dynamic pattern scanning.
-  - Generates and persists report to `~/.config/tm_exclusions/last_report.txt`.
+  - Generates and persists a report (default `~/.config/tm_exclusions/last_report.txt`; overridable via `setting|report_path`, `TM_EXCLUSIONS_REPORT`, and optional Desktop copy).
 - Processing model:
   - Static rules (`path`) are handled directly.
   - Dynamic rules (`pattern`) are discovered with `find "$HOME" -maxdepth 6 -type d -name <pattern>`.
@@ -61,6 +61,6 @@ This file provides guidance to AI agentic LLM CLI tools when working with code i
 ## Constraints and repo-specific rules
 - Bash compatibility target is Bash 3.2+ (stock macOS). Avoid Bash 4+ features.
 - Keep quoting strict and portable shell style consistent with current script.
-- Config file format is `type|target|reason`; supported types are `path`, `pattern`, `prune`. The `target` field supports leading `~` expansion to the user’s home directory.
+- Config file format is `type|target|reason`; supported types are `path`, `pattern`, `prune`, and `setting`. The `target` field supports leading `~` expansion to the user’s home directory (`setting|report_path` expands `~` / `$HOME` in the value field).
 - Conventional Commits with leading emoji are enforced by local hooks in `.githooks/`.
   - Ensure hooks are active via `make setup` (also auto-bootstrapped by the Makefile).
