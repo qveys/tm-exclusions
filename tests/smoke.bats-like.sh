@@ -88,6 +88,28 @@ assert_output_contains "$EXPECTED_VERSION" \
     "--version shows version number" \
     bash "$TM_EXCLUSIONS" --version
 
+# ---- Makefile version target (#43) ----
+echo ""
+echo "--- Makefile version target ---"
+
+assert_exit_code 0 \
+    "make version exits 0" \
+    make -C "$SCRIPT_DIR" --no-print-directory version
+
+TESTS_RUN=$((TESTS_RUN + 1))
+MAKE_VERSION_OUT="$(make -C "$SCRIPT_DIR" --no-print-directory version 2>&1)"
+if [ "$MAKE_VERSION_OUT" = "$EXPECTED_VERSION" ]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b make version prints only the version string\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b make version output was %s (expected %s)\n' "$RED" "$NC" "$MAKE_VERSION_OUT" "$EXPECTED_VERSION"
+fi
+
+assert_output_contains "version" \
+    "make help lists version target" \
+    make -C "$SCRIPT_DIR" --no-print-directory help
+
 # ---- Invalid arguments ----
 echo ""
 echo "--- Invalid argument handling ---"

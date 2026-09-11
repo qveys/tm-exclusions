@@ -1,4 +1,4 @@
-.PHONY: setup check-hooks help test lint install uninstall check release tag
+.PHONY: setup check-hooks help test lint install uninstall check release tag version
 
 SCRIPT = tm_exclusions.sh
 PREFIX ?= /usr/local/bin
@@ -50,6 +50,11 @@ check-hooks: ## Verify that the local Git hooks are active; exit 1 if not
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
+
+version: ## Print the current tm-exclusions version
+	@version="$$(sed -n 's/^readonly VERSION="\([^"]*\)"/\1/p' $(SCRIPT))"; \
+	  test -n "$$version" || { echo "Error: could not determine version from $(SCRIPT)." >&2; exit 1; }; \
+	  printf '%s\n' "$$version"
 
 test: ## Run smoke tests
 	@echo "Running smoke tests..."
