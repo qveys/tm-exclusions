@@ -725,7 +725,7 @@ else
     printf '%b  FAIL%b .faketool static path was not processed (got %d hits)\n' "$RED" "$NC" "${BAK_STATIC_HITS}"
 fi
 
-# Test A (positive): .faketool.bak/install/cache/dist must NOT appear as an exclusion
+# Test B (negative): .faketool.bak/install/cache/dist must NOT appear as an exclusion
 BAK_SHADOW_HITS=$(printf '%s\n' "${BAK_OUT}" | grep -cE "(Applying exclusion:|Already excluded:).*\.faketool\.bak" || true)
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ "${BAK_SHADOW_HITS}" -eq 0 ]]; then
@@ -736,7 +736,7 @@ else
     printf '%b  FAIL%b .faketool.bak shadow copy was excluded (%d hit(s))\n' "$RED" "$NC" "${BAK_SHADOW_HITS}"
 fi
 
-# Test B (negative): random.bak/some/dist (no catalog entry for ~/random) IS processed normally
+# Test C: random.bak/some/dist (no catalog entry for ~/random) IS processed normally
 BAK_RANDOM_HITS=$(printf '%s\n' "${BAK_OUT}" | grep -cE "(Applying exclusion:|Already excluded:).*random\.bak/some/dist$" || true)
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ "${BAK_RANDOM_HITS}" -ge 1 ]]; then

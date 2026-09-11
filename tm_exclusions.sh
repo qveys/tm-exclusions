@@ -557,7 +557,10 @@ load_config() {
     # shadow copies (e.g. ~/.bun.bak from a Bun reinstall) are silently skipped
     # during the dynamic scan without requiring explicit catalog entries.
     # Only path| entries are processed — pattern| and prune| are excluded.
-    derive_bak_old_prunes
+    # Skipped in uninstall mode so prior exclusions under shadow trees can be cleaned up.
+    if [[ "${MODE}" != "uninstall" ]]; then
+        derive_bak_old_prunes
+    fi
 }
 
 # For every static 'path' catalog entry P, append P.bak and P.old to
@@ -566,25 +569,20 @@ load_config() {
 # not changed — .bak/.old paths are never passed to tmutil addexclusion.
 derive_bak_old_prunes() {
     [[ -z "${CONF_PATHS}" ]] && return 0
-    local p suffix candidate
+    local p clean_p suffix new_entries=""
     while IFS= read -r p; do
         [[ -z "$p" ]] && continue
+        clean_p="${p%/}"
         for suffix in .bak .old; do
-            candidate="${p}${suffix}"
-            # Skip if already present in CONF_PRUNES
-            if printf '%s\n' "${CONF_PRUNES}" | grep -Fxq "${candidate}" 2>/dev/null; then
-                continue
-            fi
-            if [[ -z "${CONF_PRUNES}" ]]; then
-                CONF_PRUNES="${candidate}"
-            else
-                CONF_PRUNES="${CONF_PRUNES}
-${candidate}"
-            fi
+            new_entries="${new_entries}${clean_p}${suffix}
+"
         done
     done <<EOF
-${CONF_PATHS}
+$(printf '%s\n' "${CONF_PATHS}")
 EOF
+
+    # Append and deduplicate once using awk (Bash 3.2 compatible)
+    CONF_PRUNES=$(printf '%s\n%s' "${CONF_PRUNES}" "${new_entries}" | awk 'NF && !seen[$0]++')
 }
 
 # ---------------------------------------------------------------------------
@@ -784,11 +782,9 @@ is_pruned() {
     while IFS= read -r prune_entry; do
         [[ -z "$prune_entry" ]] && continue
         # Check if check_path starts with prune_entry
-        case "$check_path" in
-            "${prune_entry}"|"${prune_entry}/"*)
-                return 0
-                ;;
-        esac
+        if [[ "$check_path" == "$prune_entry" || "$check_path" == "$prune_entry/"* ]]; then
+            return 0
+        fi
     done <<EOF
 ${CONF_PRUNES}
 EOF
