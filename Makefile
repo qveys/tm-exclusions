@@ -71,6 +71,7 @@ lint: ## Run ShellCheck on all shell scripts
 	@shellcheck -x -s sh .githooks/post-merge
 	@shellcheck -x -s sh .githooks/post-merge-fallback
 	@shellcheck -x -s sh .githooks/prune-gone-branches.sh
+	@shellcheck -x -s bash scripts/check-auto-patch.sh
 	@echo "ShellCheck passed."
 
 install: setup ## Install tm-exclusions to PREFIX (default: /usr/local/bin)
@@ -112,19 +113,36 @@ release: ## Cut a release PR — make release VERSION=x.y.z  (run make tag after
 	fi
 	@grep -q '^## Unreleased$$' CHANGELOG.md || \
 	  { echo "Error: CHANGELOG.md is missing a '## Unreleased' section to roll into v$(VERSION)." >&2; exit 1; }
+	@unreleased_content="$$(awk '/^## Unreleased$$/{found=1; next} found && /^## /{found=0} found && NF{print}' CHANGELOG.md)"; \
+	  test -n "$$unreleased_content" || { \
+	    echo "Error: '## Unreleased' section in CHANGELOG.md is empty. Add release notes before cutting a release." >&2; \
+	    exit 1; \
+	  }
 	@$(MAKE) check
 	@git checkout -b release/v$(VERSION) origin/$(BASE_BRANCH)
 	@current_version="$$(sed -n 's/^readonly VERSION="\([^"]*\)"/\1/p' $(SCRIPT))"; \
 	  test -n "$$current_version" || { echo "Error: could not determine current version from $(SCRIPT)." >&2; exit 1; }; \
 	  tmp_file="$$(mktemp)"; \
 	  sed 's|^readonly VERSION=".*"|readonly VERSION="$(VERSION)"|' $(SCRIPT) > "$$tmp_file" && mv "$$tmp_file" $(SCRIPT)
+	@if [ -f Formula/tm-exclusions.rb ]; then \
+	  tmp_file="$$(mktemp)"; \
+	  sed 's|^  version ".*"|  version "$(VERSION)"|' Formula/tm-exclusions.rb > "$$tmp_file" && mv "$$tmp_file" Formula/tm-exclusions.rb; \
+	  git add Formula/tm-exclusions.rb; \
+	fi
 	@tmp_file="$$(mktemp)"; \
 	  awk '/^## Unreleased$$/{print; print ""; print "## v$(VERSION)"; next}1' CHANGELOG.md > "$$tmp_file" && mv "$$tmp_file" CHANGELOG.md
 	@git add $(SCRIPT) CHANGELOG.md
 	@git commit -m "🔖 chore(release): bump to v$(VERSION)"
 	@git push -u origin release/v$(VERSION)
-	@printf 'Release v$(VERSION).\n\nAfter merge, push the tag to trigger the GitHub release workflow:\n```\nmake tag VERSION=$(VERSION)\n```\n' | \
-	  gh pr create --title "🔖 chore(release): v$(VERSION)" --body-file - --base $(BASE_BRANCH)
+	@pr_body="$$(printf 'Release v%s.\n\n### Changelog\n\n%s\n\n---\nAfter merge, push the tag to trigger the GitHub release workflow:\n```\nmake tag VERSION=%s\n```\n' "$(VERSION)" "$$unreleased_content" "$(VERSION)")"; \
+	  printf '%s\n' "$$pr_body" | gh pr create --title "🔖 chore(release): v$(VERSION)" --body-file - --base $(BASE_BRANCH)
+
+auto-patch: ## Check or execute auto-patch PR after >=5 PRs (use DRY_RUN=1 for test only)
+	@if [ "$$(echo "$${DRY_RUN:-0}")" = "1" ]; then \
+	  bash scripts/check-auto-patch.sh --dry-run; \
+	else \
+	  bash scripts/check-auto-patch.sh; \
+	fi
 
 tag: ## Push the signed release tag after the release PR is merged — make tag VERSION=x.y.z
 	@test -n "$(VERSION)" || { echo "Usage: make tag VERSION=x.y.z" >&2; exit 1; }

@@ -31,6 +31,13 @@ All notable changes to this project will be documented in this file.
 
 - Dynamic scan no longer emits redundant child exclusions under an already-excluded parent. After the parent (e.g. `~/Git/<repo>/node_modules`) is kept, descendants matched by the same or another pattern (e.g. `.pnpm/<pkg>/node_modules`) are silently skipped — they're already covered transitively by the parent. Saves hundreds of lines per pnpm workspace and avoids duplicate `tmutil addexclusion` calls. ([#23](https://github.com/qveys/tm-exclusions/issues/23))
 
+### CI and automation
+
+- **Automated patch releases**: new workflow (`.github/workflows/auto-patch.yml`) and script (`scripts/check-auto-patch.sh`) to automatically apply and publish a patch release (`vX.Y.(Z+1)`) directly on `master` whenever 5 or more PRs have been merged without an intermediate manual release (no release PR required).
+- **GitHub Releases notes**: release workflow (`.github/workflows/release.yml`) now automatically extracts the curated section for the released version from `CHANGELOG.md` instead of generating a generic commit list.
+- **Homebrew tap synchronization**: release workflow fully replaces `Formula/tm-exclusions.rb` in `qveys/homebrew-tools` to prevent `install` stanza drift, and supports manual tap re-sync via `workflow_dispatch` with a `tag` input.
+- **Makefile enhancements**: `make release` now validates that `## Unreleased` has actual content, updates `Formula/tm-exclusions.rb`, and injects the changelog into the PR body; new target `make auto-patch` to inspect or run auto-patch status locally.
+
 ### Docs
 
 - Architecture and README updated for the above. Ongoing parity checklist: GitHub issue [#34](https://github.com/qveys/tm-exclusions/issues/34).
