@@ -33,7 +33,7 @@ All notable changes to this project will be documented in this file.
 
 ### CI and automation
 
-- Release workflow (`release.yml`) now fully syncs `Formula/tm-exclusions.rb` from this repo to `qveys/homebrew-tools` on every tag, then patches `url`/`sha256`/`version`. Previously only those three lines were rewritten, so a stale `install` stanza in the tap (e.g. a leftover `locales/` reference from the archived 2.x layout) caused `brew install tm-exclusions` to abort with `Errno::ENOENT: No such file or directory - locales`. Also adds a `workflow_dispatch` input to re-run the workflow against a past tag and re-sync the tap without cutting a new release.
+- **Release workflow**: Synchronize `Formula/tm-exclusions.rb` to the Homebrew tap via `.github/workflows/release.yml` on every tag. This fixes `Errno::ENOENT` errors caused by stale tap formulas and adds a `workflow_dispatch` input to manually re-sync existing tags.
 
 ### Docs
 
