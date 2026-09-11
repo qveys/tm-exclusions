@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Build
+
+- `make version` prints the current `tm_exclusions.sh` version without running the CLI. ([#43](https://github.com/qveys/tm-exclusions/issues/43))
+
 ### Config
 
 - **Auto-prune `.bak` / `.old` shadow copies**: after config loading, every static `path|<P>` rule automatically extends `CONF_PRUNES` with `<P>.bak` and `<P>.old`. Shadow trees produced by tool reinstalls or migrations (e.g. `.bun.bak`, `.npm.bak`, `.cargo.bak`, `.pnpm-store.bak`) are silently skipped during the dynamic scan without any per-suffix opt-in. `pattern|` and `prune|` catalog entries are not auto-derived. `config/default.conf` is unchanged. ([#25](https://github.com/qveys/tm-exclusions/issues/25))
@@ -25,12 +29,21 @@ All notable changes to this project will be documented in this file.
 
 ### Default rules
 
+- `$HOME/Library/Developer/CoreSimulator` is no longer excluded as a parent tree. The catalog now targets `Caches`, `Temp`, `Volumes`, and `Devices` so root-level simulator metadata stays in backups; comment out `Devices` in a local catalog copy to retain simulator device state. `/Library/Developer/CoreSimulator` is unchanged (system runtimes). Apply / `--dry-run` / `--uninstall` drop the retired parent `tmutil` exclusion when it is still present (manual equivalent: `tmutil removeexclusion "$HOME/Library/Developer/CoreSimulator"`). ([#54](https://github.com/qveys/tm-exclusions/issues/54))
+- Default prune zones now cover package-manager reinstall/migration shadow copies (`.bun.bak`, `.npm.bak`, `.yarn.bak`, `.pnpm-store.bak`, `.cargo.bak`, and matching `.old` siblings). These trees are disposable duplicates of catalogued caches; pruning them stops the dynamic scan from emitting one exclusion per nested `dist`/`node_modules` without excluding the parent from Time Machine. ([#25](https://github.com/qveys/tm-exclusions/issues/25))
 - Static paths for `/Applications` and `$HOME/Applications`.
 - Default config now ships ~102 rules across 17 categories (up from 39). Path style normalized to `$HOME/...`. New `#@CategoryName` section markers (cosmetic in 1.x; future report grouping tracked in #34). Several entries ship commented (opt-in): `pattern|.cache`, `pattern|site-packages`, `path|$HOME/.docker` (keeps registry credentials), the `App Support` Application Support roots (mix of user data and caches), and `path|/private/var/folders` (`du`/pipefail abort, see #45). `$HOME/.ollama/models` replaces the parent `$HOME/.ollama` (preserves `id_ed25519` and chat history). Cloud-sync prunes deferred to user opt-in (#44). (#37)
 
 ### Fixed
 
 - Dynamic scan no longer emits redundant child exclusions under an already-excluded parent. After the parent (e.g. `~/Git/<repo>/node_modules`) is kept, descendants matched by the same or another pattern (e.g. `.pnpm/<pkg>/node_modules`) are silently skipped — they're already covered transitively by the parent. Saves hundreds of lines per pnpm workspace and avoids duplicate `tmutil addexclusion` calls. ([#23](https://github.com/qveys/tm-exclusions/issues/23))
+
+### CI and automation
+
+- **Automated patch releases**: new workflow (`.github/workflows/auto-patch.yml`) and script (`scripts/check-auto-patch.sh`) to automatically apply and publish a patch release (`vX.Y.(Z+1)`) directly on `master` whenever 5 or more PRs have been merged without an intermediate manual release (no release PR required).
+- **GitHub Releases notes**: release workflow (`.github/workflows/release.yml`) now automatically extracts the curated section for the released version from `CHANGELOG.md` instead of generating a generic commit list.
+- **Homebrew tap synchronization**: release workflow fully replaces `Formula/tm-exclusions.rb` in `qveys/homebrew-tools` to prevent `install` stanza drift, and supports manual tap re-sync via `workflow_dispatch` with a `tag` input.
+- **Makefile enhancements**: `make release` now validates that `## Unreleased` has actual content, updates `Formula/tm-exclusions.rb`, and injects the changelog into the PR body; new target `make auto-patch` to inspect or run auto-patch status locally.
 
 ### Docs
 

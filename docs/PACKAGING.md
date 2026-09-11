@@ -25,7 +25,7 @@ The local formula is mainly a development install fixture. Do not bump only its 
 
 ### From the tap (`qveys/homebrew-tools`)
 
-After a **`v*`** tag is pushed, `.github/workflows/release.yml` (if enabled) creates/updates the GitHub Release and bumps **`Formula/tm-exclusions.rb`** in **`qveys/homebrew-tools`** using repository secret **`HOMEBREW_TAP_TOKEN`** (PAT with `repo` on the tap).
+After a **`v*`** tag is pushed, `.github/workflows/release.yml` creates/updates the GitHub Release (injecting release notes extracted directly from `CHANGELOG.md`) and updates **`Formula/tm-exclusions.rb`** in **`qveys/homebrew-tools`** using repository secret **`HOMEBREW_TOKEN`** (PAT with `repo` scope on the tap).
 
 Then:
 
@@ -38,8 +38,15 @@ brew install tm-exclusions
 
 ### Tap formula sync
 
-The `install` stanza in the tap **must** match this repo’s `Formula/tm-exclusions.rb` (`bin.install` + `share/tm-exclusions`). The release job only rewrites `url`, `sha256`, and `version` lines; if the install layout changes, update both places (or replace the tap file from this repo once).
+The release job (`.github/workflows/release.yml`) **fully replaces** `Formula/tm-exclusions.rb` in the tap with this repo’s copy at the released tag, then patches the `url`, `sha256`, and `version` lines. The install stanza therefore always matches what the release tarball actually ships — avoiding drift or missing asset errors.
+
+If a past release needs a formula re-sync without cutting a new release, trigger the workflow manually from GitHub Actions: **Actions → Release → Run workflow → tag: `vX.Y.Z`**.
+
+## Release cadence and automation
+
+- **Manual releases (Major / Minor / deliberate Patch)**: run `make release VERSION=x.y.z` to cut a release PR with checked changelog notes, merge on GitHub, then run `make tag VERSION=x.y.z` to push the signed tag.
+- **Automated patch releases (Cadence of 5 PRs)**: `.github/workflows/auto-patch.yml` runs after every push to `master`. If $\ge 5$ PRs have been merged since the last release tag without an intermediate manual release, it automatically applies the patch release directly on `master` (bumps `VERSION`, rolls `CHANGELOG.md`, tags `vX.Y.(Z+1)` and publishes to GitHub and Homebrew) without requiring an intermediate PR. Inspect status locally at any time with `make auto-patch DRY_RUN=1`.
 
 ## Relationship to epic #34
 
-Homebrew ships the **current 1.x** CLI. Broader behavior parity with the archived 2.x script is tracked in GitHub issue **#34**; packaging does not wait on that epic. Release PRs should keep `tm_exclusions.sh` `VERSION`, `CHANGELOG.md`, and version smoke tests in sync; the Homebrew tap formula is updated by release automation after the tag is pushed.
+Homebrew ships the **current 1.x** CLI. Broader behavior parity with the archived 2.x script is tracked in GitHub issue **#34**; packaging does not wait on that epic. Release PRs keep `tm_exclusions.sh` `VERSION`, `Formula/tm-exclusions.rb`, and `CHANGELOG.md` in sync; the Homebrew tap formula is updated by release automation after the tag is pushed.
