@@ -956,7 +956,12 @@ fi
 SIG_TMP_FILE="${TMP_HOLD}/tm_exc_signal_test.tmp"
 touch "${SIG_TMP_FILE}"
 
-bash -c '
+# The handler must re-raise SIGTERM after cleanup (POSIX exit status 128+15=143),
+# not just remove the temp file, so a re-raise regression is caught even though
+# the file-removal path alone would still pass.
+# shellcheck disable=SC2016
+assert_exit_code 143 "signal handler re-raises SIGTERM (exit 143)" \
+    bash -c '
 source <(
     sed -n \
         -e "/^sudo_keepalive_stop()/,/^}/p" \
@@ -971,7 +976,7 @@ register_tmp_file "$2"
 trap "cleanup" EXIT
 trap "on_signal TERM" TERM
 kill -TERM $$
-' _ "${TM_EXCLUSIONS}" "${SIG_TMP_FILE}" >/dev/null 2>&1 || true
+' _ "${TM_EXCLUSIONS}" "${SIG_TMP_FILE}"
 
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ ! -e "${SIG_TMP_FILE}" ]]; then
