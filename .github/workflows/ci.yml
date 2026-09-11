@@ -24,9 +24,9 @@ jobs:
       - name: Install ShellCheck
         run: |
           if ! command -v shellcheck >/dev/null 2>&1; then
-            sudo dpkg --configure -a || true
+            sudo DEBIAN_FRONTEND=noninteractive dpkg --configure -a --force-confdef --force-confold
             sudo apt-get update
-            sudo apt-get install -y shellcheck
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y shellcheck
           fi
 
       - name: Run ShellCheck
