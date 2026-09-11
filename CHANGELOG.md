@@ -8,6 +8,12 @@ All notable changes to this project will be documented in this file.
 
 - **`make install` / `make uninstall`**: default `PREFIX` is `$(brew --prefix)/bin` when writable, otherwise `/usr/local/bin`. Elevation no longer uses `sudo sh -c` (blocked by restricted sudoers). Cascade: unprivileged `install`/`rm` when the destination is writable, else `sudo /usr/bin/install` (or `/bin/rm`) per file, else a macOS admin dialog via `osascript`.
 - `make version` prints the current `tm_exclusions.sh` version without running the CLI. ([#43](https://github.com/qveys/tm-exclusions/issues/43))
+- `make install` / `make uninstall` also install and remove `locales/*.sh` under `$(SHARE_DIR)/locales/`. ([#16](https://github.com/qveys/tm-exclusions/issues/16))
+
+### i18n
+
+- **External locale files**: all user-visible strings moved out of `tm_exclusions.sh` into `locales/en.sh` and `locales/fr.sh`, sourced at runtime by `load_i18n()`. `resolve_locales_dir()` looks at `TM_EXCLUSIONS_LOCALES_DIR` (ignored as root), the repo checkout, then the installed share dirs; a missing locale file is a fatal error rather than a silent fallback. ([#16](https://github.com/qveys/tm-exclusions/issues/16))
+- **`--lang`**: values are allowlisted to `en`/`fr` before any locale path is built, so an untrusted value can never become a sourced filename; unsupported codes report "Unsupported language" instead of "locale files not found".
 
 ### Config
 

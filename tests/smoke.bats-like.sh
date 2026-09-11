@@ -263,6 +263,22 @@ assert_exit_code 1 \
     "--lang rejects unsupported values" \
     bash "$TM_EXCLUSIONS" --lang de --help
 
+assert_output_contains "Unsupported language" \
+    "--lang de reports unsupported language, not missing locale files" \
+    bash "$TM_EXCLUSIONS" --lang de --help
+
+assert_output_not_contains "locale files not found" \
+    "--lang de does not look like a broken locale install" \
+    bash "$TM_EXCLUSIONS" --lang de --help
+
+assert_output_contains "Unsupported language" \
+    "--lang with path-like value reports unsupported language" \
+    bash "$TM_EXCLUSIONS" --lang '../en' --help
+
+assert_output_not_contains "locale files not found" \
+    "--lang with path-like value does not look like a broken locale install" \
+    bash "$TM_EXCLUSIONS" --lang '../en' --help
+
 # ---- Config init ----
 echo ""
 echo "--- Config management ---"
@@ -932,6 +948,72 @@ fi
 
 rm -rf "${EXTRA_HOME}"
 
+# ---- Locale loading (#16) ----
+echo ""
+echo "--- Locale loading (#16) ---"
+
+# TM_EXCLUSIONS_LOCALES_DIR is deliberately ignored when running as root, so that
+# `sudo -E` cannot make the script source an attacker-controlled locale file
+# (see resolve_locales_dir). The expected outcome therefore depends on the EUID.
+LOCALE_MISSING_STDERR="$(env TM_EXCLUSIONS_LOCALES_DIR=/nonexistent \
+    bash "$TM_EXCLUSIONS" --lang en --help 2>&1 1>/dev/null || true)"
+LOCALE_EXIT=0
+env TM_EXCLUSIONS_LOCALES_DIR=/nonexistent bash "$TM_EXCLUSIONS" --lang en --help >/dev/null 2>&1 || LOCALE_EXIT=$?
+
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${EUID}" -eq 0 ]]; then
+    # As root: the override must be ignored and the bundled locales used instead.
+    if [[ "${LOCALE_EXIT}" -eq 0 ]]; then
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        printf '%b  PASS%b TM_EXCLUSIONS_LOCALES_DIR is ignored when running as root\n' "$GREEN" "$NC"
+    else
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        printf '%b  FAIL%b TM_EXCLUSIONS_LOCALES_DIR should be ignored as root (exit: %s)\n' "$RED" "$NC" "${LOCALE_EXIT}"
+    fi
+else
+    if [[ "${LOCALE_EXIT}" -ne 0 ]]; then
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        printf '%b  PASS%b TM_EXCLUSIONS_LOCALES_DIR=/nonexistent exits non-zero\n' "$GREEN" "$NC"
+    else
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        printf '%b  FAIL%b TM_EXCLUSIONS_LOCALES_DIR=/nonexistent should exit non-zero\n' "$RED" "$NC"
+    fi
+fi
+
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${EUID}" -eq 0 ]]; then
+    if [[ -z "${LOCALE_MISSING_STDERR}" ]]; then
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        printf '%b  PASS%b ignored override as root produces no locale error\n' "$GREEN" "$NC"
+    else
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        printf '%b  FAIL%b ignored override as root should be silent (got: %s)\n' "$RED" "$NC" "${LOCALE_MISSING_STDERR}"
+    fi
+elif printf '%s\n' "${LOCALE_MISSING_STDERR}" | grep -q "locale files not found"; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b missing locales dir prints clear error to stderr\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b missing locales dir should print clear error to stderr (got: %s)\n' "$RED" "$NC" "${LOCALE_MISSING_STDERR}"
+fi
+
+# Test: TM_EXCLUSIONS_LOCALES_DIR=<repo>/locales explicitly (env-var override works)
+REPO_LOCALES_DIR="${SCRIPT_DIR}/locales"
+assert_exit_code 0 \
+    "TM_EXCLUSIONS_LOCALES_DIR=<repo>/locales --lang en --help exits 0" \
+    env TM_EXCLUSIONS_LOCALES_DIR="${REPO_LOCALES_DIR}" bash "$TM_EXCLUSIONS" --lang en --help
+
+assert_output_contains "Usage:" \
+    "TM_EXCLUSIONS_LOCALES_DIR env-var override loads English locale" \
+    env TM_EXCLUSIONS_LOCALES_DIR="${REPO_LOCALES_DIR}" bash "$TM_EXCLUSIONS" --lang en --help
+
+assert_exit_code 0 \
+    "TM_EXCLUSIONS_LOCALES_DIR=<repo>/locales --lang fr --help exits 0" \
+    env TM_EXCLUSIONS_LOCALES_DIR="${REPO_LOCALES_DIR}" bash "$TM_EXCLUSIONS" --lang fr --help
+
+assert_output_contains "Utilisation" \
+    "TM_EXCLUSIONS_LOCALES_DIR env-var override loads French locale" \
+    env TM_EXCLUSIONS_LOCALES_DIR="${REPO_LOCALES_DIR}" bash "$TM_EXCLUSIONS" --lang fr --help
 # ---- Temporary file cleanup and signal trap ----
 echo ""
 echo "--- Temporary file cleanup and signal trap ---"

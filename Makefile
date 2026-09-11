@@ -94,7 +94,7 @@ test: ## Run smoke tests
 	@echo "Running release logic tests..."
 	@bash tests/test_release_logic.sh
 
-lint: ## Run ShellCheck on all shell scripts
+lint: ## Run ShellCheck on all shell scripts and syntax-check locale tables
 	@if ! command -v shellcheck >/dev/null 2>&1; then \
 	  echo "Error: shellcheck is not installed." >&2; \
 	  echo "Install it with: brew install shellcheck" >&2; \
@@ -105,6 +105,7 @@ lint: ## Run ShellCheck on all shell scripts
 	@shellcheck -x -s bash $(SCRIPT)
 	@shellcheck -x -s bash tests/test_helpers.sh
 	@shellcheck -x -s bash tests/smoke.bats-like.sh
+	@for f in locales/*.sh; do bash -n "$$f" || exit 1; done
 	@shellcheck -x -s sh .githooks/post-checkout
 	@shellcheck -x -s sh .githooks/post-checkout-fallback
 	@shellcheck -x -s sh .githooks/post-merge
@@ -116,16 +117,18 @@ lint: ## Run ShellCheck on all shell scripts
 install: setup ## Install tm-exclusions to PREFIX (Homebrew bin if writable, else /usr/local/bin)
 	@echo "Installing $(INSTALL_NAME) to $(PREFIX)..."
 	@$(CHECK_QUOTES)CUR='$(CURDIR)'; PRE='$(PREFIX)'; SHR='$(SHARE_DIR)'; \
-	cmd="$(INSTALL_BIN) -d '$$SHR' '$$PRE' && $(INSTALL_BIN) -m 755 '$$CUR/$(SCRIPT)' '$$PRE/$(INSTALL_NAME)' && $(INSTALL_BIN) -m 644 '$$CUR/config/default.conf' '$$SHR/default.conf' && $(INSTALL_BIN) -m 644 '$$CUR/config/extra-prunes.example.conf' '$$SHR/extra-prunes.example.conf'"; \
+	cmd="$(INSTALL_BIN) -d '$$SHR' '$$SHR/locales' '$$PRE' && $(INSTALL_BIN) -m 755 '$$CUR/$(SCRIPT)' '$$PRE/$(INSTALL_NAME)' && $(INSTALL_BIN) -m 644 '$$CUR/config/default.conf' '$$SHR/default.conf' && $(INSTALL_BIN) -m 644 '$$CUR/config/extra-prunes.example.conf' '$$SHR/extra-prunes.example.conf' && $(INSTALL_BIN) -m 644 '$$CUR'/locales/*.sh '$$SHR/locales/'"; \
 	if [ -z "$(SUDO)" ]; then \
-	  $(INSTALL_BIN) -d "$$SHR" "$$PRE" \
+	  $(INSTALL_BIN) -d "$$SHR" "$$SHR/locales" "$$PRE" \
 	  && $(INSTALL_BIN) -m 755 "$$CUR/$(SCRIPT)" "$$PRE/$(INSTALL_NAME)" \
 	  && $(INSTALL_BIN) -m 644 "$$CUR/config/default.conf" "$$SHR/default.conf" \
-	  && $(INSTALL_BIN) -m 644 "$$CUR/config/extra-prunes.example.conf" "$$SHR/extra-prunes.example.conf"; \
-	elif $(SUDO) $(INSTALL_BIN) -d "$$SHR" "$$PRE" \
+	  && $(INSTALL_BIN) -m 644 "$$CUR/config/extra-prunes.example.conf" "$$SHR/extra-prunes.example.conf" \
+	  && $(INSTALL_BIN) -m 644 "$$CUR"/locales/*.sh "$$SHR/locales/"; \
+	elif $(SUDO) $(INSTALL_BIN) -d "$$SHR" "$$SHR/locales" "$$PRE" \
 	  && $(SUDO) $(INSTALL_BIN) -m 755 "$$CUR/$(SCRIPT)" "$$PRE/$(INSTALL_NAME)" \
 	  && $(SUDO) $(INSTALL_BIN) -m 644 "$$CUR/config/default.conf" "$$SHR/default.conf" \
-	  && $(SUDO) $(INSTALL_BIN) -m 644 "$$CUR/config/extra-prunes.example.conf" "$$SHR/extra-prunes.example.conf"; then \
+	  && $(SUDO) $(INSTALL_BIN) -m 644 "$$CUR/config/extra-prunes.example.conf" "$$SHR/extra-prunes.example.conf" \
+	  && $(SUDO) $(INSTALL_BIN) -m 644 "$$CUR"/locales/*.sh "$$SHR/locales/"; then \
 	  :; \
 	else \
 	  $(OSASCRIPT_OR_DIE); \
@@ -138,11 +141,13 @@ uninstall: ## Remove tm-exclusions from PREFIX
 	  echo "$(INSTALL_NAME) is not installed. Nothing to remove."; \
 	else \
 	  echo "Removing $(INSTALL_NAME) from $$PRE..."; \
-	  cmd="$(RM_BIN) -f '$$PRE/$(INSTALL_NAME)' '$$SHR/default.conf' '$$SHR/extra-prunes.example.conf' || exit \$$?; if [ -d '$$SHR' ]; then $(RMDIR_BIN) '$$SHR' 2>/dev/null || true; fi"; \
+	  cmd="$(RM_BIN) -f '$$PRE/$(INSTALL_NAME)' '$$SHR/default.conf' '$$SHR/extra-prunes.example.conf' '$$SHR/locales/'*.sh || exit \$$?; if [ -d '$$SHR/locales' ]; then $(RMDIR_BIN) '$$SHR/locales' 2>/dev/null || true; fi; if [ -d '$$SHR' ]; then $(RMDIR_BIN) '$$SHR' 2>/dev/null || true; fi"; \
 	  if [ -z "$(SUDO)" ]; then \
-	    $(RM_BIN) -f "$$PRE/$(INSTALL_NAME)" "$$SHR/default.conf" "$$SHR/extra-prunes.example.conf" || exit $$?; \
+	    $(RM_BIN) -f "$$PRE/$(INSTALL_NAME)" "$$SHR/default.conf" "$$SHR/extra-prunes.example.conf" "$$SHR/locales/"*.sh || exit $$?; \
+	    if [ -d "$$SHR/locales" ]; then $(RMDIR_BIN) "$$SHR/locales" 2>/dev/null || true; fi; \
 	    if [ -d "$$SHR" ]; then $(RMDIR_BIN) "$$SHR" 2>/dev/null || true; fi; \
-	  elif $(SUDO) $(RM_BIN) -f "$$PRE/$(INSTALL_NAME)" "$$SHR/default.conf" "$$SHR/extra-prunes.example.conf"; then \
+	  elif $(SUDO) $(RM_BIN) -f "$$PRE/$(INSTALL_NAME)" "$$SHR/default.conf" "$$SHR/extra-prunes.example.conf" "$$SHR/locales/"*.sh; then \
+	    if [ -d "$$SHR/locales" ]; then $(SUDO) $(RMDIR_BIN) "$$SHR/locales" 2>/dev/null || true; fi; \
 	    if [ -d "$$SHR" ]; then $(SUDO) $(RMDIR_BIN) "$$SHR" 2>/dev/null || true; fi; \
 	  else \
 	    $(OSASCRIPT_OR_DIE); \

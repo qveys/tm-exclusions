@@ -10,8 +10,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/qveys/tm-exclusions/actions/workflows/tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/qveys/tm-exclusions/tests.yml?style=flat-square&label=tests" alt="Tests"/></a>
-  <a href="https://github.com/qveys/tm-exclusions/actions/workflows/shellcheck.yml"><img src="https://img.shields.io/github/actions/workflow/status/qveys/tm-exclusions/shellcheck.yml?style=flat-square&label=shellcheck" alt="ShellCheck"/></a>
+  <a href="https://github.com/qveys/tm-exclusions/actions/workflows/ci.yml"><img src="https://img.shields.io/github/check-runs/qveys/tm-exclusions/master?style=flat-square&nameFilter=Smoke%20tests&label=tests" alt="Tests"/></a>
+  <a href="https://github.com/qveys/tm-exclusions/actions/workflows/ci.yml"><img src="https://img.shields.io/github/check-runs/qveys/tm-exclusions/master?style=flat-square&nameFilter=ShellCheck&label=shellcheck" alt="ShellCheck"/></a>
   <img src="https://img.shields.io/badge/bash-3.2%2B-green?style=flat-square&logo=gnubash&logoColor=white" alt="Bash 3.2+"/>
   <img src="https://img.shields.io/badge/macOS-compatible-black?style=flat-square&logo=apple&logoColor=white" alt="macOS"/>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/qveys/tm-exclusions?style=flat-square" alt="License"/></a>

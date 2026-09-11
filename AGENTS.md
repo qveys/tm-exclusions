@@ -3,13 +3,13 @@
 This file provides guidance to AI agentic LLM CLI tools when working with code in this repository.
 
 ## Project overview
-- `tm-exclusions` is a single-file Bash CLI (`tm_exclusions.sh`) for managing macOS Time Machine exclusions for regenerable developer data.
+- `tm-exclusions` is a Bash CLI (`tm_exclusions.sh`) for managing macOS Time Machine exclusions for regenerable developer data. User-visible strings live in `locales/{en,fr}.sh`, sourced at runtime.
 - It is config-driven: built-in rules come from the resolved default config (`resolve_default_conf()` in `tm_exclusions.sh` — e.g. `config/default.conf` in a repo checkout, `.../share/tm-exclusions/default.conf` when installed, or `$TM_EXCLUSIONS_DEFAULT_CONF` when set); user rules come from `~/.config/tm_exclusions/custom.conf`.
 - Behavior and docs must stay aligned: when implementation changes, update `README.md`, tests in `tests/`, and `docs/ARCHITECTURE.md` when architectural behavior changes.
 
 ## Maintainer docs
 - **`docs/PACKAGING.md`** — `make install` vs Homebrew, tap release automation.
-- **`docs/I18N.md`** — embedded English/French strings (vs archived `locales/`).
+- **`docs/I18N.md`** — English/French strings in `locales/{en,fr}.sh`, sourced at runtime.
 - **`docs/DEV_TOOLING.md`** — `.cursor` / `AGENTS.md` vs archived `.claude/`.
 - Root **`CLAUDE.md`** — stub for Claude Code; points here.
 
