@@ -54,7 +54,7 @@ Optional environment variables (see **`docs/ARCHITECTURE.md`**): `TM_EXCLUSIONS_
 
 | | Feature | Details |
 |---|---|---|
-| 📦 | **Built-in rules** | ~113 rules across 17 categories (Node.js, Python, Rust, Java, Xcode, AI/LLM, Docker, Homebrew, …) |
+| 📦 | **Built-in rules** | ~116 rules across 17 categories (Node.js, Python, Rust, Java, Xcode, AI/LLM, Docker, Homebrew, …) |
 | 🔍 | **Dynamic scan** | Recursively finds `node_modules`, `.venv`, `__pycache__`, build dirs |
 | 🔒 | **Dual tmutil strategy** | User paths via `tmutil addexclusion`; system paths via `sudo tmutil ... -p` |
 | 🌍 | **Multilingual** | French / English (auto-detected from `$LANG`) |
@@ -118,7 +118,7 @@ Config files are loaded, merged, then applied via a dual `tmutil` strategy (user
 | ☕ **Java / JVM** | Maven, Gradle, Ivy, SBT, Coursier caches; dynamic `.gradle` |
 | 🐹 **Go** | Go module cache, build cache |
 | 💎 **Ruby / iOS** | rbenv, RVM, gems, CocoaPods repo; dynamic `Pods` |
-| 🔨 **Xcode / Apple Dev Tools** | DerivedData, Archives, iOS/watchOS/tvOS/visionOS DeviceSupport, CoreSimulator |
+| 🔨 **Xcode / Apple Dev Tools** | DerivedData, Archives, iOS/watchOS/tvOS/visionOS DeviceSupport, CoreSimulator Caches/Temp/Volumes/Devices (not the parent tree) |
 | 🗄️ **macOS Caches** | `~/Library/Caches`, `~/Library/Logs` |
 | 🛠️ **Dev Tools** | IDE caches (JetBrains, VS Code), Terraform, Pulumi, Helm, kubectl plugin caches |
 | 🤖 **AI / LLM** | Hugging Face, LM Studio, Ollama models, Claude Code VM bundles, SuperWhisper |

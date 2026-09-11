@@ -405,7 +405,7 @@ CONF="${SCRIPT_DIR}/config/default.conf"
 # Active rules (path/pattern/prune lines, ignoring comments).
 # Floor is pinned to the documented baseline so silent regressions fail CI.
 # Bump this constant when intentionally growing the catalog.
-MIN_ACTIVE_RULES=113
+MIN_ACTIVE_RULES=116
 RULE_COUNT=$(grep -cE '^(path|pattern|prune)\|' "${CONF}" || true)
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ "${RULE_COUNT}" -ge "${MIN_ACTIVE_RULES}" ]]; then
@@ -583,6 +583,47 @@ else
 fi
 
 rm -rf "${BAK_HOME}"
+
+# ---- Granular CoreSimulator subdirs (#54) ----
+echo ""
+echo "--- CoreSimulator subdirs (#54) ---"
+
+# Do not exclude the HOME parent tree.
+CSIM_PARENT_COUNT=$(grep -cE '^path\|\$HOME/Library/Developer/CoreSimulator\|' "${CONF}" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${CSIM_PARENT_COUNT}" -eq 0 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b default.conf does not exclude $HOME/.../CoreSimulator parent\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b default.conf still excludes $HOME/.../CoreSimulator parent\n' "$RED" "$NC"
+fi
+
+CSIM_SUBDIRS='Caches Temp Volumes Devices'
+CSIM_MISSING=""
+for sub in ${CSIM_SUBDIRS}; do
+    if ! grep -qE "^path\\|\\\$HOME/Library/Developer/CoreSimulator/${sub}\\|" "${CONF}"; then
+        CSIM_MISSING="${CSIM_MISSING} ${sub}"
+    fi
+done
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ -z "${CSIM_MISSING}" ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b default.conf excludes CoreSimulator Caches/Temp/Volumes/Devices\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b default.conf missing CoreSimulator subdir(s):%s\n' "$RED" "$NC" "${CSIM_MISSING}"
+fi
+
+CSIM_SYSTEM_COUNT=$(grep -cE '^path\|/Library/Developer/CoreSimulator\|' "${CONF}" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${CSIM_SYSTEM_COUNT}" -eq 1 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b default.conf still excludes system /Library/Developer/CoreSimulator\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b default.conf system CoreSimulator rule count is %d (expected 1)\n' "$RED" "$NC" "${CSIM_SYSTEM_COUNT}"
+fi
 
 # ---- Prefix-prune of redundant child exclusions (#23) ----
 echo ""
