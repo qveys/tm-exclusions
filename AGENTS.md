@@ -16,6 +16,7 @@ This file provides guidance to AI agentic LLM CLI tools when working with code i
 ## Core development commands
 - Show available make targets and manage the dev environment:
   - `make help`
+  - `make version`
   - `make setup`
   - `make check-hooks`
 - Run all checks:
