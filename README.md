@@ -219,7 +219,8 @@ If you have a massive cloud-sync tree (Dropbox, Google Drive, OneDrive) and want
 #      $(PREFIX)/../share/tm-exclusions/extra-prunes.example.conf
 #      e.g. /opt/homebrew/share/tm-exclusions/extra-prunes.example.conf
 
-cp "$(brew --prefix)/share/tm-exclusions/extra-prunes.example.conf" \
+SHARE_DIR="$(dirname "$(command -v tm-exclusions)")/../share/tm-exclusions"
+cp "$SHARE_DIR/extra-prunes.example.conf" \
    ~/.config/tm_exclusions/extra.conf
 
 # 2. Uncomment the prune lines that apply to your setup (editor of your choice):
@@ -245,9 +246,11 @@ Use `--quiet` (or `-q`) for unattended execution:
 - Report is still printed to stdout (summary/report output is not suppressed)
 - Desktop report copy is **off by default** — opt in with `--desktop-report` or `TM_EXCLUSIONS_REPORT_DESKTOP=1`
 
+Both cron and launchd need the absolute install path — run `command -v tm-exclusions` and substitute it below (the example uses the Apple Silicon Homebrew path).
+
 ```bash
 # Weekly cron job
-0 3 * * 0  /usr/local/bin/tm-exclusions --quiet 2>>/tmp/tm_exclusions.err
+0 3 * * 0  /opt/homebrew/bin/tm-exclusions --quiet 2>>/tmp/tm_exclusions.err
 ```
 
 <details>
@@ -266,7 +269,7 @@ Save as `~/Library/LaunchAgents/com.tm-exclusions.weekly.plist`:
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>/usr/local/bin/tm-exclusions</string>
+    <string>/opt/homebrew/bin/tm-exclusions</string>
     <string>--quiet</string>
   </array>
   <key>StartCalendarInterval</key>
