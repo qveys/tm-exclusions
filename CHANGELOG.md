@@ -7,9 +7,11 @@ All notable changes to this project will be documented in this file.
 ### Build
 
 - **`make install` / `make uninstall`**: default `PREFIX` is `$(brew --prefix)/bin` when writable, otherwise `/usr/local/bin`. Elevation no longer uses `sudo sh -c` (blocked by restricted sudoers). Cascade: unprivileged `install`/`rm` when the destination is writable, else `sudo /usr/bin/install` (or `/bin/rm`) per file, else a macOS admin dialog via `osascript`.
+- `make version` prints the current `tm_exclusions.sh` version without running the CLI. ([#43](https://github.com/qveys/tm-exclusions/issues/43))
 
 ### Config
 
+- **Auto-prune `.bak` / `.old` shadow copies**: after config loading, every static `path|<P>` rule automatically extends `CONF_PRUNES` with `<P>.bak` and `<P>.old`. Shadow trees produced by tool reinstalls or migrations (e.g. `.bun.bak`, `.npm.bak`, `.cargo.bak`, `.pnpm-store.bak`) are silently skipped during the dynamic scan without any per-suffix opt-in. `pattern|` and `prune|` catalog entries are not auto-derived. `config/default.conf` is unchanged. ([#25](https://github.com/qveys/tm-exclusions/issues/25))
 - **`TM_EXCLUSIONS_EXTRA_CONF`**: opt-in mechanism for power users with large cloud-sync trees. Set the env var to any config file to load it after `default.conf` and `custom.conf`. A missing, non-regular-file (e.g. a directory path), or unreadable value emits a stderr warning and continues — the loader now requires both `-f` (regular file) and `-r` (readable). The example file (`extra-prunes.example.conf`) is installed alongside `default.conf`: in a source checkout under `config/`, via `make install` under `${SHARE_DIR}/` (`$(PREFIX)/../share/tm-exclusions`, i.e. `$(brew --prefix)/share/tm-exclusions/` when the Homebrew bin is writable, otherwise `/usr/local/share/tm-exclusions/`), and via `brew install` under `$(brew --prefix)/share/tm-exclusions/`. `config/default.conf` is unchanged. ([#17](https://github.com/qveys/tm-exclusions/issues/17))
 
 ### CLI
@@ -28,6 +30,8 @@ All notable changes to this project will be documented in this file.
 
 ### Default rules
 
+- `$HOME/Library/Developer/CoreSimulator` is no longer excluded as a parent tree. The catalog now targets `Caches`, `Temp`, `Volumes`, and `Devices` so root-level simulator metadata stays in backups; comment out `Devices` in a local catalog copy to retain simulator device state. `/Library/Developer/CoreSimulator` is unchanged (system runtimes). Apply / `--dry-run` / `--uninstall` drop the retired parent `tmutil` exclusion when it is still present (manual equivalent: `tmutil removeexclusion "$HOME/Library/Developer/CoreSimulator"`). ([#54](https://github.com/qveys/tm-exclusions/issues/54))
+- Default prune zones now cover package-manager reinstall/migration shadow copies (`.bun.bak`, `.npm.bak`, `.yarn.bak`, `.pnpm-store.bak`, `.cargo.bak`, and matching `.old` siblings). These trees are disposable duplicates of catalogued caches; pruning them stops the dynamic scan from emitting one exclusion per nested `dist`/`node_modules` without excluding the parent from Time Machine. ([#25](https://github.com/qveys/tm-exclusions/issues/25))
 - Static paths for `/Applications` and `$HOME/Applications`.
 - Default config now ships ~102 rules across 17 categories (up from 39). Path style normalized to `$HOME/...`. New `#@CategoryName` section markers (cosmetic in 1.x; future report grouping tracked in #34). Several entries ship commented (opt-in): `pattern|.cache`, `pattern|site-packages`, `path|$HOME/.docker` (keeps registry credentials), the `App Support` Application Support roots (mix of user data and caches), and `path|/private/var/folders` (`du`/pipefail abort, see #45). `$HOME/.ollama/models` replaces the parent `$HOME/.ollama` (preserves `id_ed25519` and chat history). Cloud-sync prunes deferred to user opt-in (#44). (#37)
 
