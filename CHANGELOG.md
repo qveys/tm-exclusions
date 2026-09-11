@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 
 ### Config
 
+- **Auto-prune `.bak` / `.old` shadow copies**: after config loading, every static `path|<P>` rule automatically extends `CONF_PRUNES` with `<P>.bak` and `<P>.old`. Shadow trees produced by tool reinstalls or migrations (e.g. `.bun.bak`, `.npm.bak`, `.cargo.bak`, `.pnpm-store.bak`) are silently skipped during the dynamic scan without any per-suffix opt-in. `pattern|` and `prune|` catalog entries are not auto-derived. `config/default.conf` is unchanged. ([#25](https://github.com/qveys/tm-exclusions/issues/25))
 - **`TM_EXCLUSIONS_EXTRA_CONF`**: opt-in mechanism for power users with large cloud-sync trees. Set the env var to any config file to load it after `default.conf` and `custom.conf`. A missing, non-regular-file (e.g. a directory path), or unreadable value emits a stderr warning and continues — the loader now requires both `-f` (regular file) and `-r` (readable). The example file (`extra-prunes.example.conf`) is installed alongside `default.conf`: in a source checkout under `config/`, via `make install` under `${SHARE_DIR}/` (default `/usr/local/share/tm-exclusions/`), and via `brew install` under `$(brew --prefix)/share/tm-exclusions/`. `config/default.conf` is unchanged. ([#17](https://github.com/qveys/tm-exclusions/issues/17))
 
 ### CLI
