@@ -498,6 +498,37 @@ load_config() {
             log_error "Warning: TM_EXCLUSIONS_EXTRA_CONF is set but file is missing or unreadable: ${TM_EXCLUSIONS_EXTRA_CONF}"
         fi
     fi
+
+    # Derive .bak / .old prune entries from every static path rule so that
+    # shadow copies (e.g. ~/.bun.bak from a Bun reinstall) are silently skipped
+    # during the dynamic scan without requiring explicit catalog entries.
+    # Only path| entries are processed — pattern| and prune| are excluded.
+    # Skipped in uninstall mode so prior exclusions under shadow trees can be cleaned up.
+    if [[ "${MODE}" != "uninstall" ]]; then
+        derive_bak_old_prunes
+    fi
+}
+
+# For every static 'path' catalog entry P, append P.bak and P.old to
+# CONF_PRUNES (if not already present).  These auto-derived prunes only
+# affect is_pruned() / scan_dynamic_patterns(); apply_static_paths() is
+# not changed — .bak/.old paths are never passed to tmutil addexclusion.
+derive_bak_old_prunes() {
+    [[ -z "${CONF_PATHS}" ]] && return 0
+    local p clean_p suffix new_entries=""
+    while IFS= read -r p; do
+        [[ -z "$p" ]] && continue
+        clean_p="${p%/}"
+        for suffix in .bak .old; do
+            new_entries="${new_entries}${clean_p}${suffix}
+"
+        done
+    done <<EOF
+$(printf '%s\n' "${CONF_PATHS}")
+EOF
+
+    # Append and deduplicate once using awk (Bash 3.2 compatible)
+    CONF_PRUNES=$(printf '%s\n%s' "${CONF_PRUNES}" "${new_entries}" | awk 'NF && !seen[$0]++')
 }
 
 # ---------------------------------------------------------------------------
@@ -697,11 +728,9 @@ is_pruned() {
     while IFS= read -r prune_entry; do
         [[ -z "$prune_entry" ]] && continue
         # Check if check_path starts with prune_entry
-        case "$check_path" in
-            "${prune_entry}"|"${prune_entry}/"*)
-                return 0
-                ;;
-        esac
+        if [[ "$check_path" == "$prune_entry" || "$check_path" == "$prune_entry/"* ]]; then
+            return 0
+        fi
     done <<EOF
 ${CONF_PRUNES}
 EOF
@@ -883,6 +912,30 @@ apply_static_paths() {
         fi
     done <<EOF
 ${CONF_PATHS}
+EOF
+}
+
+# Paths previously shipped as path| rules that the catalog no longer excludes.
+# Apply / dry-run / uninstall drop them from tmutil when still present so an
+# upgrade does not keep the old parent exclusion forever. Silent when the
+# path is not currently excluded (simulation mode, fresh install, already migrated).
+migrate_retired_exclusions() {
+    local retired_path
+    while IFS= read -r retired_path; do
+        [[ -z "$retired_path" ]] && continue
+        if [[ ! -e "$retired_path" ]] && [[ "${FORCE}" -eq 0 ]]; then
+            continue
+        fi
+        if cannot_privileged_tmutil "$retired_path"; then
+            continue
+        fi
+        if ! tm_is_excluded "$retired_path" && [[ "${FORCE}" -eq 0 ]]; then
+            continue
+        fi
+        log_info "  ${MSG_RETIRED_EXCLUSION} ${retired_path}"
+        remove_exclusion "$retired_path"
+    done <<EOF
+${HOME}/Library/Developer/CoreSimulator
 EOF
 }
 
@@ -1331,6 +1384,10 @@ main() {
     load_config
 
     collect_post_scan_paths
+
+    if [[ "${MODE}" != "report-only" ]]; then
+        migrate_retired_exclusions
+    fi
 
     # Execute based on mode
     case "${MODE}" in

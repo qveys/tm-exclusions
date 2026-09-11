@@ -60,4 +60,5 @@ declare_i18n_en() {
     MSG_PATH_NOT_FOUND="Path not found, skipping:"
     MSG_PRUNE_SKIP="Pruning (skipping scan of):"
     MSG_SKIP_PRIVILEGED="Skipping (non-interactive / no sudo cache) for system path:"
+    MSG_RETIRED_EXCLUSION="Dropping retired exclusion:"
 }

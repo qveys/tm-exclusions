@@ -1,12 +1,22 @@
-.PHONY: setup check-hooks help test lint install uninstall check release tag
+.PHONY: setup check-hooks help test lint install uninstall check release tag version
 
 SCRIPT = tm_exclusions.sh
-PREFIX ?= /usr/local/bin
+# Homebrew bin if writable (typical Apple Silicon), else /usr/local/bin.
+# Override with: make install PREFIX=/some/bin
+PREFIX ?= $(shell \
+  bp=""; \
+  if [ -n "$$HOMEBREW_PREFIX" ]; then bp="$$HOMEBREW_PREFIX"; \
+  elif command -v brew >/dev/null 2>&1; then bp=$$(brew --prefix 2>/dev/null); fi; \
+  if [ -n "$$bp" ] && [ -d "$$bp/bin" ] && [ -w "$$bp/bin" ]; then echo "$$bp/bin"; \
+  else echo /usr/local/bin; fi)
 INSTALL_NAME = tm-exclusions
 SHARE_DIR ?= $(abspath $(PREFIX)/../share/tm-exclusions)
 BASE_BRANCH ?= master
+INSTALL_BIN = /usr/bin/install
+RM_BIN = /bin/rm
+RMDIR_BIN = /bin/rmdir
 
-# Auto-detect whether sudo is required for install/uninstall.
+# Auto-detect whether elevation is required for install/uninstall.
 # Override with: make install SUDO= (skip) or make install SUDO=sudo (force)
 SUDO := $(shell \
   prefix_ok=''; share_ok=''; \
@@ -22,6 +32,28 @@ SUDO := $(shell \
   fi; \
   if [ -n "$$prefix_ok" ] && [ -n "$$share_ok" ]; then echo ''; \
   else echo 'sudo'; fi)
+
+# Guard: install paths are embedded in shell source as single-quoted literals,
+# so a path containing a single quote would silently mangle the destination.
+# Checked at make level: by the time the shell sees it, the quoting is broken.
+QUOTE := '
+CHECK_QUOTES = $(if $(findstring $(QUOTE),$(CURDIR)$(PREFIX)$(SHARE_DIR)),\
+  $(error Paths containing a single quote are not supported: $(CURDIR) $(PREFIX) $(SHARE_DIR)))
+
+# Shell snippet: request macOS admin (Authorization Services), else print fallback.
+# Expects $$cmd (POSIX command string, absolute paths, single-quoted arguments).
+# Bypasses sudoers whitelist.
+OSASCRIPT_OR_DIE = \
+	echo "Requesting administrator privileges..."; \
+	quoted=$$(printf '%s' "$$cmd" | sed 's/\\/\\\\/g; s/"/\\"/g'); \
+	if command -v osascript >/dev/null 2>&1 && osascript -e "do shell script \"$$quoted\" with administrator privileges"; then \
+	  :; \
+	else \
+	  echo "Error: could not modify $$PRE (privilege elevation failed)." >&2; \
+	  echo "Try:  make install PREFIX=\"\$$(brew --prefix)/bin\"" >&2; \
+	  echo "  or: brew install --formula ./Formula/tm-exclusions.rb" >&2; \
+	  exit 1; \
+	fi
 
 # Auto-bootstrap the versioned hooks path on every `make` invocation so the
 # local Conventional Commit hooks are active without requiring manual setup.
@@ -51,9 +83,16 @@ help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
+version: ## Print the current tm-exclusions version
+	@version="$$(sed -n 's/^readonly VERSION="\([^"]*\)"/\1/p' $(SCRIPT))"; \
+	  test -n "$$version" || { echo "Error: could not determine version from $(SCRIPT)." >&2; exit 1; }; \
+	  printf '%s\n' "$$version"
+
 test: ## Run smoke tests
 	@echo "Running smoke tests..."
 	@bash tests/smoke.bats-like.sh
+	@echo "Running release logic tests..."
+	@bash tests/test_release_logic.sh
 
 lint: ## Run ShellCheck on all shell scripts and syntax-check locale tables
 	@if ! command -v shellcheck >/dev/null 2>&1; then \
@@ -75,21 +114,44 @@ lint: ## Run ShellCheck on all shell scripts and syntax-check locale tables
 	@shellcheck -x -s bash scripts/check-auto-patch.sh
 	@echo "ShellCheck passed."
 
-install: setup ## Install tm-exclusions to PREFIX (default: /usr/local/bin)
+install: setup ## Install tm-exclusions to PREFIX (Homebrew bin if writable, else /usr/local/bin)
 	@echo "Installing $(INSTALL_NAME) to $(PREFIX)..."
-	@if [ -n "$(SUDO)" ]; then $(SUDO) -v; fi
-	@$(SUDO) sh -c 'install -d "$(SHARE_DIR)" && install -d "$(SHARE_DIR)/locales" && install -m 755 "$(SCRIPT)" "$(PREFIX)/$(INSTALL_NAME)" && install -m 644 config/default.conf "$(SHARE_DIR)/default.conf" && install -m 644 config/extra-prunes.example.conf "$(SHARE_DIR)/extra-prunes.example.conf" && install -m 644 locales/*.sh "$(SHARE_DIR)/locales/"'
+	@$(CHECK_QUOTES)CUR='$(CURDIR)'; PRE='$(PREFIX)'; SHR='$(SHARE_DIR)'; \
+	cmd="$(INSTALL_BIN) -d '$$SHR' '$$SHR/locales' '$$PRE' && $(INSTALL_BIN) -m 755 '$$CUR/$(SCRIPT)' '$$PRE/$(INSTALL_NAME)' && $(INSTALL_BIN) -m 644 '$$CUR/config/default.conf' '$$SHR/default.conf' && $(INSTALL_BIN) -m 644 '$$CUR/config/extra-prunes.example.conf' '$$SHR/extra-prunes.example.conf' && $(INSTALL_BIN) -m 644 '$$CUR'/locales/*.sh '$$SHR/locales/'"; \
+	if [ -z "$(SUDO)" ]; then \
+	  $(INSTALL_BIN) -d "$$SHR" "$$SHR/locales" "$$PRE" \
+	  && $(INSTALL_BIN) -m 755 "$$CUR/$(SCRIPT)" "$$PRE/$(INSTALL_NAME)" \
+	  && $(INSTALL_BIN) -m 644 "$$CUR/config/default.conf" "$$SHR/default.conf" \
+	  && $(INSTALL_BIN) -m 644 "$$CUR/config/extra-prunes.example.conf" "$$SHR/extra-prunes.example.conf" \
+	  && $(INSTALL_BIN) -m 644 "$$CUR"/locales/*.sh "$$SHR/locales/"; \
+	elif $(SUDO) $(INSTALL_BIN) -d "$$SHR" "$$SHR/locales" "$$PRE" \
+	  && $(SUDO) $(INSTALL_BIN) -m 755 "$$CUR/$(SCRIPT)" "$$PRE/$(INSTALL_NAME)" \
+	  && $(SUDO) $(INSTALL_BIN) -m 644 "$$CUR/config/default.conf" "$$SHR/default.conf" \
+	  && $(SUDO) $(INSTALL_BIN) -m 644 "$$CUR/config/extra-prunes.example.conf" "$$SHR/extra-prunes.example.conf" \
+	  && $(SUDO) $(INSTALL_BIN) -m 644 "$$CUR"/locales/*.sh "$$SHR/locales/"; then \
+	  :; \
+	else \
+	  $(OSASCRIPT_OR_DIE); \
+	fi
 	@echo "Installed. Run '$(INSTALL_NAME) --help' to get started."
 
 uninstall: ## Remove tm-exclusions from PREFIX
-	@if [ ! -f "$(PREFIX)/$(INSTALL_NAME)" ] && [ ! -f "$(SHARE_DIR)/default.conf" ]; then \
+	@$(CHECK_QUOTES)PRE='$(PREFIX)'; SHR='$(SHARE_DIR)'; \
+	if [ ! -f "$$PRE/$(INSTALL_NAME)" ] && [ ! -f "$$SHR/default.conf" ]; then \
 	  echo "$(INSTALL_NAME) is not installed. Nothing to remove."; \
 	else \
-	  echo "Removing $(INSTALL_NAME) from $(PREFIX)..."; \
-	  if [ -n "$(SUDO)" ]; then $(SUDO) -v; fi; \
-	  $(SUDO) rm -f "$(PREFIX)/$(INSTALL_NAME)" "$(SHARE_DIR)/default.conf" "$(SHARE_DIR)/extra-prunes.example.conf"; \
-	  $(SUDO) rm -rf "$(SHARE_DIR)/locales"; \
-	  if [ -d "$(SHARE_DIR)" ]; then $(SUDO) rmdir "$(SHARE_DIR)" 2>/dev/null || true; fi; \
+	  echo "Removing $(INSTALL_NAME) from $$PRE..."; \
+	  cmd="$(RM_BIN) -f '$$PRE/$(INSTALL_NAME)' '$$SHR/default.conf' '$$SHR/extra-prunes.example.conf' '$$SHR/locales/'*.sh || exit \$$?; if [ -d '$$SHR/locales' ]; then $(RMDIR_BIN) '$$SHR/locales' 2>/dev/null || true; fi; if [ -d '$$SHR' ]; then $(RMDIR_BIN) '$$SHR' 2>/dev/null || true; fi"; \
+	  if [ -z "$(SUDO)" ]; then \
+	    $(RM_BIN) -f "$$PRE/$(INSTALL_NAME)" "$$SHR/default.conf" "$$SHR/extra-prunes.example.conf" "$$SHR/locales/"*.sh || exit $$?; \
+	    if [ -d "$$SHR/locales" ]; then $(RMDIR_BIN) "$$SHR/locales" 2>/dev/null || true; fi; \
+	    if [ -d "$$SHR" ]; then $(RMDIR_BIN) "$$SHR" 2>/dev/null || true; fi; \
+	  elif $(SUDO) $(RM_BIN) -f "$$PRE/$(INSTALL_NAME)" "$$SHR/default.conf" "$$SHR/extra-prunes.example.conf" "$$SHR/locales/"*.sh; then \
+	    if [ -d "$$SHR/locales" ]; then $(SUDO) $(RMDIR_BIN) "$$SHR/locales" 2>/dev/null || true; fi; \
+	    if [ -d "$$SHR" ]; then $(SUDO) $(RMDIR_BIN) "$$SHR" 2>/dev/null || true; fi; \
+	  else \
+	    $(OSASCRIPT_OR_DIE); \
+	  fi; \
 	  echo "Removed."; \
 	fi
 

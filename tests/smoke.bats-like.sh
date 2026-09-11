@@ -88,6 +88,28 @@ assert_output_contains "$EXPECTED_VERSION" \
     "--version shows version number" \
     bash "$TM_EXCLUSIONS" --version
 
+# ---- Makefile version target (#43) ----
+echo ""
+echo "--- Makefile version target ---"
+
+assert_exit_code 0 \
+    "make version exits 0" \
+    make -C "$SCRIPT_DIR" --no-print-directory version
+
+TESTS_RUN=$((TESTS_RUN + 1))
+MAKE_VERSION_OUT="$(make -C "$SCRIPT_DIR" --no-print-directory version 2>&1)"
+if [ "$MAKE_VERSION_OUT" = "$EXPECTED_VERSION" ]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b make version prints only the version string\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b make version output was %s (expected %s)\n' "$RED" "$NC" "$MAKE_VERSION_OUT" "$EXPECTED_VERSION"
+fi
+
+assert_output_contains "version" \
+    "make help lists version target" \
+    make -C "$SCRIPT_DIR" --no-print-directory help
+
 # ---- Invalid arguments ----
 echo ""
 echo "--- Invalid argument handling ---"
@@ -399,7 +421,7 @@ CONF="${SCRIPT_DIR}/config/default.conf"
 # Active rules (path/pattern/prune lines, ignoring comments).
 # Floor is pinned to the documented baseline so silent regressions fail CI.
 # Bump this constant when intentionally growing the catalog.
-MIN_ACTIVE_RULES=102
+MIN_ACTIVE_RULES=116
 RULE_COUNT=$(grep -cE '^(path|pattern|prune)\|' "${CONF}" || true)
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ "${RULE_COUNT}" -ge "${MIN_ACTIVE_RULES}" ]]; then
@@ -459,6 +481,217 @@ else
     TESTS_FAILED=$((TESTS_FAILED + 1))
     printf '%b  FAIL%b default.conf has %d rule(s) outside any #@ category\n' "$RED" "$NC" "${ORPHAN_COUNT}"
 fi
+
+# ---- Backup cache prune zones (#25) ----
+echo ""
+echo "--- Backup cache prune zones (#25) ---"
+
+# Shipped default.conf must list the package-manager .bak/.old prune zones.
+# Quoted heredoc keeps the literal $HOME prefix used in config/default.conf.
+while IFS= read -r bak_target; do
+    [[ -z "$bak_target" ]] && continue
+    TESTS_RUN=$((TESTS_RUN + 1))
+    if grep -qF "prune|${bak_target}|" "${CONF}"; then
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        printf '%b  PASS%b default.conf prunes %s\n' "$GREEN" "$NC" "${bak_target}"
+    else
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        printf '%b  FAIL%b default.conf missing prune for %s\n' "$RED" "$NC" "${bak_target}"
+    fi
+done <<'EOF'
+$HOME/.bun.bak
+$HOME/.bun.old
+$HOME/.npm.bak
+$HOME/.npm.old
+$HOME/.yarn.bak
+$HOME/.yarn.old
+$HOME/.pnpm-store.bak
+$HOME/.pnpm-store.old
+$HOME/.cargo.bak
+$HOME/.cargo.old
+EOF
+
+BAK_HOME="$(mktemp -d)"
+# Reproduce the real-world noise: ~/.bun.bak/install/cache/<pkg>/dist
+mkdir -p "${BAK_HOME}/.bun.bak/install/cache/pkg/dist"
+mkdir -p "${BAK_HOME}/.npm.bak/foo/node_modules"
+mkdir -p "${BAK_HOME}/.yarn.bak/cache/node_modules"
+mkdir -p "${BAK_HOME}/.bun.old/install/cache/pkg/dist"
+# Control: a non-catalog .bak tree must still be scanned.
+mkdir -p "${BAK_HOME}/.unrelated.bak/pkg/dist"
+# Control: a normal project tree must still be excluded.
+mkdir -p "${BAK_HOME}/Git/proj/node_modules"
+
+BAK_OUT="$(env HOME="${BAK_HOME}" \
+                TM_EXCLUSIONS_DEFAULT_CONF="${CONF}" \
+                bash "$TM_EXCLUSIONS" --dry-run 2>&1 || true)"
+
+# Nested dist under .bun.bak must be pruned, not applied as an exclusion.
+BAK_BUN_APPLY=$(printf '%s\n' "${BAK_OUT}" | grep -cE "(Applying exclusion:|Already excluded:).*\.bun\.bak/" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${BAK_BUN_APPLY}" -eq 0 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b ~/.bun.bak nested matches are not excluded\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b ~/.bun.bak should not emit exclusions, got %d\n' "$RED" "$NC" "${BAK_BUN_APPLY}"
+fi
+
+BAK_BUN_PRUNE=$(printf '%s\n' "${BAK_OUT}" | grep -cE "Pruning \(skipping scan of\):.*\.bun\.bak/" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${BAK_BUN_PRUNE}" -ge 1 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b ~/.bun.bak nested matches emit prune skip\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b expected prune skip under ~/.bun.bak\n' "$RED" "$NC"
+fi
+
+BAK_NPM_APPLY=$(printf '%s\n' "${BAK_OUT}" | grep -cE "(Applying exclusion:|Already excluded:).*\.npm\.bak/" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${BAK_NPM_APPLY}" -eq 0 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b ~/.npm.bak nested matches are not excluded\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b ~/.npm.bak should not emit exclusions, got %d\n' "$RED" "$NC" "${BAK_NPM_APPLY}"
+fi
+
+BAK_YARN_APPLY=$(printf '%s\n' "${BAK_OUT}" | grep -cE "(Applying exclusion:|Already excluded:).*\.yarn\.bak/" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${BAK_YARN_APPLY}" -eq 0 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b ~/.yarn.bak nested matches are not excluded\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b ~/.yarn.bak should not emit exclusions, got %d\n' "$RED" "$NC" "${BAK_YARN_APPLY}"
+fi
+
+BAK_OLD_APPLY=$(printf '%s\n' "${BAK_OUT}" | grep -cE "(Applying exclusion:|Already excluded:).*\.bun\.old/" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${BAK_OLD_APPLY}" -eq 0 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b ~/.bun.old nested matches are not excluded\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b ~/.bun.old should not emit exclusions, got %d\n' "$RED" "$NC" "${BAK_OLD_APPLY}"
+fi
+
+# Non-catalog .unrelated.bak must still receive the dist exclusion.
+UNRELATED_HITS=$(printf '%s\n' "${BAK_OUT}" | grep -cE "(Applying exclusion:|Already excluded:).*\.unrelated\.bak/pkg/dist$" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${UNRELATED_HITS}" -eq 1 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b non-catalog ~/.unrelated.bak/pkg/dist is still excluded\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b expected 1 exclusion for ~/.unrelated.bak/pkg/dist, got %d\n' "$RED" "$NC" "${UNRELATED_HITS}"
+fi
+
+PROJ_HITS=$(printf '%s\n' "${BAK_OUT}" | grep -cE "(Applying exclusion:|Already excluded:).*Git/proj/node_modules$" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${PROJ_HITS}" -eq 1 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b normal Git/proj/node_modules is still excluded\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b expected 1 exclusion for Git/proj/node_modules, got %d\n' "$RED" "$NC" "${PROJ_HITS}"
+fi
+
+rm -rf "${BAK_HOME}"
+
+# ---- Granular CoreSimulator subdirs (#54) ----
+echo ""
+echo "--- CoreSimulator subdirs (#54) ---"
+
+# Do not exclude the HOME parent tree.
+# Literal $HOME in the catalog (not expanded); [$] matches a dollar sign.
+CSIM_PARENT_COUNT=$(grep -cE '^path\|[$]HOME/Library/Developer/CoreSimulator\|' "${CONF}" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${CSIM_PARENT_COUNT}" -eq 0 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b default.conf does not exclude HOME CoreSimulator parent\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b default.conf still excludes HOME CoreSimulator parent\n' "$RED" "$NC"
+fi
+
+CSIM_MISSING=""
+for sub in Caches Temp Volumes Devices; do
+    if ! grep -qE "^path\\|[$]HOME/Library/Developer/CoreSimulator/${sub}\\|" "${CONF}"; then
+        CSIM_MISSING="${CSIM_MISSING} ${sub}"
+    fi
+done
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ -z "${CSIM_MISSING}" ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b default.conf excludes CoreSimulator Caches/Temp/Volumes/Devices\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b default.conf missing CoreSimulator subdir(s):%s\n' "$RED" "$NC" "${CSIM_MISSING}"
+fi
+
+CSIM_SYSTEM_COUNT=$(grep -cE '^path\|/Library/Developer/CoreSimulator\|' "${CONF}" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${CSIM_SYSTEM_COUNT}" -eq 1 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b default.conf still excludes system /Library/Developer/CoreSimulator\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b default.conf system CoreSimulator rule count is %d (expected 1)\n' "$RED" "$NC" "${CSIM_SYSTEM_COUNT}"
+fi
+
+# Upgrade: a leftover parent tmutil exclusion must be dropped (Copilot #54).
+MIG_HOME="$(mktemp -d)"
+mkdir -p "${MIG_HOME}/Library/Developer/CoreSimulator"
+MIG_BIN="$(mktemp -d)"
+cat > "${MIG_BIN}/tmutil" << 'EOF'
+#!/bin/sh
+cmd=$1
+path=$2
+parent="${HOME}/Library/Developer/CoreSimulator"
+if [ "$cmd" = isexcluded ]; then
+    if [ "${TMUTIL_STUB_EXCLUDE_PARENT:-}" = 1 ] && [ "$path" = "$parent" ]; then
+        printf '%s [Excluded]\n' "$path"
+    else
+        printf '%s [Included]\n' "$path"
+    fi
+    exit 0
+fi
+exit 0
+EOF
+chmod +x "${MIG_BIN}/tmutil"
+MIG_CONF="${MIG_HOME}/empty.conf"
+: > "${MIG_CONF}"
+
+MIG_OUT="$(env HOME="${MIG_HOME}" PATH="${MIG_BIN}:${PATH}" \
+                TMUTIL_STUB_EXCLUDE_PARENT=1 \
+                TM_EXCLUSIONS_DEFAULT_CONF="${MIG_CONF}" \
+                bash "$TM_EXCLUSIONS" --dry-run 2>&1 || true)"
+MIG_HITS=$(printf '%s\n' "${MIG_OUT}" | grep -cF "WOULD_REMOVE ${MIG_HOME}/Library/Developer/CoreSimulator" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${MIG_HITS}" -eq 1 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b dry-run drops retired CoreSimulator parent exclusion\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b expected 1 WOULD_REMOVE for retired CoreSimulator parent, got %d\n' "$RED" "$NC" "${MIG_HITS}"
+fi
+
+MIG_CTRL="$(env HOME="${MIG_HOME}" PATH="${MIG_BIN}:${PATH}" \
+                 TMUTIL_STUB_EXCLUDE_PARENT=0 \
+                 TM_EXCLUSIONS_DEFAULT_CONF="${MIG_CONF}" \
+                 bash "$TM_EXCLUSIONS" --dry-run 2>&1 || true)"
+MIG_CTRL_HITS=$(printf '%s\n' "${MIG_CTRL}" | grep -cF "WOULD_REMOVE ${MIG_HOME}/Library/Developer/CoreSimulator" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${MIG_CTRL_HITS}" -eq 0 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b dry-run is silent when CoreSimulator parent is not excluded\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b did not expect WOULD_REMOVE when parent is not excluded, got %d\n' "$RED" "$NC" "${MIG_CTRL_HITS}"
+fi
+rm -rf "${MIG_HOME}" "${MIG_BIN}"
 
 # ---- Prefix-prune of redundant child exclusions (#23) ----
 echo ""
@@ -714,22 +947,44 @@ rm -rf "${EXTRA_HOME}"
 echo ""
 echo "--- Locale loading (#16) ---"
 
-# Test: TM_EXCLUSIONS_LOCALES_DIR=/nonexistent causes non-zero exit with clear error
+# TM_EXCLUSIONS_LOCALES_DIR is deliberately ignored when running as root, so that
+# `sudo -E` cannot make the script source an attacker-controlled locale file
+# (see resolve_locales_dir). The expected outcome therefore depends on the EUID.
 LOCALE_MISSING_STDERR="$(env TM_EXCLUSIONS_LOCALES_DIR=/nonexistent \
     bash "$TM_EXCLUSIONS" --lang en --help 2>&1 1>/dev/null || true)"
-TESTS_RUN=$((TESTS_RUN + 1))
 LOCALE_EXIT=0
 env TM_EXCLUSIONS_LOCALES_DIR=/nonexistent bash "$TM_EXCLUSIONS" --lang en --help >/dev/null 2>&1 || LOCALE_EXIT=$?
-if [[ "${LOCALE_EXIT}" -ne 0 ]]; then
-    TESTS_PASSED=$((TESTS_PASSED + 1))
-    printf '%b  PASS%b TM_EXCLUSIONS_LOCALES_DIR=/nonexistent exits non-zero\n' "$GREEN" "$NC"
+
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${EUID}" -eq 0 ]]; then
+    # As root: the override must be ignored and the bundled locales used instead.
+    if [[ "${LOCALE_EXIT}" -eq 0 ]]; then
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        printf '%b  PASS%b TM_EXCLUSIONS_LOCALES_DIR is ignored when running as root\n' "$GREEN" "$NC"
+    else
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        printf '%b  FAIL%b TM_EXCLUSIONS_LOCALES_DIR should be ignored as root (exit: %s)\n' "$RED" "$NC" "${LOCALE_EXIT}"
+    fi
 else
-    TESTS_FAILED=$((TESTS_FAILED + 1))
-    printf '%b  FAIL%b TM_EXCLUSIONS_LOCALES_DIR=/nonexistent should exit non-zero\n' "$RED" "$NC"
+    if [[ "${LOCALE_EXIT}" -ne 0 ]]; then
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        printf '%b  PASS%b TM_EXCLUSIONS_LOCALES_DIR=/nonexistent exits non-zero\n' "$GREEN" "$NC"
+    else
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        printf '%b  FAIL%b TM_EXCLUSIONS_LOCALES_DIR=/nonexistent should exit non-zero\n' "$RED" "$NC"
+    fi
 fi
 
 TESTS_RUN=$((TESTS_RUN + 1))
-if printf '%s\n' "${LOCALE_MISSING_STDERR}" | grep -q "locale files not found"; then
+if [[ "${EUID}" -eq 0 ]]; then
+    if [[ -z "${LOCALE_MISSING_STDERR}" ]]; then
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        printf '%b  PASS%b ignored override as root produces no locale error\n' "$GREEN" "$NC"
+    else
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        printf '%b  FAIL%b ignored override as root should be silent (got: %s)\n' "$RED" "$NC" "${LOCALE_MISSING_STDERR}"
+    fi
+elif printf '%s\n' "${LOCALE_MISSING_STDERR}" | grep -q "locale files not found"; then
     TESTS_PASSED=$((TESTS_PASSED + 1))
     printf '%b  PASS%b missing locales dir prints clear error to stderr\n' "$GREEN" "$NC"
 else
@@ -754,6 +1009,60 @@ assert_exit_code 0 \
 assert_output_contains "Utilisation" \
     "TM_EXCLUSIONS_LOCALES_DIR env-var override loads French locale" \
     env TM_EXCLUSIONS_LOCALES_DIR="${REPO_LOCALES_DIR}" bash "$TM_EXCLUSIONS" --lang fr --help
+# ---- Auto-prune .bak / .old shadow copies (#25) ----
+echo ""
+echo "--- Auto-prune .bak/.old shadow copies (#25) ---"
+
+BAK_HOME="$(mktemp -d "${TEST_HOME}/bak-test.XXXXXX")"
+# Fake catalog tool directory and its .bak shadow copy with a matchable sub-path
+mkdir -p "${BAK_HOME}/.faketool"
+mkdir -p "${BAK_HOME}/.faketool.bak/install/cache/dist"
+# An unrelated .bak tree that has NO matching catalog path|~/random entry
+mkdir -p "${BAK_HOME}/random.bak/some/dist"
+BAK_CONF="${BAK_HOME}/bak-test.conf"
+cat > "${BAK_CONF}" << EOF
+path|${BAK_HOME}/.faketool|Fake tool directory
+pattern|dist|dist directories
+EOF
+
+BAK_OUT="$(env HOME="${BAK_HOME}" \
+               TM_EXCLUSIONS_DEFAULT_CONF="${BAK_CONF}" \
+               bash "$TM_EXCLUSIONS" --dry-run 2>&1 || true)"
+
+# Test A (positive): .faketool itself must be processed as a static path
+BAK_STATIC_HITS=$(printf '%s\n' "${BAK_OUT}" | grep -cE "(Applying exclusion:|Already excluded:|DRY-RUN.*Applying exclusion:|\[DRY-RUN\]).*\.faketool$" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${BAK_STATIC_HITS}" -ge 1 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b .faketool static path is processed\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b .faketool static path was not processed (got %d hits)\n' "$RED" "$NC" "${BAK_STATIC_HITS}"
+fi
+
+# Test B (negative): .faketool.bak/install/cache/dist must NOT appear as an exclusion
+BAK_SHADOW_HITS=$(printf '%s\n' "${BAK_OUT}" | grep -cE "(Applying exclusion:|Already excluded:).*\.faketool\.bak" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${BAK_SHADOW_HITS}" -eq 0 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b .faketool.bak shadow copy is pruned (not excluded)\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b .faketool.bak shadow copy was excluded (%d hit(s))\n' "$RED" "$NC" "${BAK_SHADOW_HITS}"
+fi
+
+# Test C: random.bak/some/dist (no catalog entry for ~/random) IS processed normally
+BAK_RANDOM_HITS=$(printf '%s\n' "${BAK_OUT}" | grep -cE "(Applying exclusion:|Already excluded:).*random\.bak/some/dist$" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${BAK_RANDOM_HITS}" -ge 1 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b random.bak (no catalog entry) is still scanned normally\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b random.bak should be scanned normally (got %d hits)\n' "$RED" "$NC" "${BAK_RANDOM_HITS}"
+fi
+
+rm -rf "${BAK_HOME}"
 
 # ---- Summary ----
 test_summary

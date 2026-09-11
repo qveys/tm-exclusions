@@ -60,4 +60,5 @@ declare_i18n_fr() {
     MSG_PATH_NOT_FOUND="Chemin introuvable, ignoré :"
     MSG_PRUNE_SKIP="Élagage (scan ignoré pour) :"
     MSG_SKIP_PRIVILEGED="Ignoré (non interactif / pas de cache sudo) pour chemin système :"
+    MSG_RETIRED_EXCLUSION="Suppression d'une exclusion retirée :"
 }
