@@ -33,15 +33,23 @@ SUDO := $(shell \
   if [ -n "$$prefix_ok" ] && [ -n "$$share_ok" ]; then echo ''; \
   else echo 'sudo'; fi)
 
+# Guard: install paths are embedded in shell source as single-quoted literals,
+# so a path containing a single quote would silently mangle the destination.
+# Checked at make level: by the time the shell sees it, the quoting is broken.
+QUOTE := '
+CHECK_QUOTES = $(if $(findstring $(QUOTE),$(CURDIR)$(PREFIX)$(SHARE_DIR)),\
+  $(error Paths containing a single quote are not supported: $(CURDIR) $(PREFIX) $(SHARE_DIR)))
+
 # Shell snippet: request macOS admin (Authorization Services), else print fallback.
-# Expects $$cmd (POSIX command string, absolute paths). Bypasses sudoers whitelist.
+# Expects $$cmd (POSIX command string, absolute paths, single-quoted arguments).
+# Bypasses sudoers whitelist.
 OSASCRIPT_OR_DIE = \
 	echo "Requesting administrator privileges..."; \
 	quoted=$$(printf '%s' "$$cmd" | sed 's/\\/\\\\/g; s/"/\\"/g'); \
 	if command -v osascript >/dev/null 2>&1 && osascript -e "do shell script \"$$quoted\" with administrator privileges"; then \
 	  :; \
 	else \
-	  echo "Error: could not modify $(PREFIX) (privilege elevation failed)." >&2; \
+	  echo "Error: could not modify $$PRE (privilege elevation failed)." >&2; \
 	  echo "Try:  make install PREFIX=\"\$$(brew --prefix)/bin\"" >&2; \
 	  echo "  or: brew install --formula ./Formula/tm-exclusions.rb" >&2; \
 	  exit 1; \
@@ -100,13 +108,17 @@ lint: ## Run ShellCheck on all shell scripts
 
 install: setup ## Install tm-exclusions to PREFIX (Homebrew bin if writable, else /usr/local/bin)
 	@echo "Installing $(INSTALL_NAME) to $(PREFIX)..."
-	@cmd='install -d "$(SHARE_DIR)" && install -m 755 "$(CURDIR)/$(SCRIPT)" "$(PREFIX)/$(INSTALL_NAME)" && install -m 644 "$(CURDIR)/config/default.conf" "$(SHARE_DIR)/default.conf" && install -m 644 "$(CURDIR)/config/extra-prunes.example.conf" "$(SHARE_DIR)/extra-prunes.example.conf"'; \
+	@$(CHECK_QUOTES)CUR='$(CURDIR)'; PRE='$(PREFIX)'; SHR='$(SHARE_DIR)'; \
+	cmd="$(INSTALL_BIN) -d '$$SHR' '$$PRE' && $(INSTALL_BIN) -m 755 '$$CUR/$(SCRIPT)' '$$PRE/$(INSTALL_NAME)' && $(INSTALL_BIN) -m 644 '$$CUR/config/default.conf' '$$SHR/default.conf' && $(INSTALL_BIN) -m 644 '$$CUR/config/extra-prunes.example.conf' '$$SHR/extra-prunes.example.conf'"; \
 	if [ -z "$(SUDO)" ]; then \
-	  sh -c "$$cmd"; \
-	elif $(SUDO) $(INSTALL_BIN) -d "$(SHARE_DIR)" \
-	  && $(SUDO) $(INSTALL_BIN) -m 755 "$(CURDIR)/$(SCRIPT)" "$(PREFIX)/$(INSTALL_NAME)" \
-	  && $(SUDO) $(INSTALL_BIN) -m 644 "$(CURDIR)/config/default.conf" "$(SHARE_DIR)/default.conf" \
-	  && $(SUDO) $(INSTALL_BIN) -m 644 "$(CURDIR)/config/extra-prunes.example.conf" "$(SHARE_DIR)/extra-prunes.example.conf"; then \
+	  $(INSTALL_BIN) -d "$$SHR" "$$PRE" \
+	  && $(INSTALL_BIN) -m 755 "$$CUR/$(SCRIPT)" "$$PRE/$(INSTALL_NAME)" \
+	  && $(INSTALL_BIN) -m 644 "$$CUR/config/default.conf" "$$SHR/default.conf" \
+	  && $(INSTALL_BIN) -m 644 "$$CUR/config/extra-prunes.example.conf" "$$SHR/extra-prunes.example.conf"; \
+	elif $(SUDO) $(INSTALL_BIN) -d "$$SHR" "$$PRE" \
+	  && $(SUDO) $(INSTALL_BIN) -m 755 "$$CUR/$(SCRIPT)" "$$PRE/$(INSTALL_NAME)" \
+	  && $(SUDO) $(INSTALL_BIN) -m 644 "$$CUR/config/default.conf" "$$SHR/default.conf" \
+	  && $(SUDO) $(INSTALL_BIN) -m 644 "$$CUR/config/extra-prunes.example.conf" "$$SHR/extra-prunes.example.conf"; then \
 	  :; \
 	else \
 	  $(OSASCRIPT_OR_DIE); \
@@ -114,15 +126,17 @@ install: setup ## Install tm-exclusions to PREFIX (Homebrew bin if writable, els
 	@echo "Installed. Run '$(INSTALL_NAME) --help' to get started."
 
 uninstall: ## Remove tm-exclusions from PREFIX
-	@if [ ! -f "$(PREFIX)/$(INSTALL_NAME)" ] && [ ! -f "$(SHARE_DIR)/default.conf" ]; then \
+	@$(CHECK_QUOTES)PRE='$(PREFIX)'; SHR='$(SHARE_DIR)'; \
+	if [ ! -f "$$PRE/$(INSTALL_NAME)" ] && [ ! -f "$$SHR/default.conf" ]; then \
 	  echo "$(INSTALL_NAME) is not installed. Nothing to remove."; \
 	else \
-	  echo "Removing $(INSTALL_NAME) from $(PREFIX)..."; \
-	  cmd='$(RM_BIN) -f "$(PREFIX)/$(INSTALL_NAME)" "$(SHARE_DIR)/default.conf" "$(SHARE_DIR)/extra-prunes.example.conf"; if [ -d "$(SHARE_DIR)" ]; then $(RMDIR_BIN) "$(SHARE_DIR)" 2>/dev/null || true; fi'; \
+	  echo "Removing $(INSTALL_NAME) from $$PRE..."; \
+	  cmd="$(RM_BIN) -f '$$PRE/$(INSTALL_NAME)' '$$SHR/default.conf' '$$SHR/extra-prunes.example.conf' || exit \$$?; if [ -d '$$SHR' ]; then $(RMDIR_BIN) '$$SHR' 2>/dev/null || true; fi"; \
 	  if [ -z "$(SUDO)" ]; then \
-	    sh -c "$$cmd"; \
-	  elif $(SUDO) $(RM_BIN) -f "$(PREFIX)/$(INSTALL_NAME)" "$(SHARE_DIR)/default.conf" "$(SHARE_DIR)/extra-prunes.example.conf"; then \
-	    if [ -d "$(SHARE_DIR)" ]; then $(SUDO) $(RMDIR_BIN) "$(SHARE_DIR)" 2>/dev/null || true; fi; \
+	    $(RM_BIN) -f "$$PRE/$(INSTALL_NAME)" "$$SHR/default.conf" "$$SHR/extra-prunes.example.conf" || exit $$?; \
+	    if [ -d "$$SHR" ]; then $(RMDIR_BIN) "$$SHR" 2>/dev/null || true; fi; \
+	  elif $(SUDO) $(RM_BIN) -f "$$PRE/$(INSTALL_NAME)" "$$SHR/default.conf" "$$SHR/extra-prunes.example.conf"; then \
+	    if [ -d "$$SHR" ]; then $(SUDO) $(RMDIR_BIN) "$$SHR" 2>/dev/null || true; fi; \
 	  else \
 	    $(OSASCRIPT_OR_DIE); \
 	  fi; \
