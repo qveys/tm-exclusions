@@ -317,7 +317,8 @@ launchctl load ~/Library/LaunchAgents/com.tm-exclusions.weekly.plist
 ## 🔎 Current behavior notes
 
 - In non-interactive runs without cached/passwordless sudo (`sudo -n`), system paths are skipped (no blocking prompt).
-- `--uninstall` removes exclusions matching current configured static rules, dynamic matches, and discovered extra paths.
+- `--uninstall` removes exclusions matching current configured static rules, dynamic matches, and discovered extra paths. It also drops retired catalog paths that are still excluded (today: the former `$HOME/Library/Developer/CoreSimulator` parent).
+- Apply and `--dry-run` drop that same retired parent exclusion when `tmutil` still has it, then add the granular CoreSimulator subdirs. Manual equivalent: `tmutil removeexclusion "$HOME/Library/Developer/CoreSimulator"`.
 - Dynamic scan depth is intentionally capped to `find -maxdepth 6`.
 - Report output always prints to stdout, including with `--quiet`.
 - On non-macOS or without `tmutil`, behavior is simulated (useful for tests).

@@ -217,6 +217,8 @@ Uncomment them in your installed `default.conf` if you have specific use cases.
 
 `$HOME/Library/Developer/CoreSimulator` is **not** excluded as a parent tree. The default catalog targets `Caches`, `Temp`, `Volumes`, and `Devices` so root-level simulator metadata stays in backups. To keep device containers in Time Machine while still excluding caches, comment out the `Devices` line in a local catalog copy (or point `TM_EXCLUSIONS_DEFAULT_CONF` at that copy) — `custom.conf` is additive and cannot drop a default rule. `/Library/Developer/CoreSimulator` remains a whole-tree exclusion (system runtimes, not user device metadata).
 
+Upgrades from a catalog that excluded the HOME parent: apply, `--dry-run`, and `--uninstall` call `tmutil removeexclusion` on `$HOME/Library/Developer/CoreSimulator` when that path is still excluded. Manual equivalent: `tmutil removeexclusion "$HOME/Library/Developer/CoreSimulator"`. Commenting out `Devices` does not undo an already-applied parent exclusion.
+
 ### Cloud-sync prunes
 
 Pruning `$HOME/Dropbox`, `$HOME/Google Drive`, `$HOME/OneDrive` is **not** part of the default config — those directories typically contain non-regenerable user data, and pruning them at scan time risks masking caches/build artifacts that should be excluded. An opt-in mechanism is available via `TM_EXCLUSIONS_EXTRA_CONF` (see [#17](https://github.com/qveys/tm-exclusions/issues/17)); point it at a copy of the example file to activate cloud-sync prunes.
