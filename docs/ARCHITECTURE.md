@@ -29,6 +29,9 @@ main()
 Configuration is loaded and merged in this order:
 1. **Default rules** — resolved by `resolve_default_conf()`: if **`TM_EXCLUSIONS_DEFAULT_CONF`** is set, its value is used as the rules file path and resolution stops (absolute path recommended; relative paths are passed through as-is). Otherwise, fallback checks in order: repo-relative `config/default.conf`, `../share/tm-exclusions/default.conf` beside the installed binary, `/usr/local/share/tm-exclusions/default.conf`, `/opt/homebrew/share/tm-exclusions/default.conf`, `/usr/share/tm-exclusions/default.conf`.
 2. `~/.config/tm_exclusions/custom.conf` — user-defined rules
+3. (optional) `$TM_EXCLUSIONS_EXTRA_CONF` — additional additive config file
+
+After all three config files are parsed, `derive_bak_old_prunes()` runs a one-time pass over `CONF_PATHS`. For every static `path|<P>` rule, it automatically appends `<P>.bak` and `<P>.old` to `CONF_PRUNES` (if not already present). This means common shadow copies produced by tool reinstalls or migrations (e.g. `.bun.bak`, `.npm.bak`, `.cargo.bak`) are silently skipped during the dynamic scan without requiring explicit catalog entries. Only `path|` entries trigger auto-derivation — `pattern|` and `prune|` entries are not processed. The auto-derived prune entries only affect `is_pruned()` / `scan_dynamic_patterns()`; `apply_static_paths()` is unchanged and will never call `tmutil addexclusion` on `.bak`/`.old` paths (which may not exist on most machines).
 
 Strings for **en** / **fr** are embedded in `tm_exclusions.sh` (not external locale files); see **`docs/I18N.md`**.
 
@@ -72,6 +75,8 @@ Prune entries prevent the scanner from processing found directories under certai
 
 Prune does NOT apply a Time Machine exclusion. It only filters the dynamic scan results. Within `scan_dynamic_patterns()`, the prune check (`is_pruned`) runs after `pattern_match_allowed` validation but before the prefix-prune (`is_covered_by_kept`). Paths under a prune zone emit a `MSG_PRUNE_SKIP` log message; paths pruned by prefix are dropped silently.
 
+Package-manager reinstalls often leave a sibling of a catalogued cache (e.g. `~/.bun.bak` next to `~/.bun`). Those trees are not covered by the live-path prune (`~/.bun` does not match `~/.bun.bak`), so the default catalog ships explicit prune zones for `.bak` / `.old` siblings of `.bun`, `.npm`, `.yarn`, `.pnpm-store`, and `.cargo` ([#25](https://github.com/qveys/tm-exclusions/issues/25)). This stops the `dist` / `node_modules` scan from emitting one exclusion per nested package without excluding the backup directory from Time Machine.
+
 ## Exclusion Application Strategy
 
 For each path to exclude:
@@ -89,6 +94,13 @@ Paths **outside `$HOME`** (for example `/Applications`) use **`sudo tmutil … -
 All `tmutil` interaction goes through wrapper functions (`tm_is_excluded`, `tm_add_exclusion`, `tm_remove_exclusion`). On non-macOS systems or when `tmutil` is absent, these functions simulate behavior (always report "not excluded," no-op on add/remove). This allows the tool to run its scan and config logic anywhere for testing.
 
 A background **sudo credential refresh** loop may start when a privileged path is processed, mirroring long interactive runs.
+
+### Cleanup and Signal Traps
+
+The tool traps `EXIT`, `INT` (SIGINT), `TERM` (SIGTERM), and `HUP` (SIGHUP) via `cleanup()` and `on_signal()`:
+- **Temporary file tracking**: All temporary files created during dynamic scanning and disk inspection (`mktemp`) are registered in `TMP_FILES` and removed on normal completion or when receiving an interruption signal.
+- **Sudo keepalive**: The background `sudo -n -v` keepalive loop is automatically terminated on exit or signal to prevent orphan background processes.
+- **Signal propagation**: On trapped signals, cleanup executes and the signal is re-delivered to the process to preserve standard POSIX exit status.
 
 ### Note on Time Machine UI
 
@@ -118,6 +130,8 @@ After processing all paths, a human-readable report is printed and saved to `~/.
 
 Before normal runs (default apply, `--dry-run`, `--report-only`, `--uninstall`) and before `--add` / `--list` / `--edit`, the tool ensures `~/.config/tm_exclusions/` exists and creates **`custom.conf`** from the same template as `--init` if the file is missing. This matches legacy “auto init” behavior.
 
+When editing the config via `--edit`, `$EDITOR` (default: `vi`) is parsed into an argument array without `eval`, properly supporting multi-word commands (e.g. `code --wait`, `subl -w`, `nano -B`).
+
 ## Discovered extra paths (`collect_post_scan_paths`)
 
 Immediately after **`load_config()`** (and before static paths / dynamic scan), the tool builds **`EXTRA_PATHS`**:
@@ -139,13 +153,21 @@ Uninstall is idempotent: removing a non-excluded path is a no-op.
 
 ## Language Detection / Override
 
-1. If `--lang <code>` is passed, use that language.
-2. Otherwise, check the `LANG` environment variable (e.g., `fr_FR.UTF-8` → French).
+1. If `--lang en` or `--lang fr` is passed, use that language.
+2. Otherwise, check locale env vars (`LC_ALL`, `LC_MESSAGES`, `LC_CTYPE`, then `LANG`).
 3. Default to English.
 
-Supported languages: English (`en`), French (`fr`).
+Supported languages: English (`en`), French (`fr`). Unsupported `--lang` values
+are not used to build `locales/<code>.sh` paths; i18n falls back to English so
+`parse_args` can report `MSG_ERROR_INVALID_LANG` instead of a missing-file error.
 
-i18n is implemented as shell functions (`declare_i18n_en`, `declare_i18n_fr`) that set global message variables. Language detection runs before argument parsing to ensure error messages are localized.
+i18n strings live in external files `locales/en.sh` and `locales/fr.sh`; the
+matching `declare_i18n_<lang>` function is called after the file is sourced
+(`load_i18n`). The `locales/` directory is located by `resolve_locales_dir()` —
+via the `TM_EXCLUSIONS_LOCALES_DIR` env var (non-root), the source-checkout or
+installed layouts relative to the script, or absolute Homebrew/system share
+roots. Language detection runs before argument parsing to ensure error messages
+are localized.
 
 ## Testing Strategy
 
@@ -174,7 +196,7 @@ The current architecture (config-driven, function-based) supports these addition
 
 ## Default rule catalog
 
-`config/default.conf` ships approximately 104 rules organized in 17 categories. Categories use `#@CategoryName` markers — cosmetic in 1.x (treated as comments by the loader), forward-compatible with the category-aware report grouping tracked in [#34](https://github.com/qveys/tm-exclusions/issues/34).
+`config/default.conf` ships approximately 117 rules organized in 17 categories. Categories use `#@CategoryName` markers — cosmetic in 1.x (treated as comments by the loader), forward-compatible with the category-aware report grouping tracked in [#34](https://github.com/qveys/tm-exclusions/issues/34).
 
 | # | Category | Section(s) | Sample entries |
 |---|---|---|---|
@@ -187,14 +209,14 @@ The current architecture (config-driven, function-based) supports these addition
 | 7 | Java / JVM | path + pattern | `$HOME/.m2/repository`, `$HOME/.gradle/caches`, `.gradle` |
 | 8 | Go | path | `$HOME/go/pkg/mod`, `$HOME/.cache/go-build` |
 | 9 | Ruby / iOS | path + pattern | `$HOME/.rbenv/versions`, `$HOME/.cocoapods`, `Pods` |
-| 10 | Xcode / Apple Dev Tools | path | `$HOME/Library/Developer/Xcode/DerivedData`, `…/CoreSimulator` |
+| 10 | Xcode / Apple Dev Tools | path | `$HOME/Library/Developer/Xcode/DerivedData`, `…/CoreSimulator/{Caches,Temp,Volumes,Devices}` |
 | 11 | macOS Caches | path | `$HOME/Library/Caches`, `$HOME/Library/Logs`, `/private/var/folders` |
 | 12 | Dev Tools | path | `$HOME/.terraform.d/plugin-cache`, IDE extensions and caches |
 | 13 | AI / LLM | path | `$HOME/.cache/huggingface`, `$HOME/.ollama/models`, Claude VM bundles |
 | 14 | App Support | path (opt-in) | Application Support entries for Cursor, JetBrains, Zed, … (commented out — see Opt-in entries) |
 | 15 | Claude Code / Codex | pattern | `.auto-claude`, `.codex`, `worktrees` |
 | 16 | Generic caches | pattern (opt-in) | `.cache` (commented out — uncomment to enable) |
-| 17 | Prune zones | prune | `$HOME/Library`, `$HOME/.Trash`, `$HOME/.nvm`, … |
+| 17 | Prune zones | prune | `$HOME/Library`, `$HOME/.Trash`, `$HOME/.nvm`, `$HOME/.bun.bak`, … |
 
 ### Path style
 
@@ -210,6 +232,12 @@ Several entries ship commented out:
 
 Uncomment them in your installed `default.conf` if you have specific use cases.
 
+### CoreSimulator subtrees
+
+`$HOME/Library/Developer/CoreSimulator` is **not** excluded as a parent tree. The default catalog targets `Caches`, `Temp`, `Volumes`, and `Devices` so root-level simulator metadata stays in backups. To keep device containers in Time Machine while still excluding caches, comment out the `Devices` line in a local catalog copy (or point `TM_EXCLUSIONS_DEFAULT_CONF` at that copy) — `custom.conf` is additive and cannot drop a default rule. `/Library/Developer/CoreSimulator` remains a whole-tree exclusion (system runtimes, not user device metadata).
+
+Upgrades from a catalog that excluded the HOME parent: apply, `--dry-run`, and `--uninstall` call `tmutil removeexclusion` on `$HOME/Library/Developer/CoreSimulator` when that path is still excluded. Manual equivalent: `tmutil removeexclusion "$HOME/Library/Developer/CoreSimulator"`. Commenting out `Devices` does not undo an already-applied parent exclusion.
+
 ### Cloud-sync prunes
 
 Pruning `$HOME/Dropbox`, `$HOME/Google Drive`, `$HOME/OneDrive` is **not** part of the default config — those directories typically contain non-regenerable user data, and pruning them at scan time risks masking caches/build artifacts that should be excluded. An opt-in mechanism is available via `TM_EXCLUSIONS_EXTRA_CONF` (see [#17](https://github.com/qveys/tm-exclusions/issues/17)); point it at a copy of the example file to activate cloud-sync prunes.
@@ -219,18 +247,19 @@ The example file (`extra-prunes.example.conf`) ships in three locations dependin
 | Installation | Location |
 |---|---|
 | Source checkout | `config/extra-prunes.example.conf` (repo root) |
-| `make install` | `${SHARE_DIR}/extra-prunes.example.conf` (default: `/usr/local/share/tm-exclusions/`) |
+| `make install` | `${SHARE_DIR}/extra-prunes.example.conf` (`SHARE_DIR` follows `PREFIX`: Homebrew share if writable, else `/usr/local/share/tm-exclusions/`) |
 | `brew install tm-exclusions` | `$(brew --prefix)/share/tm-exclusions/extra-prunes.example.conf` |
 
 The `TM_EXCLUSIONS_EXTRA_CONF` loader requires the value to be **both a regular file (`-f`) and readable (`-r`)**. A directory path, a missing path, or an unreadable path all trigger a stderr warning and continue; no silent no-op occurs.
 
 ### Catalog invariants
 
-The smoke test suite (`tests/smoke.bats-like.sh`) guards five invariants:
-- ≥ 104 active rules (path/pattern/prune lines).
+The smoke test suite (`tests/smoke.bats-like.sh`) guards these catalog invariants:
+- ≥ 117 active rules (path/pattern/prune lines).
 - Exactly 17 distinct `#@` category labels.
 - Three section banners present (`# ── STATIC EXCLUSIONS (path) ──`, `# ── DYNAMIC SCAN PATTERNS (pattern) ──`, `# ── SCAN PRUNE ZONES (prune) ──`); the smoke test matches them by prefix.
 - No rule uses the `~/` home prefix (must be `$HOME/`).
 - Every rule sits under a `#@` marker.
+- HOME CoreSimulator is split into `Caches` / `Temp` / `Volumes` / `Devices` (no parent-tree rule); `/Library/Developer/CoreSimulator` stays whole-tree.
 
 Adjusting the taxonomy therefore forces a coordinated update of the docs and the test thresholds.

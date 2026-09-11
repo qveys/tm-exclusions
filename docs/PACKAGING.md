@@ -6,10 +6,15 @@ Default layout (see `Makefile`):
 
 | Artifact | Path |
 |----------|------|
-| CLI | `$(PREFIX)/tm-exclusions` (default `PREFIX=/usr/local/bin`) |
+| CLI | `$(PREFIX)/tm-exclusions` — `PREFIX` defaults to `$(brew --prefix)/bin` when that directory is writable, otherwise `/usr/local/bin` |
 | Built-in rules | `$(SHARE_DIR)/default.conf` with `SHARE_DIR` = `$(abspath $(PREFIX)/../share/tm-exclusions)` |
+| Locale strings | `$(SHARE_DIR)/locales/en.sh` and `$(SHARE_DIR)/locales/fr.sh` |
+
+`make install` / `make uninstall` never wrap the payload in `sudo sh -c` (sudoers often allows `sudo -v` but not `/bin/sh -c …`). Elevation order: write as the current user when `PREFIX` and `SHARE_DIR` are writable; else `sudo /usr/bin/install` (or `/bin/rm`) per file; else a macOS admin dialog via `osascript` (`do shell script … with administrator privileges`). Override with `PREFIX=…`, `SUDO=` (skip elevation), or `SUDO=sudo` (force).
 
 `tm_exclusions.sh` resolves the default rules via `resolve_default_conf()`: optional **`TM_EXCLUSIONS_DEFAULT_CONF`** override first; else `config/default.conf` (repo), `../share/tm-exclusions/default.conf` (next to the binary), then `/usr/local/share/tm-exclusions/default.conf`, `/opt/homebrew/share/tm-exclusions/default.conf`, and `/usr/share/tm-exclusions/default.conf`.
+
+Locale files are resolved by `resolve_locales_dir()`: **`TM_EXCLUSIONS_LOCALES_DIR`** when set (ignored under `EUID` 0, so `sudo -E` cannot redirect a `source`d path); else `<script_dir>/locales/` (repo checkout), `<script_dir>/../share/tm-exclusions/locales/` (next to the binary), then the `/usr/local`, `/opt/homebrew` and `/usr` share roots. There is no embedded fallback: a missing locale file is a fatal error.
 
 ## Homebrew
 

@@ -10,8 +10,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/qveys/tm-exclusions/actions/workflows/tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/qveys/tm-exclusions/tests.yml?style=flat-square&label=tests" alt="Tests"/></a>
-  <a href="https://github.com/qveys/tm-exclusions/actions/workflows/shellcheck.yml"><img src="https://img.shields.io/github/actions/workflow/status/qveys/tm-exclusions/shellcheck.yml?style=flat-square&label=shellcheck" alt="ShellCheck"/></a>
+  <a href="https://github.com/qveys/tm-exclusions/actions/workflows/ci.yml"><img src="https://img.shields.io/github/check-runs/qveys/tm-exclusions/master?style=flat-square&nameFilter=Smoke%20tests&label=tests" alt="Tests"/></a>
+  <a href="https://github.com/qveys/tm-exclusions/actions/workflows/ci.yml"><img src="https://img.shields.io/github/check-runs/qveys/tm-exclusions/master?style=flat-square&nameFilter=ShellCheck&label=shellcheck" alt="ShellCheck"/></a>
   <img src="https://img.shields.io/badge/bash-3.2%2B-green?style=flat-square&logo=gnubash&logoColor=white" alt="Bash 3.2+"/>
   <img src="https://img.shields.io/badge/macOS-compatible-black?style=flat-square&logo=apple&logoColor=white" alt="macOS"/>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/qveys/tm-exclusions?style=flat-square" alt="License"/></a>
@@ -54,7 +54,7 @@ Optional environment variables (see **`docs/ARCHITECTURE.md`**): `TM_EXCLUSIONS_
 
 | | Feature | Details |
 |---|---|---|
-| 📦 | **Built-in rules** | ~104 rules across 17 categories (Node.js, Python, Rust, Java, Xcode, AI/LLM, Docker, Homebrew, …) |
+| 📦 | **Built-in rules** | ~117 rules across 17 categories (Node.js, Python, Rust, Java, Xcode, AI/LLM, Docker, Homebrew, …) |
 | 🔍 | **Dynamic scan** | Recursively finds `node_modules`, `.venv`, `__pycache__`, build dirs |
 | 🔒 | **Dual tmutil strategy** | User paths via `tmutil addexclusion`; system paths via `sudo tmutil ... -p` |
 | 🌍 | **Multilingual** | French / English (auto-detected from `$LANG`) |
@@ -78,6 +78,7 @@ brew install tm-exclusions
 git clone https://github.com/qveys/tm-exclusions.git
 cd tm-exclusions
 make install
+# PREFIX = Homebrew bin if writable, else /usr/local/bin (macOS admin prompt if needed)
 # Or run directly: bash tm_exclusions.sh --dry-run
 ```
 
@@ -118,14 +119,14 @@ Config files are loaded, merged, then applied via a dual `tmutil` strategy (user
 | ☕ **Java / JVM** | Maven, Gradle, Ivy, SBT, Coursier caches; dynamic `.gradle` |
 | 🐹 **Go** | Go module cache, build cache |
 | 💎 **Ruby / iOS** | rbenv, RVM, gems, CocoaPods repo; dynamic `Pods` |
-| 🔨 **Xcode / Apple Dev Tools** | DerivedData, Archives, iOS/watchOS/tvOS/visionOS DeviceSupport, CoreSimulator |
+| 🔨 **Xcode / Apple Dev Tools** | DerivedData, Archives, iOS/watchOS/tvOS/visionOS DeviceSupport, CoreSimulator Caches/Temp/Volumes/Devices (not the parent tree) |
 | 🗄️ **macOS Caches** | `~/Library/Caches`, `~/Library/Logs`, `/private/var/folders` |
 | 🛠️ **Dev Tools** | IDE caches (JetBrains, VS Code), Terraform, Pulumi, Helm, kubectl plugin caches |
 | 🤖 **AI / LLM** | Hugging Face, LM Studio, Ollama models, Claude Code VM bundles, SuperWhisper |
 | 🧰 **App Support** | (opt-in — see config) Application Support roots for Cursor, JetBrains, Zed, … |
 | 🤝 **Claude Code / Codex** | Dynamic `.auto-claude`, `.codex`, `worktrees` |
 | 🧼 **Generic caches** | (opt-in — see config) Pattern `.cache` |
-| 🚫 **Prune zones** | Skip-scan-only: `~/Library`, `~/.Trash`, `~/.bun`, `~/.nvm`, … |
+| 🚫 **Prune zones** | Skip-scan-only: `~/Library`, `~/.Trash`, `~/.bun`, `~/.nvm`, package-manager `.bak`/`.old` shadow copies (`.bun.bak`, `.npm.bak`, …) |
 
 </details>
 
@@ -214,10 +215,15 @@ If you have a massive cloud-sync tree (Dropbox, Google Drive, OneDrive) and want
 #    From `brew install tm-exclusions`:
 #      $(brew --prefix)/share/tm-exclusions/extra-prunes.example.conf
 #
-#    From `make install` (default PREFIX=/usr/local):
-#      /usr/local/share/tm-exclusions/extra-prunes.example.conf
+#    From `make install` (Homebrew prefix if writable, else /usr/local):
+#      $(PREFIX)/../share/tm-exclusions/extra-prunes.example.conf
+#      e.g. /opt/homebrew/share/tm-exclusions/extra-prunes.example.conf
 
-cp /usr/local/share/tm-exclusions/extra-prunes.example.conf \
+# If PREFIX isn't on PATH (e.g. a custom `make install PREFIX=...`),
+# `command -v` finds nothing and SHARE_DIR below is wrong — replace it
+# with the absolute path, e.g. SHARE_DIR="/custom/prefix/share/tm-exclusions".
+SHARE_DIR="$(dirname "$(command -v tm-exclusions)")/../share/tm-exclusions"
+cp "$SHARE_DIR/extra-prunes.example.conf" \
    ~/.config/tm_exclusions/extra.conf
 
 # 2. Uncomment the prune lines that apply to your setup (editor of your choice):
@@ -243,9 +249,11 @@ Use `--quiet` (or `-q`) for unattended execution:
 - Report is still printed to stdout (summary/report output is not suppressed)
 - Desktop report copy is **off by default** — opt in with `--desktop-report` or `TM_EXCLUSIONS_REPORT_DESKTOP=1`
 
+Both cron and launchd need the absolute install path — run `command -v tm-exclusions` and substitute it below (the example uses the Apple Silicon Homebrew path).
+
 ```bash
 # Weekly cron job
-0 3 * * 0  /usr/local/bin/tm-exclusions --quiet 2>>/tmp/tm_exclusions.err
+0 3 * * 0  /opt/homebrew/bin/tm-exclusions --quiet 2>>/tmp/tm_exclusions.err
 ```
 
 <details>
@@ -264,7 +272,7 @@ Save as `~/Library/LaunchAgents/com.tm-exclusions.weekly.plist`:
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>/usr/local/bin/tm-exclusions</string>
+    <string>/opt/homebrew/bin/tm-exclusions</string>
     <string>--quiet</string>
   </array>
   <key>StartCalendarInterval</key>
@@ -318,7 +326,8 @@ launchctl load ~/Library/LaunchAgents/com.tm-exclusions.weekly.plist
 
 - In non-interactive runs without cached/passwordless sudo (`sudo -n`), system paths are skipped (no blocking prompt). Privileged exclusions such as `/private/var/folders` use `sudo tmutil addexclusion -p` when credentials are available.
 - Report disk-usage uses `du -sk` and ignores permission-denied children, so partially-readable trees like `/private/var/folders` cannot abort a run under `set -euo pipefail`.
-- `--uninstall` removes exclusions matching current configured static rules, dynamic matches, and discovered extra paths.
+- `--uninstall` removes exclusions matching current configured static rules, dynamic matches, and discovered extra paths. It also drops retired catalog paths that are still excluded (today: the former `$HOME/Library/Developer/CoreSimulator` parent).
+- Apply and `--dry-run` drop that same retired parent exclusion when `tmutil` still has it, then add the granular CoreSimulator subdirs. Manual equivalent: `tmutil removeexclusion "$HOME/Library/Developer/CoreSimulator"`.
 - Dynamic scan depth is intentionally capped to `find -maxdepth 6`.
 - Report output always prints to stdout, including with `--quiet`.
 - On non-macOS or without `tmutil`, behavior is simulated (useful for tests).
@@ -330,7 +339,8 @@ launchctl load ~/Library/LaunchAgents/com.tm-exclusions.weekly.plist
 ```bash
 make test     # Run TAP-format smoke tests (--dry-run, no tmutil calls)
 make lint     # ShellCheck on all .sh files
-make install  # Install to /usr/local
+make version  # Print the current tm-exclusions version
+make install  # Homebrew bin if writable, else /usr/local (admin prompt if needed)
 ```
 
 ### Releasing

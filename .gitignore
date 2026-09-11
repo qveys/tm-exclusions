@@ -30,3 +30,6 @@ docs/superpowers/
 
 # Auto-claude (agent) data directory
 .auto-claude/
+
+# Graphify generated knowledge graph (rebuild with `graphify update .`)
+graphify-out/
