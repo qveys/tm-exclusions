@@ -1,4 +1,4 @@
-.PHONY: setup check-hooks help test lint install uninstall check release tag version
+.PHONY: setup check-hooks help test lint install uninstall check release tag version auto-patch
 
 SCRIPT = tm_exclusions.sh
 # Homebrew bin if writable (typical Apple Silicon), else /usr/local/bin.
@@ -198,7 +198,7 @@ release: ## Cut a release PR — make release VERSION=x.y.z  (run make tag after
 	@git add $(SCRIPT) CHANGELOG.md
 	@git commit -m "🔖 chore(release): bump to v$(VERSION)"
 	@git push -u origin release/v$(VERSION)
-	@pr_body="$$(printf 'Release v%s.\n\n### Changelog\n\n%s\n\n---\nAfter merge, push the tag to trigger the GitHub release workflow:\n```\nmake tag VERSION=%s\n```\n' "$(VERSION)" "$$unreleased_content" "$(VERSION)")"; \
+	@pr_body="$$(printf 'Release v%s.\n\n### Changelog\n\n%s\n\n---\nAfter merge, push the tag to trigger the GitHub release workflow:\n```\nmake tag VERSION=%s\n```\n' "$(VERSION)" "$$(awk '/^## v$(VERSION)$$/{found=1; next} found && /^## /{found=0} found && NF{print}' CHANGELOG.md)" "$(VERSION)")"; \
 	  printf '%s\n' "$$pr_body" | gh pr create --title "🔖 chore(release): v$(VERSION)" --body-file - --base $(BASE_BRANCH)
 
 auto-patch: ## Check or execute auto-patch PR after >=5 PRs (use DRY_RUN=1 for test only)

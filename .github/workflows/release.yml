@@ -33,6 +33,7 @@ jobs:
         with:
           app-id: ${{ secrets.HOUSEKEEPER_APP_ID || '4537342' }}
           private-key: ${{ secrets.HOUSEKEEPER_PRIVATE_KEY }}
+          permission-contents: write
         env:
           HAS_APP_KEY: ${{ secrets.HOUSEKEEPER_PRIVATE_KEY }}
 
