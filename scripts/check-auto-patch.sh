@@ -7,7 +7,7 @@
 # without creating an intermediate PR.
 #
 # Bash 3.2+ compatible (macOS stock bash).
-set -eu
+set -euo pipefail
 
 THRESHOLD="${AUTO_PATCH_THRESHOLD:-5}"
 DRY_RUN=0
@@ -47,13 +47,22 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+# Validate THRESHOLD (from --threshold or AUTO_PATCH_THRESHOLD): must be a positive integer
+case "$THRESHOLD" in
+  ''|*[!0-9]*)
+    echo "Error: threshold '$THRESHOLD' is not a positive integer" >&2
+    exit 1
+    ;;
+esac
+[ "$THRESHOLD" -gt 0 ] || { echo "Error: threshold must be greater than 0" >&2; exit 1; }
+
 # Ensure git is available
 command -v git >/dev/null 2>&1 || { echo "Error: git not found" >&2; exit 1; }
 
 # Find latest release tag
 LAST_TAG="$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || echo "")"
 if [ -z "$LAST_TAG" ]; then
-  LAST_TAG="$(git tag -l 'v*' | sort -V | tail -n1)"
+  LAST_TAG="$(git tag -l 'v*' --sort=-version:refname | head -n1)"
 fi
 
 if [ -z "$LAST_TAG" ]; then
@@ -69,8 +78,16 @@ if ! echo "$CURRENT_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
   exit 1
 fi
 
+# Skip if tm_exclusions.sh's VERSION already differs from LAST_TAG: a manual
+# release (make release) may have merged without its tag being pushed yet.
+SCRIPT_VERSION="$(sed -n 's/^readonly VERSION="\(.*\)"$/\1/p' tm_exclusions.sh)"
+if [ -n "$SCRIPT_VERSION" ] && [ "$SCRIPT_VERSION" != "$CURRENT_VERSION" ]; then
+  echo "Status: tm_exclusions.sh VERSION ($SCRIPT_VERSION) differs from last tag ($CURRENT_VERSION); a manual release may be pending. Skipping auto-patch." >&2
+  exit 0
+fi
+
 # Count merged PRs / squash commits since LAST_TAG on BASE_BRANCH
-COMMITS="$(git log "${LAST_TAG}..HEAD" --oneline)"
+COMMITS="$(git log "${LAST_TAG}..HEAD" --format=%s)"
 if [ -z "$COMMITS" ]; then
   PR_COUNT=0
 else
@@ -106,6 +123,21 @@ fi
 if [ "$DRY_RUN" -eq 1 ]; then
   echo "Dry-run: Threshold met (${PR_COUNT} >= ${THRESHOLD}). Would apply v${NEXT_PATCH} directly on ${BASE_BRANCH}, tag v${NEXT_PATCH}, and push (NO PR)."
   exit 0
+fi
+
+# Require a clean worktree with HEAD at origin/BASE_BRANCH before mutating
+# release files: refuses to publish a tag built from a feature branch or a
+# stale local master ref.
+git fetch origin "$BASE_BRANCH" --quiet
+HEAD_SHA="$(git rev-parse HEAD)"
+REMOTE_SHA="$(git rev-parse "origin/${BASE_BRANCH}")"
+if [ "$HEAD_SHA" != "$REMOTE_SHA" ]; then
+  echo "Error: HEAD (${HEAD_SHA}) is not origin/${BASE_BRANCH} (${REMOTE_SHA}). Refusing to auto-patch." >&2
+  exit 1
+fi
+if [ -n "$(git status --porcelain)" ]; then
+  echo "Error: working tree is not clean. Refusing to auto-patch." >&2
+  exit 1
 fi
 
 # Execute direct release on master without PR
@@ -148,7 +180,10 @@ if [ -z "$(git config --get user.name 2>/dev/null || true)" ]; then
   git config user.email "github-actions[bot]@users.noreply.github.com"
 fi
 
-git add tm_exclusions.sh Formula/tm-exclusions.rb CHANGELOG.md
+git add tm_exclusions.sh CHANGELOG.md
+if [ -f "Formula/tm-exclusions.rb" ]; then
+  git add Formula/tm-exclusions.rb
+fi
 git commit -m "🔖 chore(release): v${NEXT_PATCH} [auto-patch ${PR_COUNT} PRs]"
 
 # Tag directly (signed if signing key available)
