@@ -405,7 +405,7 @@ CONF="${SCRIPT_DIR}/config/default.conf"
 # Active rules (path/pattern/prune lines, ignoring comments).
 # Floor is pinned to the documented baseline so silent regressions fail CI.
 # Bump this constant when intentionally growing the catalog.
-MIN_ACTIVE_RULES=113
+MIN_ACTIVE_RULES=116
 RULE_COUNT=$(grep -cE '^(path|pattern|prune)\|' "${CONF}" || true)
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ "${RULE_COUNT}" -ge "${MIN_ACTIVE_RULES}" ]]; then
@@ -583,6 +583,99 @@ else
 fi
 
 rm -rf "${BAK_HOME}"
+
+# ---- Granular CoreSimulator subdirs (#54) ----
+echo ""
+echo "--- CoreSimulator subdirs (#54) ---"
+
+# Do not exclude the HOME parent tree.
+# Literal $HOME in the catalog (not expanded); [$] matches a dollar sign.
+CSIM_PARENT_COUNT=$(grep -cE '^path\|[$]HOME/Library/Developer/CoreSimulator\|' "${CONF}" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${CSIM_PARENT_COUNT}" -eq 0 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b default.conf does not exclude HOME CoreSimulator parent\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b default.conf still excludes HOME CoreSimulator parent\n' "$RED" "$NC"
+fi
+
+CSIM_MISSING=""
+for sub in Caches Temp Volumes Devices; do
+    if ! grep -qE "^path\\|[$]HOME/Library/Developer/CoreSimulator/${sub}\\|" "${CONF}"; then
+        CSIM_MISSING="${CSIM_MISSING} ${sub}"
+    fi
+done
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ -z "${CSIM_MISSING}" ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b default.conf excludes CoreSimulator Caches/Temp/Volumes/Devices\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b default.conf missing CoreSimulator subdir(s):%s\n' "$RED" "$NC" "${CSIM_MISSING}"
+fi
+
+CSIM_SYSTEM_COUNT=$(grep -cE '^path\|/Library/Developer/CoreSimulator\|' "${CONF}" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${CSIM_SYSTEM_COUNT}" -eq 1 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b default.conf still excludes system /Library/Developer/CoreSimulator\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b default.conf system CoreSimulator rule count is %d (expected 1)\n' "$RED" "$NC" "${CSIM_SYSTEM_COUNT}"
+fi
+
+# Upgrade: a leftover parent tmutil exclusion must be dropped (Copilot #54).
+MIG_HOME="$(mktemp -d)"
+mkdir -p "${MIG_HOME}/Library/Developer/CoreSimulator"
+MIG_BIN="$(mktemp -d)"
+cat > "${MIG_BIN}/tmutil" << 'EOF'
+#!/bin/sh
+cmd=$1
+path=$2
+parent="${HOME}/Library/Developer/CoreSimulator"
+if [ "$cmd" = isexcluded ]; then
+    if [ "${TMUTIL_STUB_EXCLUDE_PARENT:-}" = 1 ] && [ "$path" = "$parent" ]; then
+        printf '%s [Excluded]\n' "$path"
+    else
+        printf '%s [Included]\n' "$path"
+    fi
+    exit 0
+fi
+exit 0
+EOF
+chmod +x "${MIG_BIN}/tmutil"
+MIG_CONF="${MIG_HOME}/empty.conf"
+: > "${MIG_CONF}"
+
+MIG_OUT="$(env HOME="${MIG_HOME}" PATH="${MIG_BIN}:${PATH}" \
+                TMUTIL_STUB_EXCLUDE_PARENT=1 \
+                TM_EXCLUSIONS_DEFAULT_CONF="${MIG_CONF}" \
+                bash "$TM_EXCLUSIONS" --dry-run 2>&1 || true)"
+MIG_HITS=$(printf '%s\n' "${MIG_OUT}" | grep -cF "WOULD_REMOVE ${MIG_HOME}/Library/Developer/CoreSimulator" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${MIG_HITS}" -eq 1 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b dry-run drops retired CoreSimulator parent exclusion\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b expected 1 WOULD_REMOVE for retired CoreSimulator parent, got %d\n' "$RED" "$NC" "${MIG_HITS}"
+fi
+
+MIG_CTRL="$(env HOME="${MIG_HOME}" PATH="${MIG_BIN}:${PATH}" \
+                 TMUTIL_STUB_EXCLUDE_PARENT=0 \
+                 TM_EXCLUSIONS_DEFAULT_CONF="${MIG_CONF}" \
+                 bash "$TM_EXCLUSIONS" --dry-run 2>&1 || true)"
+MIG_CTRL_HITS=$(printf '%s\n' "${MIG_CTRL}" | grep -cF "WOULD_REMOVE ${MIG_HOME}/Library/Developer/CoreSimulator" || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${MIG_CTRL_HITS}" -eq 0 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b dry-run is silent when CoreSimulator parent is not excluded\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b did not expect WOULD_REMOVE when parent is not excluded, got %d\n' "$RED" "$NC" "${MIG_CTRL_HITS}"
+fi
+rm -rf "${MIG_HOME}" "${MIG_BIN}"
 
 # ---- Prefix-prune of redundant child exclusions (#23) ----
 echo ""
