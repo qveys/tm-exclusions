@@ -23,8 +23,11 @@ jobs:
 
       - name: Install ShellCheck
         run: |
-          sudo apt-get update
-          sudo apt-get install -y shellcheck
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            sudo dpkg --configure -a || true
+            sudo apt-get update
+            sudo apt-get install -y shellcheck
+          fi
 
       - name: Run ShellCheck
         run: make lint
