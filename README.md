@@ -54,7 +54,7 @@ Optional environment variables (see **`docs/ARCHITECTURE.md`**): `TM_EXCLUSIONS_
 
 | | Feature | Details |
 |---|---|---|
-| 📦 | **Built-in rules** | ~117 rules across 17 categories (Node.js, Python, Rust, Java, Xcode, AI/LLM, Docker, Homebrew, …) |
+| 📦 | **Built-in rules** | ~146 rules across 17 categories (Node.js, Python, Rust, Java, Xcode, AI/LLM, Docker, Homebrew, …) |
 | 🔍 | **Dynamic scan** | Recursively finds `node_modules`, `.venv`, `__pycache__`, build dirs |
 | 🔒 | **Dual tmutil strategy** | User paths via `tmutil addexclusion`; system paths via `sudo tmutil ... -p` |
 | 🌍 | **Multilingual** | French / English (auto-detected from `$LANG`) |
@@ -123,7 +123,7 @@ Config files are loaded, merged, then applied via a dual `tmutil` strategy (user
 | 🗄️ **macOS Caches** | `~/Library/Caches`, `~/Library/Logs`, `/private/var/folders` |
 | 🛠️ **Dev Tools** | IDE caches (JetBrains, VS Code), Terraform, Pulumi, Helm, kubectl plugin caches |
 | 🤖 **AI / LLM** | Hugging Face, LM Studio, Ollama models, Claude Code VM bundles, SuperWhisper |
-| 🧰 **App Support** | (opt-in — see config) Application Support roots for Cursor, JetBrains, Zed, … |
+| 🧰 **IDE and Dev Tool Caches** | Selective Application Support caches: Cursor workspaceStorage, JetBrains plugins, Zed languages, Discord Cache, … |
 | 🤝 **Claude Code / Codex** | Dynamic `.auto-claude`, `.codex`, `worktrees` |
 | 🧼 **Generic caches** | (opt-in — see config) Pattern `.cache` |
 | 🚫 **Prune zones** | Skip-scan-only: `~/Library`, `~/.Trash`, `~/.bun`, `~/.nvm`, package-manager `.bak`/`.old` shadow copies (`.bun.bak`, `.npm.bak`, …) |
@@ -186,7 +186,7 @@ setting|desktop_report|true
 
 | Type | Effect |
 |---|---|
-| `path` | 🎯 Static exclusion → `tmutil addexclusion` |
+| `path` | 🎯 Static exclusion → `tmutil addexclusion` (targets may include `*` `?` `[` globs, expanded at load time) |
 | `pattern` | 🔍 Directory name matched by `find -name` during scan |
 | `prune` | ✂️ Path ignored by scan (no TM exclusion applied) |
 | `setting` | ⚙️ Preference (`report_path`, `desktop_report`); not a Time Machine rule |
