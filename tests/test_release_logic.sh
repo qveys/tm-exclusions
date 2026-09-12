@@ -7,7 +7,8 @@
 #   3. Local formula existence check — exits 1 with an error message when the file is absent
 #   4. Formula copy step — `install -m 644` fully replaces the tap formula with the repo copy
 #   5. sed patches — url / sha256 / version lines are rewritten correctly after the copy
-#   6. HOMEBREW_TOKEN guard — empty token causes an early exit 0 (skip)
+#   6. HOMEBREW_TOKEN guard — a missing token fails the step (exit 1 + ::error::),
+#      asserted both on a copy of the snippet and on release.yml itself
 #   7. Regression — a stale install stanza in the tap is overwritten by the full copy
 #   9. Formula coherence — the real Formula/tm-exclusions.rb has url, sha256 and version
 #      describing the same tarball (a version-only bump by release tooling is a bug)
@@ -412,7 +413,10 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 6. HOMEBREW_TOKEN guard — empty token exits 0 with skip message
+# 6. HOMEBREW_TOKEN guard — a missing token must fail the run, not skip silently
+#
+# An `exit 0` here makes the whole Release run green while the tap keeps serving
+# the previous version, which is exactly how v1.3.0 shipped without a tap bump.
 # ---------------------------------------------------------------------------
 echo ""
 echo "--- HOMEBREW_TOKEN guard ---"
@@ -420,47 +424,66 @@ echo "--- HOMEBREW_TOKEN guard ---"
 TESTS_RUN=$((TESTS_RUN + 1))
 _rc=0
 _out="$(bash -c '
+    TAG="v9.9.9"
     HOMEBREW_TOKEN=""
     if [ -z "${HOMEBREW_TOKEN:-}" ]; then
-        echo "HOMEBREW_TOKEN not set; skipping tap bump."
-        exit 0
+        echo "::error::HOMEBREW_TOKEN (or RELEASE_TOKEN) is not set — the tap was NOT updated for ${TAG}. Add the secret, then re-run: Actions -> Release -> Run workflow -> tag: ${TAG}."
+        exit 1
     fi
     echo "token was set"
-    exit 1
 ' 2>&1)" || _rc=$?
-if [[ "$_rc" -eq 0 ]]; then
+if [[ "$_rc" -eq 1 ]]; then
     TESTS_PASSED=$((TESTS_PASSED + 1))
-    printf "%b  PASS%b Empty HOMEBREW_TOKEN causes early exit 0\n" "$GREEN" "$NC"
+    printf "%b  PASS%b Empty HOMEBREW_TOKEN fails the step (exit 1)\n" "$GREEN" "$NC"
 else
     TESTS_FAILED=$((TESTS_FAILED + 1))
-    printf "%b  FAIL%b Empty HOMEBREW_TOKEN causes early exit 0 (exit %d)\n" "$RED" "$NC" "$_rc"
+    printf "%b  FAIL%b Empty HOMEBREW_TOKEN fails the step (expected exit 1, got %d)\n" "$RED" "$NC" "$_rc"
 fi
 
 TESTS_RUN=$((TESTS_RUN + 1))
-if echo "$_out" | grep -q "skipping tap bump"; then
+if echo "$_out" | grep -q "::error::" &&
+   echo "$_out" | grep -q "HOMEBREW_TOKEN" &&
+   echo "$_out" | grep -q "the tap was NOT updated for v9.9.9"; then
     TESTS_PASSED=$((TESTS_PASSED + 1))
-    printf "%b  PASS%b Skip message is printed when HOMEBREW_TOKEN is empty\n" "$GREEN" "$NC"
+    printf "%b  PASS%b Missing token emits an ::error:: annotation naming the tag\n" "$GREEN" "$NC"
 else
     TESTS_FAILED=$((TESTS_FAILED + 1))
-    printf "%b  FAIL%b Skip message is printed when HOMEBREW_TOKEN is empty (output: '%s')\n" "$RED" "$NC" "$_out"
+    printf "%b  FAIL%b Missing token emits an ::error:: annotation naming the tag (output: '%s')\n" "$RED" "$NC" "$_out"
+fi
+
+# The snippets above are copies; assert the real workflow still matches them, so the
+# guard cannot silently drift back to `exit 0` while these tests stay green.
+TESTS_RUN=$((TESTS_RUN + 1))
+WORKFLOW="${SCRIPT_DIR}/.github/workflows/release.yml"
+# Comment lines are stripped: the guard's own comment mentions "exit 0" on purpose.
+# The sed pattern matches the literal shell text in the workflow, hence single quotes.
+# shellcheck disable=SC2016
+_guard="$(sed -n '/if \[ -z "\${HOMEBREW_TOKEN:-}" \]; then/,/^ *fi$/p' "$WORKFLOW" | grep -v '^[[:space:]]*#')"
+if [[ -n "$_guard" ]] && echo "$_guard" | grep -q "exit 1" && ! echo "$_guard" | grep -q "exit 0"; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf "%b  PASS%b release.yml token guard exits non-zero, never 0\n" "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf "%b  FAIL%b release.yml token guard exits non-zero, never 0 (guard: '%s')\n" "$RED" "$NC" "$_guard"
 fi
 
 TESTS_RUN=$((TESTS_RUN + 1))
 _rc2=0
 _out2="$(bash -c '
+    TAG="v9.9.9"
     HOMEBREW_TOKEN="secret_token"
     if [ -z "${HOMEBREW_TOKEN:-}" ]; then
-        echo "HOMEBREW_TOKEN not set; skipping tap bump."
-        exit 0
+        echo "::error::HOMEBREW_TOKEN (or RELEASE_TOKEN) is not set — the tap was NOT updated for ${TAG}."
+        exit 1
     fi
     echo "token present"
 ' 2>&1)" || _rc2=$?
 if echo "$_out2" | grep -q "token present" && [[ "$_rc2" -eq 0 ]]; then
     TESTS_PASSED=$((TESTS_PASSED + 1))
-    printf "%b  PASS%b Non-empty HOMEBREW_TOKEN does not trigger skip\n" "$GREEN" "$NC"
+    printf "%b  PASS%b Non-empty HOMEBREW_TOKEN proceeds to the tap bump\n" "$GREEN" "$NC"
 else
     TESTS_FAILED=$((TESTS_FAILED + 1))
-    printf "%b  FAIL%b Non-empty HOMEBREW_TOKEN does not trigger skip (output: '%s')\n" "$RED" "$NC" "$_out2"
+    printf "%b  FAIL%b Non-empty HOMEBREW_TOKEN proceeds to the tap bump (output: '%s')\n" "$RED" "$NC" "$_out2"
 fi
 
 # ---------------------------------------------------------------------------
