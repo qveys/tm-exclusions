@@ -1533,7 +1533,7 @@ for as_path in \
     "${AS_HOME}/Library/Application Support/Antigravity IDE/GPUCache"
 do
     TESTS_RUN=$((TESTS_RUN + 1))
-    if printf '%s\n' "${AS_OUT}" | grep -Fq "WOULD ${as_path}"; then
+    if grep -Fq "WOULD ${as_path}" <<< "${AS_OUT}"; then
         TESTS_PASSED=$((TESTS_PASSED + 1))
         printf '%b  PASS%b dry-run would exclude %s\n' "$GREEN" "$NC" "${as_path#"${AS_HOME}"/}"
     else
@@ -1556,7 +1556,7 @@ for as_keep in \
     "${AS_HOME}/Library/Application Support/Antigravity IDE"
 do
     TESTS_RUN=$((TESTS_RUN + 1))
-    if printf '%s\n' "${AS_OUT}" | grep -Fqx "WOULD ${as_keep}"; then
+    if grep -Fqx "WOULD ${as_keep}" <<< "${AS_OUT}"; then
         TESTS_FAILED=$((TESTS_FAILED + 1))
         printf '%b  FAIL%b must not exclude settings/parent path %s\n' "$RED" "$NC" "${as_keep#"${AS_HOME}"/}"
     else
