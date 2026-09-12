@@ -999,6 +999,284 @@ fi
 
 rm -rf "${EXTRA_HOME}"
 
+# ---- Report destination settings (#52) ----
+echo ""
+echo "--- setting|report_path / desktop_report (#52) ---"
+
+REPSET_HOME="$(mktemp -d "${TEST_HOME}/report-setting.XXXXXX")"
+REPSET_DEFAULT="${REPSET_HOME}/default.conf"
+cat > "${REPSET_DEFAULT}" << 'EOF'
+path|/tmp/tm_exclusions_report_setting_path|smoke report setting
+EOF
+mkdir -p "${REPSET_HOME}/.config/tm_exclusions" "${REPSET_HOME}/Desktop" "${REPSET_HOME}/Documents"
+
+# Primary report file from config (tilde expansion)
+cat > "${REPSET_HOME}/.config/tm_exclusions/custom.conf" << 'EOF'
+setting|report_path|~/Documents/from-config.txt
+EOF
+
+assert_exit_code 0 \
+    "setting|report_path dry-run exits 0" \
+    env -u TM_EXCLUSIONS_REPORT -u TM_EXCLUSIONS_EXTRA_CONF \
+        HOME="${REPSET_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
+        bash "$TM_EXCLUSIONS" --dry-run
+
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ -f "${REPSET_HOME}/Documents/from-config.txt" ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b setting|report_path writes configured file\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b setting|report_path did not write ~/Documents/from-config.txt\n' "$RED" "$NC"
+fi
+
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ -f "${REPSET_HOME}/.config/tm_exclusions/last_report.txt" ]]; then
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b setting|report_path should not write the built-in last_report.txt\n' "$RED" "$NC"
+else
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b setting|report_path does not write built-in last_report.txt\n' "$GREEN" "$NC"
+fi
+
+# $HOME expansion in report_path value
+cat > "${REPSET_HOME}/.config/tm_exclusions/custom.conf" << 'EOF'
+setting|report_path|$HOME/Documents/from-home-token.txt
+EOF
+assert_exit_code 0 \
+    "setting|report_path with \$HOME token exits 0" \
+    env -u TM_EXCLUSIONS_REPORT -u TM_EXCLUSIONS_EXTRA_CONF \
+        HOME="${REPSET_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
+        bash "$TM_EXCLUSIONS" --dry-run
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ -f "${REPSET_HOME}/Documents/from-home-token.txt" ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf "%b  PASS%b setting|report_path expands \$HOME in value\n" "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf "%b  FAIL%b setting|report_path \$HOME expansion missing file\n" "$RED" "$NC"
+fi
+
+# Env TM_EXCLUSIONS_REPORT overrides config report_path
+ENV_REPORT="${REPSET_HOME}/from-env.txt"
+rm -f "${REPSET_HOME}/Documents/from-config.txt"
+cat > "${REPSET_HOME}/.config/tm_exclusions/custom.conf" << 'EOF'
+setting|report_path|~/Documents/from-config.txt
+EOF
+assert_exit_code 0 \
+    "TM_EXCLUSIONS_REPORT overrides setting|report_path" \
+    env HOME="${REPSET_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
+        TM_EXCLUSIONS_REPORT="${ENV_REPORT}" \
+        bash "$TM_EXCLUSIONS" --dry-run
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ -f "${ENV_REPORT}" && ! -f "${REPSET_HOME}/Documents/from-config.txt" ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b TM_EXCLUSIONS_REPORT overrides setting|report_path\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b env report override: env=%s config=%s\n' "$RED" "$NC" \
+        "$( [[ -f "${ENV_REPORT}" ]] && echo yes || echo no )" \
+        "$( [[ -f "${REPSET_HOME}/Documents/from-config.txt" ]] && echo yes || echo no )"
+fi
+
+# desktop_report true without CLI/env
+DESK_COPY="${REPSET_HOME}/Desktop/tm-exclusions_last_report.txt"
+rm -f "${DESK_COPY}"
+cat > "${REPSET_HOME}/.config/tm_exclusions/custom.conf" << 'EOF'
+setting|desktop_report|true
+EOF
+assert_exit_code 0 \
+    "setting|desktop_report|true dry-run exits 0" \
+    env -u TM_EXCLUSIONS_REPORT -u TM_EXCLUSIONS_EXTRA_CONF -u TM_EXCLUSIONS_REPORT_DESKTOP \
+        HOME="${REPSET_HOME}" \
+        TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
+        bash "$TM_EXCLUSIONS" --dry-run
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ -f "${DESK_COPY}" ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b setting|desktop_report|true writes Desktop copy\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b setting|desktop_report|true Desktop copy missing\n' "$RED" "$NC"
+fi
+
+# Env 0 overrides config true
+rm -f "${DESK_COPY}"
+assert_exit_code 0 \
+    "TM_EXCLUSIONS_REPORT_DESKTOP=0 overrides setting|desktop_report|true" \
+    env HOME="${REPSET_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
+        TM_EXCLUSIONS_REPORT_DESKTOP=0 \
+        bash "$TM_EXCLUSIONS" --dry-run
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ -f "${DESK_COPY}" ]]; then
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b env=0 should suppress Desktop copy from config\n' "$RED" "$NC"
+else
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b TM_EXCLUSIONS_REPORT_DESKTOP=0 overrides config desktop_report\n' "$GREEN" "$NC"
+fi
+
+# CLI flag overrides config false
+cat > "${REPSET_HOME}/.config/tm_exclusions/custom.conf" << 'EOF'
+setting|desktop_report|false
+EOF
+rm -f "${DESK_COPY}"
+assert_exit_code 0 \
+    "--desktop-report overrides setting|desktop_report|false" \
+    env -u TM_EXCLUSIONS_REPORT -u TM_EXCLUSIONS_EXTRA_CONF -u TM_EXCLUSIONS_REPORT_DESKTOP \
+        HOME="${REPSET_HOME}" \
+        TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
+        bash "$TM_EXCLUSIONS" --desktop-report --dry-run
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ -f "${DESK_COPY}" ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b --desktop-report overrides setting|desktop_report|false\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b CLI --desktop-report should write Desktop copy\n' "$RED" "$NC"
+fi
+
+# Extra conf setting last-wins over custom.conf
+cat > "${REPSET_HOME}/.config/tm_exclusions/custom.conf" << 'EOF'
+setting|desktop_report|true
+EOF
+EXTRA_SET="${REPSET_HOME}/extra.conf"
+cat > "${EXTRA_SET}" << 'EOF'
+setting|desktop_report|false
+EOF
+rm -f "${DESK_COPY}"
+assert_exit_code 0 \
+    "later extra conf setting|desktop_report|false wins" \
+    env -u TM_EXCLUSIONS_REPORT -u TM_EXCLUSIONS_REPORT_DESKTOP HOME="${REPSET_HOME}" \
+        TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
+        TM_EXCLUSIONS_EXTRA_CONF="${EXTRA_SET}" \
+        bash "$TM_EXCLUSIONS" --dry-run
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ -f "${DESK_COPY}" ]]; then
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b extra conf desktop_report false should win over custom.conf true\n' "$RED" "$NC"
+else
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b extra conf setting last-wins over custom.conf\n' "$GREEN" "$NC"
+fi
+
+# Report write failures warn without claiming success
+: > "${REPSET_HOME}/blocked"
+cat > "${REPSET_HOME}/.config/tm_exclusions/custom.conf" << 'EOF'
+setting|report_path|~/blocked/report.txt
+EOF
+WRITE_FAIL_OUT="${REPSET_HOME}/write-fail.out"
+WRITE_FAIL_ERR="${REPSET_HOME}/write-fail.err"
+TESTS_RUN=$((TESTS_RUN + 1))
+if env -u TM_EXCLUSIONS_REPORT -u TM_EXCLUSIONS_EXTRA_CONF HOME="${REPSET_HOME}" \
+    TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
+    bash "$TM_EXCLUSIONS" --dry-run > "${WRITE_FAIL_OUT}" 2> "${WRITE_FAIL_ERR}"; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b setting|report_path write failure exits 0\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b setting|report_path write failure exits non-zero\n' "$RED" "$NC"
+fi
+TESTS_RUN=$((TESTS_RUN + 1))
+if grep -q "Could not save report to: ${REPSET_HOME}/blocked/report.txt" "${WRITE_FAIL_ERR}" \
+    && ! grep -q "Report saved to: ${REPSET_HOME}/blocked/report.txt" "${WRITE_FAIL_OUT}"; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b report write failure warns without success log\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b report write failure should warn and skip success log\n' "$RED" "$NC"
+fi
+
+# Two-field `setting|report_path` (no value) must not treat the key as a relative path
+cat > "${REPSET_HOME}/.config/tm_exclusions/custom.conf" << 'EOF'
+setting|report_path
+EOF
+rm -f "${REPSET_HOME}/.config/tm_exclusions/last_report.txt" "${REPSET_HOME}/report_path"
+MISSING_FIELD_ERR="${REPSET_HOME}/missing-field.err"
+assert_exit_code 0 \
+    "setting|report_path without value exits 0" \
+    env -u TM_EXCLUSIONS_REPORT -u TM_EXCLUSIONS_EXTRA_CONF \
+        HOME="${REPSET_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
+        bash "$TM_EXCLUSIONS" --dry-run
+env -u TM_EXCLUSIONS_REPORT -u TM_EXCLUSIONS_EXTRA_CONF \
+    HOME="${REPSET_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
+    bash "$TM_EXCLUSIONS" --dry-run >/dev/null 2>"${MISSING_FIELD_ERR}" || true
+TESTS_RUN=$((TESTS_RUN + 1))
+if grep -q "Empty report_path setting" "${MISSING_FIELD_ERR}" \
+    && [[ -f "${REPSET_HOME}/.config/tm_exclusions/last_report.txt" ]] \
+    && [[ ! -e "${REPSET_HOME}/report_path" ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b setting|report_path without value warns and keeps default report\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b setting|report_path without value should warn and ignore\n' "$RED" "$NC"
+fi
+
+# Empty third field
+cat > "${REPSET_HOME}/.config/tm_exclusions/custom.conf" << 'EOF'
+setting|report_path|
+EOF
+assert_output_contains "Empty report_path setting" \
+    "setting|report_path| empty value warns" \
+    env -u TM_EXCLUSIONS_REPORT -u TM_EXCLUSIONS_EXTRA_CONF \
+        HOME="${REPSET_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
+        bash "$TM_EXCLUSIONS" --dry-run
+
+# Invalid desktop_report value is ignored
+rm -f "${DESK_COPY}"
+cat > "${REPSET_HOME}/.config/tm_exclusions/custom.conf" << 'EOF'
+setting|desktop_report|maybe
+EOF
+assert_output_contains "Invalid desktop_report value" \
+    "setting|desktop_report|maybe warns" \
+    env -u TM_EXCLUSIONS_REPORT -u TM_EXCLUSIONS_EXTRA_CONF -u TM_EXCLUSIONS_REPORT_DESKTOP \
+        HOME="${REPSET_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
+        bash "$TM_EXCLUSIONS" --dry-run
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ -f "${DESK_COPY}" ]]; then
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b invalid desktop_report should not write Desktop copy\n' "$RED" "$NC"
+else
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b invalid desktop_report does not enable Desktop copy\n' "$GREEN" "$NC"
+fi
+
+# Unknown setting warns, still exits 0
+cat > "${REPSET_HOME}/.config/tm_exclusions/custom.conf" << 'EOF'
+setting|not_a_real_key|zzz
+EOF
+assert_exit_code 0 \
+    "unknown setting key exits 0" \
+    env HOME="${REPSET_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
+        bash "$TM_EXCLUSIONS" --dry-run
+assert_output_contains "Unknown setting" \
+    "unknown setting key warns" \
+    env HOME="${REPSET_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
+        bash "$TM_EXCLUSIONS" --dry-run
+
+assert_output_contains "setting (report_path, desktop_report)" \
+    "--help mentions setting config type" \
+    env HOME="${REPSET_HOME}" bash "$TM_EXCLUSIONS" --help
+
+cat > "${REPSET_HOME}/.config/tm_exclusions/custom.conf" << 'EOF'
+setting|report_path
+EOF
+assert_output_contains "report_path vide" \
+    "--lang fr localizes empty report_path warning" \
+    env -u TM_EXCLUSIONS_REPORT -u TM_EXCLUSIONS_EXTRA_CONF \
+        HOME="${REPSET_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
+        bash "$TM_EXCLUSIONS" --lang fr --dry-run
+
+# --list shows setting lines
+cat > "${REPSET_HOME}/.config/tm_exclusions/custom.conf" << 'EOF'
+setting|report_path|~/Documents/from-config.txt
+EOF
+assert_output_contains "setting|report_path" \
+    "--list shows setting|report_path line" \
+    env HOME="${REPSET_HOME}" bash "$TM_EXCLUSIONS" --list
+
+rm -rf "${REPSET_HOME}"
+
 # ---- Locale loading (#16) ----
 echo ""
 echo "--- Locale loading (#16) ---"

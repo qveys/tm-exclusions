@@ -35,9 +35,9 @@ After all three config files are parsed, `derive_bak_old_prunes()` runs a one-ti
 
 Strings for **en** / **fr** are embedded in `tm_exclusions.sh` (not external locale files); see **`docs/I18N.md`**.
 
-Later entries are appended; there is no override or deduplication. Both files use the same `type|target|reason` format.
+Later **rule** entries (`path` / `pattern` / `prune`) are appended; there is no override or deduplication. **`setting`** lines are last-wins (a later file or later line replaces the earlier value for that key). Both files use the same `type|target|reason` format.
 
-Targets may use leading `~` (expanded to `$HOME`) or the literal substring `$HOME` (expanded at parse time).
+Targets may use leading `~` (expanded to `$HOME`) or the literal substring `$HOME` (expanded at parse time). For `setting|report_path|<file>`, those expansions apply to the **value** (third field).
 
 ## Config Entry Types
 
@@ -46,6 +46,7 @@ Targets may use leading `~` (expanded to `$HOME`) or the literal substring `$HOM
 | `path` | Static exclusion: apply `tmutil addexclusion` to exact expanded path |
 | `pattern` | Dynamic scan: `find $HOME -maxdepth 6 -type d -name <pattern>` and exclude matches |
 | `prune` | Scan skip: paths under this prefix are ignored during dynamic pattern scanning (not excluded from backup) |
+| `setting` | Preference, not a Time Machine rule. Keys: `report_path` (saved report **file** path) and `desktop_report` (`true`/`1`/`yes` or `false`/`0`/`no`). Unknown keys and invalid `desktop_report` values warn on stderr and are ignored. |
 
 ## Scan Logic
 
@@ -108,7 +109,7 @@ Some exclusions applied via `tmutil addexclusion` (user-level "sticky" exclusion
 
 ## Report Generation
 
-After processing all paths, a human-readable report is printed and saved to `~/.config/tm_exclusions/last_report.txt` by default. The report includes:
+After processing all paths, a human-readable report is printed and saved. The default file is `~/.config/tm_exclusions/last_report.txt`. The report includes:
 - Hostname, user, program version, timestamp, and mode
 - Counts: checked, newly excluded, already excluded, skipped, errors
 - **Inventory** (optional): `/Applications` item count, Homebrew formula/cask counts when `brew` exists, PATH directory stats. Set **`TM_EXCLUSIONS_SKIP_INVENTORY=1`** to skip this block (faster smoke/CI; `brew list` can be slow).
@@ -116,15 +117,18 @@ After processing all paths, a human-readable report is printed and saved to `~/.
 - Per-path detail lines
 - When `tmutil` is available: an excerpt of **`tmutil listexclusions`** (first 500 lines)
 
-**Report path overrides**
+**Report path overrides** (precedence: CLI > environment > config `setting` > built-in default)
 
-| Variable | Effect |
-|----------|--------|
-| `TM_EXCLUSIONS_REPORT` | Absolute or relative path for the saved report file instead of `~/.config/tm_exclusions/last_report.txt` |
-| `TM_EXCLUSIONS_REPORT_DESKTOP=1` | Also write `~/Desktop/tm-exclusions_last_report.txt` (opt-in; equivalent to `--desktop-report`) |
+| Source | Effect |
+|--------|--------|
+| `setting\|report_path\|<file>` in config | Persistent primary report **file** path (`~` / `$HOME` expanded). Chosen over `report_dir` because `TM_EXCLUSIONS_REPORT` is already a file path, not a directory. |
+| `TM_EXCLUSIONS_REPORT` | Absolute or relative path for the saved report file; overrides `setting\|report_path` |
+| `setting\|desktop_report\|true` | Persistent opt-in for the Desktop copy at `~/Desktop/tm-exclusions_last_report.txt` |
+| `--desktop-report` | CLI flag: always enables the Desktop copy (no `--no-desktop-report`) |
+| `TM_EXCLUSIONS_REPORT_DESKTOP` | When **set**, overrides config: `1` enables the Desktop copy, any other value (including `0`) disables it |
 | `TM_EXCLUSIONS_DEBUG_FIFO` | If set to a path, append the same `log_info` lines to **FD 5**. For a **named FIFO**, the script opens **read+write** (`exec 5<>`) so `open` does not block waiting for another process; regular files use append-only open. |
 
-**Desktop report policy**: the Desktop copy is **off by default**. Enabling it on every run would clutter the user's Desktop during unattended cron/launchd executions. Opt in with the `--desktop-report` CLI flag or `TM_EXCLUSIONS_REPORT_DESKTOP=1` environment variable; both are equivalent.
+**Desktop report policy**: the Desktop copy is **off by default**. Enabling it on every run would clutter the user's Desktop during unattended cron/launchd executions. Opt in with `--desktop-report`, `TM_EXCLUSIONS_REPORT_DESKTOP=1`, or `setting|desktop_report|true` in `custom.conf`.
 
 ## First-run custom config
 

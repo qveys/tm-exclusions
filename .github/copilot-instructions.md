@@ -30,7 +30,7 @@
 
 ## Config format
 - Config files use `type|target|reason` format.
-- Supported types: `path`, `pattern`, `prune`.
+- Supported types: `path`, `pattern`, `prune`, and `setting` (preferences: `report_path`, `desktop_report`; not Time Machine rules).
 - Lines starting with `#` are comments.
 
 ## Commit message convention

@@ -180,6 +180,8 @@ The script loads two config files in order:
 path|$HOME/.deno|Deno cache — reinstallable
 pattern|.gradle|Gradle project cache
 prune|$HOME/VMs
+setting|report_path|~/Documents/tm-exclusions-last.txt
+setting|desktop_report|true
 ```
 
 | Type | Effect |
@@ -187,6 +189,29 @@ prune|$HOME/VMs
 | `path` | 🎯 Static exclusion → `tmutil addexclusion` |
 | `pattern` | 🔍 Directory name matched by `find -name` during scan |
 | `prune` | ✂️ Path ignored by scan (no TM exclusion applied) |
+| `setting` | ⚙️ Preference (`report_path`, `desktop_report`); not a Time Machine rule |
+
+### Report destination preference
+
+Put these in `~/.config/tm_exclusions/custom.conf` so launchd/cron runs pick them up without extra flags or env vars:
+
+```conf
+# Primary saved report file (same idea as TM_EXCLUSIONS_REPORT — a file path, not a directory)
+setting|report_path|~/Documents/tm-exclusions-last.txt
+# Also copy the report to ~/Desktop/tm-exclusions_last_report.txt
+setting|desktop_report|true
+```
+
+`report_path` is a **file** path (`~/` and `$HOME` expand like other config targets). `desktop_report` accepts `true`/`1`/`yes` or `false`/`0`/`no`. Later config files override earlier `setting` lines (last wins); rule types (`path`/`pattern`/`prune`) still append.
+
+**Precedence** (highest first):
+
+1. CLI (`--desktop-report` enables the Desktop copy; there is no CLI flag for the primary file path)
+2. Environment (`TM_EXCLUSIONS_REPORT`, `TM_EXCLUSIONS_REPORT_DESKTOP`) — when the env var is set, it overrides config, including `TM_EXCLUSIONS_REPORT_DESKTOP=0` to force the Desktop copy off
+3. Config `setting|…` lines
+4. Built-in default: `~/.config/tm_exclusions/last_report.txt` (Desktop copy off)
+
+`--add` still accepts only `path`, `pattern`, and `prune`. Add `setting` lines with `--edit` or by editing `custom.conf`.
 
 ### Add custom exclusions
 
@@ -247,7 +272,7 @@ Use `--quiet` (or `-q`) for unattended execution:
 
 - No banner, no colors, no spinners, no tmux
 - Report is still printed to stdout (summary/report output is not suppressed)
-- Desktop report copy is **off by default** — opt in with `--desktop-report` or `TM_EXCLUSIONS_REPORT_DESKTOP=1`
+- Desktop report copy is **off by default** — opt in with `--desktop-report`, `TM_EXCLUSIONS_REPORT_DESKTOP=1`, or `setting|desktop_report|true` in `custom.conf`
 
 Both cron and launchd need the absolute install path — run `command -v tm-exclusions` and substitute it below (the example uses the Apple Silicon Homebrew path).
 
@@ -314,8 +339,8 @@ launchctl load ~/Library/LaunchAgents/com.tm-exclusions.weekly.plist
 |---|---|
 | `TM_EXCLUSIONS_DEFAULT_CONF` | Override default rules file path |
 | `TM_EXCLUSIONS_EXTRA_CONF` | Load an additional config file after default + custom (opt-in cloud-sync prunes, see [Power users](#power-users-cloud-sync-prune-opt-in)) |
-| `TM_EXCLUSIONS_REPORT` | Override report output path |
-| `TM_EXCLUSIONS_REPORT_DESKTOP=1` | Also write a report copy to `~/Desktop` (opt-in; equivalent to `--desktop-report`) |
+| `TM_EXCLUSIONS_REPORT` | Override report output path (overrides `setting|report_path`) |
+| `TM_EXCLUSIONS_REPORT_DESKTOP=1` | Also write a report copy to `~/Desktop` (opt-in; equivalent to `--desktop-report`; overrides `setting|desktop_report`) |
 | `TM_EXCLUSIONS_SKIP_INVENTORY=1` | Skip inventory block in report |
 | `TM_EXCLUSIONS_SKIP_DU=1` | Skip per-path `du` disk-usage section in report |
 | `TM_EXCLUSIONS_DEBUG_FIFO` | Mirror `log_info` output to FD 5 |
