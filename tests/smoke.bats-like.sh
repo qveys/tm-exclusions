@@ -1254,6 +1254,19 @@ assert_output_contains "Unknown setting" \
     env HOME="${REPSET_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
         bash "$TM_EXCLUSIONS" --dry-run
 
+assert_output_contains "setting (report_path, desktop_report)" \
+    "--help mentions setting config type" \
+    env HOME="${REPSET_HOME}" bash "$TM_EXCLUSIONS" --help
+
+cat > "${REPSET_HOME}/.config/tm_exclusions/custom.conf" << 'EOF'
+setting|report_path
+EOF
+assert_output_contains "report_path vide" \
+    "--lang fr localizes empty report_path warning" \
+    env -u TM_EXCLUSIONS_REPORT -u TM_EXCLUSIONS_EXTRA_CONF \
+        HOME="${REPSET_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
+        bash "$TM_EXCLUSIONS" --lang fr --dry-run
+
 # --list shows setting lines
 cat > "${REPSET_HOME}/.config/tm_exclusions/custom.conf" << 'EOF'
 setting|report_path|~/Documents/from-config.txt

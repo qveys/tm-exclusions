@@ -544,7 +544,7 @@ ${entry_target}"
                 case "$entry_target" in
                     report_path)
                         if [[ -z "$entry_reason" ]]; then
-                            log_error "Warning: Empty report_path setting at ${file}:${line_num}"
+                            log_error "${MSG_ERROR_EMPTY_REPORT_PATH} ${file}:${line_num}"
                         else
                             case "$entry_reason" in
                                 "~"*) entry_reason="${HOME}${entry_reason#\~}" ;;
@@ -562,12 +562,12 @@ ${entry_target}"
                                 CONF_DESKTOP_REPORT=0
                                 ;;
                             *)
-                                log_error "Warning: Invalid desktop_report value '${entry_reason}' at ${file}:${line_num} (use true/false, 1/0, or yes/no)"
+                                log_error "${MSG_ERROR_INVALID_DESKTOP_REPORT} '${entry_reason}' at ${file}:${line_num} ${MSG_ERROR_INVALID_DESKTOP_REPORT_HINT}"
                                 ;;
                         esac
                         ;;
                     *)
-                        log_error "Warning: Unknown setting '${entry_target}' at ${file}:${line_num}"
+                        log_error "${MSG_ERROR_UNKNOWN_SETTING} '${entry_target}' at ${file}:${line_num}"
                         ;;
                 esac
                 ;;
