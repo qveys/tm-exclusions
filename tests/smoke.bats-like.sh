@@ -1511,6 +1511,12 @@ mkdir -p "${AS_HOME}/Library/Application Support/Zed/languages"
 mkdir -p "${AS_HOME}/Library/Application Support/discord/Cache"
 mkdir -p "${AS_HOME}/Library/Application Support/auto-claude-ui/.venv"
 mkdir -p "${AS_HOME}/Library/Application Support/auto-claude-ui/python-venv"
+mkdir -p "${AS_HOME}/Library/Application Support/Antigravity/Code Cache"
+mkdir -p "${AS_HOME}/Library/Application Support/Antigravity/GPUCache"
+mkdir -p "${AS_HOME}/Library/Application Support/Antigravity/User"
+printf '%s\n' '{}' > "${AS_HOME}/Library/Application Support/Antigravity/User/settings.json"
+mkdir -p "${AS_HOME}/Library/Application Support/Antigravity IDE/Code Cache"
+mkdir -p "${AS_HOME}/Library/Application Support/Antigravity IDE/GPUCache"
 AS_OUT="$(env HOME="${AS_HOME}" bash "$TM_EXCLUSIONS" --dry-run 2>&1)" || true
 
 for as_path in \
@@ -1520,7 +1526,11 @@ for as_path in \
     "${AS_HOME}/Library/Application Support/Zed/languages" \
     "${AS_HOME}/Library/Application Support/discord/Cache" \
     "${AS_HOME}/Library/Application Support/auto-claude-ui/.venv" \
-    "${AS_HOME}/Library/Application Support/auto-claude-ui/python-venv"
+    "${AS_HOME}/Library/Application Support/auto-claude-ui/python-venv" \
+    "${AS_HOME}/Library/Application Support/Antigravity/Code Cache" \
+    "${AS_HOME}/Library/Application Support/Antigravity/GPUCache" \
+    "${AS_HOME}/Library/Application Support/Antigravity IDE/Code Cache" \
+    "${AS_HOME}/Library/Application Support/Antigravity IDE/GPUCache"
 do
     TESTS_RUN=$((TESTS_RUN + 1))
     if printf '%s\n' "${AS_OUT}" | grep -Fq "WOULD ${as_path}"; then
@@ -1539,7 +1549,11 @@ for as_keep in \
     "${AS_HOME}/Library/Application Support/JetBrains/IntelliJIdea2024.3/options" \
     "${AS_HOME}/Library/Application Support/discord" \
     "${AS_HOME}/Library/Application Support/auto-claude-ui" \
-    "${AS_HOME}/Library/Application Support/Zed"
+    "${AS_HOME}/Library/Application Support/Zed" \
+    "${AS_HOME}/Library/Application Support/Antigravity" \
+    "${AS_HOME}/Library/Application Support/Antigravity/User" \
+    "${AS_HOME}/Library/Application Support/Antigravity/User/settings.json" \
+    "${AS_HOME}/Library/Application Support/Antigravity IDE"
 do
     TESTS_RUN=$((TESTS_RUN + 1))
     if printf '%s\n' "${AS_OUT}" | grep -Fqx "WOULD ${as_keep}"; then
