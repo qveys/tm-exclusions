@@ -42,6 +42,7 @@ declare_i18n_en() {
     MSG_REPORT_REMOVED="Removed:"
     MSG_REPORT_SAVED="Report saved to:"
     MSG_REPORT_DESKTOP_COPY="Also saved report copy to:"
+    MSG_ERROR_REPORT_WRITE="Warning: Could not save report to:"
     MSG_UNINSTALL_START="Removing tm-exclusions applied exclusions..."
     MSG_UNINSTALL_DONE="Uninstall complete."
     MSG_UNINSTALL_FORCE="Force mode: removing all matched exclusions."

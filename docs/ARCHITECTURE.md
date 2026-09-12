@@ -123,7 +123,7 @@ After processing all paths, a human-readable report is printed and saved. The de
 |--------|--------|
 | `setting\|report_path\|<file>` in config | Persistent primary report **file** path (`~` / `$HOME` expanded). Chosen over `report_dir` because `TM_EXCLUSIONS_REPORT` is already a file path, not a directory. |
 | `TM_EXCLUSIONS_REPORT` | Absolute or relative path for the saved report file; overrides `setting\|report_path` |
-| `setting\|desktop_report\|true` | Persistent opt-in for the Desktop copy (same file name as the CLI/env path) |
+| `setting\|desktop_report\|true` | Persistent opt-in for the Desktop copy at `~/Desktop/tm-exclusions_last_report.txt` |
 | `--desktop-report` | CLI flag: always enables the Desktop copy (no `--no-desktop-report`) |
 | `TM_EXCLUSIONS_REPORT_DESKTOP` | When **set**, overrides config: `1` enables the Desktop copy, any other value (including `0`) disables it |
 | `TM_EXCLUSIONS_DEBUG_FIFO` | If set to a path, append the same `log_info` lines to **FD 5**. For a **named FIFO**, the script opens **read+write** (`exec 5<>`) so `open` does not block waiting for another process; regular files use append-only open. |

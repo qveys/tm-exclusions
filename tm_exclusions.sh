@@ -1291,16 +1291,20 @@ ${raw_list}"
 
     out_path="$(resolve_report_out_path)"
 
-    mkdir -p "$(dirname "${out_path}")" 2>/dev/null || true
-    echo "$report" > "${out_path}" 2>/dev/null || true
-    log_info ""
-    log_info "${MSG_REPORT_SAVED} ${out_path}"
+    if mkdir -p "$(dirname "${out_path}")" 2>/dev/null && printf '%s\n' "$report" > "${out_path}" 2>/dev/null; then
+        log_info ""
+        log_info "${MSG_REPORT_SAVED} ${out_path}"
+    else
+        log_error "${MSG_ERROR_REPORT_WRITE} ${out_path}"
+    fi
 
     if desktop_report_enabled; then
         desk_copy="${HOME}/Desktop/tm-exclusions_last_report.txt"
-        mkdir -p "${HOME}/Desktop" 2>/dev/null || true
-        echo "$report" > "${desk_copy}" 2>/dev/null || true
-        log_info "${MSG_REPORT_DESKTOP_COPY} ${desk_copy}"
+        if mkdir -p "${HOME}/Desktop" 2>/dev/null && printf '%s\n' "$report" > "${desk_copy}" 2>/dev/null; then
+            log_info "${MSG_REPORT_DESKTOP_COPY} ${desk_copy}"
+        else
+            log_error "${MSG_ERROR_REPORT_WRITE} ${desk_copy}"
+        fi
     fi
 }
 

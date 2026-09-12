@@ -42,6 +42,7 @@ declare_i18n_fr() {
     MSG_REPORT_REMOVED="Supprimés :"
     MSG_REPORT_SAVED="Rapport sauvegardé dans :"
     MSG_REPORT_DESKTOP_COPY="Copie du rapport également enregistrée dans :"
+    MSG_ERROR_REPORT_WRITE="Attention : impossible de sauvegarder le rapport dans :"
     MSG_UNINSTALL_START="Suppression des exclusions tm-exclusions..."
     MSG_UNINSTALL_DONE="Désinstallation terminée."
     MSG_UNINSTALL_FORCE="Mode forcé : suppression de toutes les exclusions correspondantes."
