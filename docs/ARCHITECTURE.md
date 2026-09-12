@@ -37,13 +37,13 @@ Strings for **en** / **fr** are embedded in `tm_exclusions.sh` (not external loc
 
 Later **rule** entries (`path` / `pattern` / `prune`) are appended; there is no override or deduplication. **`setting`** lines are last-wins (a later file or later line replaces the earlier value for that key). Both files use the same `type|target|reason` format.
 
-Targets may use leading `~` (expanded to `$HOME`) or the literal substring `$HOME` (expanded at parse time). For `setting|report_path|<file>`, those expansions apply to the **value** (third field).
+Targets may use leading `~` (expanded to `$HOME`) or the literal substring `$HOME` (expanded at parse time). For `setting|report_path|<file>`, those expansions apply to the **value** (third field). `path` targets may also contain glob metacharacters (`*`, `?`, `[`); they are expanded with `compgen -G` at load time. Unmatched globs are dropped so a literal `*` is never passed to `tmutil`. This is how versioned folders such as `$HOME/Library/Application Support/JetBrains/*/plugins` are covered without listing every IDE release.
 
 ## Config Entry Types
 
 | Type | Behavior |
 |---|---|
-| `path` | Static exclusion: apply `tmutil addexclusion` to exact expanded path |
+| `path` | Static exclusion: apply `tmutil addexclusion` to the expanded path (optional glob expansion at load time) |
 | `pattern` | Dynamic scan: `find $HOME -maxdepth 6 -type d -name <pattern>` and exclude matches |
 | `prune` | Scan skip: paths under this prefix are ignored during dynamic pattern scanning (not excluded from backup) |
 | `setting` | Preference, not a Time Machine rule. Keys: `report_path` (saved report **file** path) and `desktop_report` (`true`/`1`/`yes` or `false`/`0`/`no`). Unknown keys and invalid `desktop_report` values warn on stderr and are ignored. |
@@ -200,7 +200,7 @@ The current architecture (config-driven, function-based) supports these addition
 
 ## Default rule catalog
 
-`config/default.conf` ships approximately 117 rules organized in 17 categories. Categories use `#@CategoryName` markers — cosmetic in 1.x (treated as comments by the loader), forward-compatible with the category-aware report grouping tracked in [#34](https://github.com/qveys/tm-exclusions/issues/34).
+`config/default.conf` ships approximately 150 rules organized in 17 categories. Categories use `#@CategoryName` markers — cosmetic in 1.x (treated as comments by the loader), forward-compatible with the category-aware report grouping tracked in [#34](https://github.com/qveys/tm-exclusions/issues/34).
 
 | # | Category | Section(s) | Sample entries |
 |---|---|---|---|
@@ -217,7 +217,7 @@ The current architecture (config-driven, function-based) supports these addition
 | 11 | macOS Caches | path | `$HOME/Library/Caches`, `$HOME/Library/Logs`, `/private/var/folders` |
 | 12 | Dev Tools | path | `$HOME/.terraform.d/plugin-cache`, IDE extensions and caches |
 | 13 | AI / LLM | path | `$HOME/.cache/huggingface`, `$HOME/.ollama/models`, Claude VM bundles |
-| 14 | App Support | path (opt-in) | Application Support entries for Cursor, JetBrains, Zed, … (commented out — see Opt-in entries) |
+| 14 | IDE and Dev Tool Caches | path | Selective Application Support caches (Cursor workspaceStorage, JetBrains `*/plugins`, Zed languages, Discord Cache, …). Parent app folders stay in backups. |
 | 15 | Claude Code / Codex | pattern | `.auto-claude`, `.codex`, `worktrees` |
 | 16 | Generic caches | pattern (opt-in) | `.cache` (commented out — uncomment to enable) |
 | 17 | Prune zones | prune | `$HOME/Library`, `$HOME/.Trash`, `$HOME/.nvm`, `$HOME/.bun.bak`, … |
@@ -230,7 +230,7 @@ Home-rooted paths use `$HOME/...`. The loader also accepts the legacy `~/...` fo
 
 Several entries ship commented out:
 - `path|$HOME/.docker` — kept in backups because it holds `config.json` (registry auth tokens). Bulky Docker data is covered by other rules.
-- All `path|$HOME/Library/Application Support/<app>` entries (Antigravity, auto-claude-ui, Cursor, discord, GitKrakenCLI, JetBrains, virtualenv, vscode-sqltools, Zed) — these directories mix user data (settings, keymaps, sessions) with regenerable caches; re-enable selectively only after confirming the app's specific layout is cache-only.
+- Parent `path|$HOME/Library/Application Support/<app>` roots (Cursor, JetBrains, Zed, …) are **not** in the default catalog — those directories mix user data (settings, keymaps, tokens, sessions) with caches. Fine-grained regenerable subdirectories ship enabled under **IDE and Dev Tool Caches** (see [#53](https://github.com/qveys/tm-exclusions/issues/53)).
 - `pattern|.cache` — would match any project's `.cache/` directory (too broad as a default).
 - `pattern|site-packages` — already covered by `.venv` patterns.
 
@@ -259,7 +259,7 @@ The `TM_EXCLUSIONS_EXTRA_CONF` loader requires the value to be **both a regular 
 ### Catalog invariants
 
 The smoke test suite (`tests/smoke.bats-like.sh`) guards these catalog invariants:
-- ≥ 117 active rules (path/pattern/prune lines).
+- ≥ 150 active rules (path/pattern/prune lines).
 - Exactly 17 distinct `#@` category labels.
 - Three section banners present (`# ── STATIC EXCLUSIONS (path) ──`, `# ── DYNAMIC SCAN PATTERNS (pattern) ──`, `# ── SCAN PRUNE ZONES (prune) ──`); the smoke test matches them by prefix.
 - No rule uses the `~/` home prefix (must be `$HOME/`).

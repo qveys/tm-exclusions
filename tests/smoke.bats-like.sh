@@ -426,7 +426,7 @@ CONF="${SCRIPT_DIR}/config/default.conf"
 # Active rules (path/pattern/prune lines, ignoring comments).
 # Floor is pinned to the documented baseline so silent regressions fail CI.
 # Bump this constant when intentionally growing the catalog.
-MIN_ACTIVE_RULES=117
+MIN_ACTIVE_RULES=150
 RULE_COUNT=$(grep -cE '^(path|pattern|prune)\|' "${CONF}" || true)
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ "${RULE_COUNT}" -ge "${MIN_ACTIVE_RULES}" ]]; then
@@ -1453,6 +1453,118 @@ else
 fi
 
 rm -rf "${BAK_HOME}"
+
+# ---- Selective Application Support caches (#53) ----
+echo ""
+echo "--- Application Support caches (#53) ---"
+
+# Path globs expand to concrete directories; unmatched globs are dropped.
+GLOB_HOME="$(mktemp -d)"
+mkdir -p "${GLOB_HOME}/Library/Application Support/FakeIDE/v1/plugins"
+mkdir -p "${GLOB_HOME}/Library/Application Support/FakeIDE/v2/plugins"
+mkdir -p "${GLOB_HOME}/Library/Application Support/FakeIDE/v1/options"
+GLOB_CONF="${GLOB_HOME}/glob-default.conf"
+cat > "${GLOB_CONF}" << 'EOF'
+path|$HOME/Library/Application Support/FakeIDE/*/plugins|glob expansion smoke
+EOF
+GLOB_OUT="$(env HOME="${GLOB_HOME}" \
+    TM_EXCLUSIONS_DEFAULT_CONF="${GLOB_CONF}" \
+    bash "$TM_EXCLUSIONS" --dry-run 2>&1)" || true
+
+assert_output_contains "${GLOB_HOME}/Library/Application Support/FakeIDE/v1/plugins" \
+    "path glob expands JetBrains-style */plugins (v1)" \
+    env HOME="${GLOB_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${GLOB_CONF}" \
+    bash "$TM_EXCLUSIONS" --dry-run
+
+assert_output_contains "${GLOB_HOME}/Library/Application Support/FakeIDE/v2/plugins" \
+    "path glob expands JetBrains-style */plugins (v2)" \
+    env HOME="${GLOB_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${GLOB_CONF}" \
+    bash "$TM_EXCLUSIONS" --dry-run
+
+TESTS_RUN=$((TESTS_RUN + 1))
+if printf '%s\n' "${GLOB_OUT}" | grep -Fq "FakeIDE/*/plugins"; then
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b unmatched/literal path glob leaked to output\n' "$RED" "$NC"
+else
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b path glob does not leak a literal */plugins target\n' "$GREEN" "$NC"
+fi
+
+TESTS_RUN=$((TESTS_RUN + 1))
+if printf '%s\n' "${GLOB_OUT}" | grep -Fqx "WOULD ${GLOB_HOME}/Library/Application Support/FakeIDE/v1/options"; then
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b glob must not exclude sibling options/ (user settings)\n' "$RED" "$NC"
+else
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b path glob does not exclude sibling options/ settings\n' "$GREEN" "$NC"
+fi
+rm -rf "${GLOB_HOME}"
+
+# Default catalog: exclude known regenerable subdirs, keep settings/tokens.
+AS_HOME="$(mktemp -d)"
+mkdir -p "${AS_HOME}/Library/Application Support/Cursor/User/workspaceStorage"
+mkdir -p "${AS_HOME}/Library/Application Support/Cursor/Cache"
+printf '%s\n' '{}' > "${AS_HOME}/Library/Application Support/Cursor/User/settings.json"
+mkdir -p "${AS_HOME}/Library/Application Support/JetBrains/IntelliJIdea2024.3/plugins"
+mkdir -p "${AS_HOME}/Library/Application Support/JetBrains/IntelliJIdea2024.3/options"
+mkdir -p "${AS_HOME}/Library/Application Support/Zed/languages"
+mkdir -p "${AS_HOME}/Library/Application Support/discord/Cache"
+mkdir -p "${AS_HOME}/Library/Application Support/auto-claude-ui/.venv"
+mkdir -p "${AS_HOME}/Library/Application Support/auto-claude-ui/python-venv"
+mkdir -p "${AS_HOME}/Library/Application Support/Antigravity/Code Cache"
+mkdir -p "${AS_HOME}/Library/Application Support/Antigravity/GPUCache"
+mkdir -p "${AS_HOME}/Library/Application Support/Antigravity/User"
+printf '%s\n' '{}' > "${AS_HOME}/Library/Application Support/Antigravity/User/settings.json"
+mkdir -p "${AS_HOME}/Library/Application Support/Antigravity IDE/Code Cache"
+mkdir -p "${AS_HOME}/Library/Application Support/Antigravity IDE/GPUCache"
+AS_OUT="$(env HOME="${AS_HOME}" bash "$TM_EXCLUSIONS" --dry-run 2>&1)" || true
+
+for as_path in \
+    "${AS_HOME}/Library/Application Support/Cursor/User/workspaceStorage" \
+    "${AS_HOME}/Library/Application Support/Cursor/Cache" \
+    "${AS_HOME}/Library/Application Support/JetBrains/IntelliJIdea2024.3/plugins" \
+    "${AS_HOME}/Library/Application Support/Zed/languages" \
+    "${AS_HOME}/Library/Application Support/discord/Cache" \
+    "${AS_HOME}/Library/Application Support/auto-claude-ui/.venv" \
+    "${AS_HOME}/Library/Application Support/auto-claude-ui/python-venv" \
+    "${AS_HOME}/Library/Application Support/Antigravity/Code Cache" \
+    "${AS_HOME}/Library/Application Support/Antigravity/GPUCache" \
+    "${AS_HOME}/Library/Application Support/Antigravity IDE/Code Cache" \
+    "${AS_HOME}/Library/Application Support/Antigravity IDE/GPUCache"
+do
+    TESTS_RUN=$((TESTS_RUN + 1))
+    if grep -Fqx "WOULD ${as_path}" <<< "${AS_OUT}"; then
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        printf '%b  PASS%b dry-run would exclude %s\n' "$GREEN" "$NC" "${as_path#"${AS_HOME}"/}"
+    else
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        printf '%b  FAIL%b dry-run did not exclude %s\n' "$RED" "$NC" "${as_path#"${AS_HOME}"/}"
+    fi
+done
+
+for as_keep in \
+    "${AS_HOME}/Library/Application Support/Cursor" \
+    "${AS_HOME}/Library/Application Support/Cursor/User" \
+    "${AS_HOME}/Library/Application Support/Cursor/User/settings.json" \
+    "${AS_HOME}/Library/Application Support/JetBrains/IntelliJIdea2024.3/options" \
+    "${AS_HOME}/Library/Application Support/discord" \
+    "${AS_HOME}/Library/Application Support/auto-claude-ui" \
+    "${AS_HOME}/Library/Application Support/Zed" \
+    "${AS_HOME}/Library/Application Support/Antigravity" \
+    "${AS_HOME}/Library/Application Support/Antigravity/User" \
+    "${AS_HOME}/Library/Application Support/Antigravity/User/settings.json" \
+    "${AS_HOME}/Library/Application Support/Antigravity IDE"
+do
+    TESTS_RUN=$((TESTS_RUN + 1))
+    if grep -Fqx "WOULD ${as_keep}" <<< "${AS_OUT}"; then
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        printf '%b  FAIL%b must not exclude settings/parent path %s\n' "$RED" "$NC" "${as_keep#"${AS_HOME}"/}"
+    else
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        printf '%b  PASS%b keeps settings/parent %s\n' "$GREEN" "$NC" "${as_keep#"${AS_HOME}"/}"
+    fi
+done
+rm -rf "${AS_HOME}"
 
 # ---- Summary ----
 test_summary

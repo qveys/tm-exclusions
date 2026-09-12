@@ -478,6 +478,42 @@ tm_remove_exclusion() {
 # ---------------------------------------------------------------------------
 # Config loading
 # ---------------------------------------------------------------------------
+# Append one path to CONF_PATHS (newline-delimited).
+append_conf_path() {
+    local p="$1"
+    [[ -z "$p" ]] && return 0
+    if [[ -z "${CONF_PATHS}" ]]; then
+        CONF_PATHS="${p}"
+    else
+        CONF_PATHS="${CONF_PATHS}
+${p}"
+    fi
+}
+
+# Append a path-rule target. Glob metacharacters (* ? [) are expanded against
+# the filesystem at load time so versioned folders such as
+# JetBrains/*/plugins resolve to concrete directories. Unmatched globs are
+# dropped — a literal '*' must never be passed to tmutil.
+append_conf_path_target() {
+    local target="$1"
+    case "$target" in
+        *'*'*|*'?'*|*'['*)
+            local glob_out glob_match
+            glob_out="$(compgen -G "$target" || true)"
+            [[ -z "$glob_out" ]] && return 0
+            while IFS= read -r glob_match; do
+                [[ -z "$glob_match" ]] && continue
+                append_conf_path "$glob_match"
+            done <<EOF
+${glob_out}
+EOF
+            ;;
+        *)
+            append_conf_path "$target"
+            ;;
+    esac
+}
+
 parse_config_file() {
     local file="$1"
     if [[ ! -f "$file" ]]; then
@@ -515,12 +551,7 @@ parse_config_file() {
 
         case "$entry_type" in
             path)
-                if [[ -z "${CONF_PATHS}" ]]; then
-                    CONF_PATHS="${entry_target}"
-                else
-                    CONF_PATHS="${CONF_PATHS}
-${entry_target}"
-                fi
+                append_conf_path_target "$entry_target"
                 ;;
             pattern)
                 if [[ -z "${CONF_PATTERNS}" ]]; then
