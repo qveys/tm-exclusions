@@ -60,10 +60,6 @@ All notable changes to this project will be documented in this file.
 - **Makefile enhancements**: `make release` now validates that `## Unreleased` has actual content, updates `Formula/tm-exclusions.rb`, and injects the changelog into the PR body; new target `make auto-patch` to inspect or run auto-patch status locally.
 - **Auto-patch/release hardening**: `create-github-app-token` steps now request only `permission-contents: write`; `check-auto-patch.sh` validates `--threshold`, requires `HEAD` to match `origin/master` with a clean worktree before mutating release files, skips when a manual release is pending, counts merged PRs from commit subjects instead of `--oneline`-prefixed SHAs, uses a portable tag sort, and stages `Formula/tm-exclusions.rb` only when present; `make release`'s PR body no longer loses the Changelog section to a stale cross-recipe shell variable.
 
-### CI and automation
-
-- **Release workflow**: Synchronize `Formula/tm-exclusions.rb` to the Homebrew tap via `.github/workflows/release.yml` on every tag. This fixes `Errno::ENOENT` errors caused by stale tap formulas and adds a `workflow_dispatch` input to manually re-sync existing tags.
-
 ### Docs
 
 - Ongoing parity checklist: GitHub issue [#34](https://github.com/qveys/tm-exclusions/issues/34).
