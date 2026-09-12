@@ -116,7 +116,8 @@ jobs:
           fi
           git clone "https://x-access-token:${HOMEBREW_TOKEN}@github.com/qveys/homebrew-tools.git" tap
           test -f Formula/tm-exclusions.rb || { echo "ERROR: Formula/tm-exclusions.rb missing in this repo"; exit 1; }
-          # Fully sync the formula from this repo so the install stanza never drifts
+          # Fully sync the formula from this repo so the install stanza never drifts from
+          # what the released tarball actually ships (see docs/PACKAGING.md).
           install -m 644 Formula/tm-exclusions.rb tap/Formula/tm-exclusions.rb
           cd tap
           sed -i "s|^  url \".*\"|  url \"${URL}\"|" Formula/tm-exclusions.rb
