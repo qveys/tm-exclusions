@@ -1533,7 +1533,7 @@ for as_path in \
     "${AS_HOME}/Library/Application Support/Antigravity IDE/GPUCache"
 do
     TESTS_RUN=$((TESTS_RUN + 1))
-    if grep -Fq "WOULD ${as_path}" <<< "${AS_OUT}"; then
+    if grep -Fqx "WOULD ${as_path}" <<< "${AS_OUT}"; then
         TESTS_PASSED=$((TESTS_PASSED + 1))
         printf '%b  PASS%b dry-run would exclude %s\n' "$GREEN" "$NC" "${as_path#"${AS_HOME}"/}"
     else
