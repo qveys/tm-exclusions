@@ -4,11 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## v1.3.0
+
 ### Build
 
 - **`make install` / `make uninstall`**: default `PREFIX` is `$(brew --prefix)/bin` when writable, otherwise `/usr/local/bin`. Elevation no longer uses `sudo sh -c` (blocked by restricted sudoers). Cascade: unprivileged `install`/`rm` when the destination is writable, else `sudo /usr/bin/install` (or `/bin/rm`) per file, else a macOS admin dialog via `osascript`.
 - `make version` prints the current `tm_exclusions.sh` version without running the CLI. ([#43](https://github.com/qveys/tm-exclusions/issues/43))
 - `make install` / `make uninstall` also install and remove `locales/*.sh` under `$(SHARE_DIR)/locales/`. ([#16](https://github.com/qveys/tm-exclusions/issues/16))
+- **Release flow**: `make release` and `.github/workflows/auto-patch.yml` no longer bump `version` in `Formula/tm-exclusions.rb`. A release's `sha256` only exists after the tag is pushed, so a version-only bump made a local `brew install --formula ./Formula/tm-exclusions.rb` install the *previous* tarball under the new version. The repo formula now stays on the last published tarball (`url`, `sha256`, `version` moving together) and `tests/test_release_logic.sh` fails the build if they drift.
+- `make lint` also runs ShellCheck on `tests/test_release_logic.sh` (its `printf` calls now pass colour codes as `%b` arguments, like `tests/smoke.bats-like.sh`).
 
 ### i18n
 

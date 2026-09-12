@@ -148,12 +148,8 @@ TMP_SCRIPT="$(mktemp)"
 sed "s|^readonly VERSION=\".*\"|readonly VERSION=\"${NEXT_PATCH}\"|" tm_exclusions.sh > "$TMP_SCRIPT"
 mv "$TMP_SCRIPT" tm_exclusions.sh
 
-# Update Formula/tm-exclusions.rb
-if [ -f "Formula/tm-exclusions.rb" ]; then
-  TMP_FORMULA="$(mktemp)"
-  sed "s|^  version \".*\"|  version \"${NEXT_PATCH}\"|" Formula/tm-exclusions.rb > "$TMP_FORMULA"
-  mv "$TMP_FORMULA" Formula/tm-exclusions.rb
-fi
+# Formula/tm-exclusions.rb is left untouched: url/sha256 are only knowable after the
+# tag is pushed, and the release workflow updates all three fields in the tap copy.
 
 # Update CHANGELOG.md
 TMP_CHANGELOG="$(mktemp)"
@@ -181,9 +177,6 @@ if [ -z "$(git config --get user.name 2>/dev/null || true)" ]; then
 fi
 
 git add tm_exclusions.sh CHANGELOG.md
-if [ -f "Formula/tm-exclusions.rb" ]; then
-  git add Formula/tm-exclusions.rb
-fi
 git commit -m "🔖 chore(release): v${NEXT_PATCH} [auto-patch ${PR_COUNT} PRs]"
 
 # Tag directly (signed if signing key available)

@@ -105,6 +105,7 @@ lint: ## Run ShellCheck on all shell scripts and syntax-check locale tables
 	@shellcheck -x -s bash $(SCRIPT)
 	@shellcheck -x -s bash tests/test_helpers.sh
 	@shellcheck -x -s bash tests/smoke.bats-like.sh
+	@shellcheck -x -s bash tests/test_release_logic.sh
 	@for f in locales/*.sh; do bash -n "$$f" || exit 1; done
 	@shellcheck -x -s sh .githooks/post-checkout
 	@shellcheck -x -s sh .githooks/post-checkout-fallback
@@ -188,11 +189,9 @@ release: ## Cut a release PR — make release VERSION=x.y.z  (run make tag after
 	  test -n "$$current_version" || { echo "Error: could not determine current version from $(SCRIPT)." >&2; exit 1; }; \
 	  tmp_file="$$(mktemp)"; \
 	  sed 's|^readonly VERSION=".*"|readonly VERSION="$(VERSION)"|' $(SCRIPT) > "$$tmp_file" && mv "$$tmp_file" $(SCRIPT)
-	@if [ -f Formula/tm-exclusions.rb ]; then \
-	  tmp_file="$$(mktemp)"; \
-	  sed 's|^  version ".*"|  version "$(VERSION)"|' Formula/tm-exclusions.rb > "$$tmp_file" && mv "$$tmp_file" Formula/tm-exclusions.rb; \
-	  git add Formula/tm-exclusions.rb; \
-	fi
+# Formula/tm-exclusions.rb is deliberately left alone: its url/sha256 can only be
+# updated once the tag exists, so bumping version alone would make the local formula
+# install the previous tarball under the new version (see docs/PACKAGING.md).
 	@tmp_file="$$(mktemp)"; \
 	  awk '/^## Unreleased$$/{print; print ""; print "## v$(VERSION)"; next}1' CHANGELOG.md > "$$tmp_file" && mv "$$tmp_file" CHANGELOG.md
 	@git add $(SCRIPT) CHANGELOG.md

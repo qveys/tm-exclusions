@@ -7,6 +7,10 @@
 #
 # Official tap updates (url, sha256, version) on each release tag via
 # `.github/workflows/release.yml` and `qveys/homebrew-tools` — keep `install` in sync here and in the tap.
+#
+# `url`, `sha256` and `version` below describe the last *published* tarball and are
+# bumped together, never individually: the sha256 of a release only exists once the
+# tag is pushed. Release tooling (`make release`, auto-patch) must not touch them.
 class TmExclusions < Formula
   desc "Time Machine exclusion manager for developer Macs"
   homepage "https://github.com/qveys/tm-exclusions"
