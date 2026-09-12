@@ -26,7 +26,7 @@ On macOS, with [Homebrew](https://brew.sh/) installed:
 brew install --formula ./Formula/tm-exclusions.rb
 ```
 
-The local formula is mainly a development install fixture. Do not bump only its `version` during a release PR; the tap automation below updates `url`, `version`, and `sha256` together after the tag exists.
+The local formula is mainly a development install fixture, and it intentionally lags one release behind: its `url`, `sha256` and `version` always describe the **last published tarball**, because a release's `sha256` only exists once the tag is pushed. Release tooling therefore never touches it — neither `make release` nor `.github/workflows/auto-patch.yml` bumps its `version` — and the tap automation below updates all three fields together after the tag exists. `tests/test_release_logic.sh` fails the build if the three ever drift apart.
 
 ### From the tap (`qveys/homebrew-tools`)
 
@@ -54,4 +54,4 @@ If a past release (e.g. before this auto-sync was in place) left a stale install
 
 ## Relationship to epic #34
 
-Homebrew ships the **current 1.x** CLI. Broader behavior parity with the archived 2.x script is tracked in GitHub issue **#34**; packaging does not wait on that epic. Release PRs keep `tm_exclusions.sh` `VERSION`, `Formula/tm-exclusions.rb`, and `CHANGELOG.md` in sync; the Homebrew tap formula is updated by release automation after the tag is pushed.
+Homebrew ships the **current 1.x** CLI. Broader behavior parity with the archived 2.x script is tracked in GitHub issue **#34**; packaging does not wait on that epic. Release PRs keep `tm_exclusions.sh` `VERSION` and `CHANGELOG.md` in sync; `Formula/tm-exclusions.rb` in this repo stays on the last published tarball (see above) and the Homebrew tap formula is updated by release automation after the tag is pushed.
