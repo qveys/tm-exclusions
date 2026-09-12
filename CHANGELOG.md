@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Build
+
+- **`Formula/tm-exclusions.rb`**: `url`, `sha256` and `version` refreshed to the v1.3.0 tarball. The previous `sha256` did not match the v1.2.0 tarball it pointed at (`93d9f89e…` instead of `956ac268…`), so `brew install --formula ./Formula/tm-exclusions.rb` failed on a checksum mismatch.
+- **`.github/workflows/release.yml`**: a missing `HOMEBREW_TOKEN` now fails the release run instead of `exit 0`. The v1.3.0 run was green while the tap was never updated, so `brew install tm-exclusions` kept serving v1.2.0.
+
 ## v1.3.0
 
 ### Build

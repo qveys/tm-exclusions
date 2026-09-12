@@ -111,8 +111,10 @@ jobs:
           SHA256: ${{ steps.sha256.outputs.sha256 }}
         run: |
           if [ -z "${HOMEBREW_TOKEN:-}" ]; then
-            echo "HOMEBREW_TOKEN not set; skipping tap bump."
-            exit 0
+            # Never exit 0 here: a green run with an un-bumped tap means `brew install`
+            # keeps serving the previous version with nobody noticing.
+            echo "::error::HOMEBREW_TOKEN (or RELEASE_TOKEN) is not set — the tap was NOT updated for ${TAG}. Add the secret, then re-run: Actions -> Release -> Run workflow -> tag: ${TAG}."
+            exit 1
           fi
           git clone "https://x-access-token:${HOMEBREW_TOKEN}@github.com/qveys/homebrew-tools.git" tap
           test -f Formula/tm-exclusions.rb || { echo "ERROR: Formula/tm-exclusions.rb missing in this repo"; exit 1; }
