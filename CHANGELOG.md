@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## v1.3.0
+
 ### Build
 
 - **`make install` / `make uninstall`**: default `PREFIX` is `$(brew --prefix)/bin` when writable, otherwise `/usr/local/bin`. Elevation no longer uses `sudo sh -c` (blocked by restricted sudoers). Cascade: unprivileged `install`/`rm` when the destination is writable, else `sudo /usr/bin/install` (or `/bin/rm`) per file, else a macOS admin dialog via `osascript`.

@@ -13,7 +13,7 @@ class TmExclusions < Formula
   url "https://github.com/qveys/tm-exclusions/archive/refs/tags/v1.2.0.tar.gz"
   sha256 "93d9f89e76f0b4c645340a1191d3d77d12a3156e0cbbd496a998d4c587b1cee2"
   license "MIT"
-  version "1.2.0"
+  version "1.3.0"
 
   depends_on :macos
 
