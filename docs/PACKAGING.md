@@ -29,9 +29,12 @@ brew install --formula ./Formula/tm-exclusions.rb
 The local formula is mainly a development install fixture. Its `url`, `sha256` and `version` always describe the **last published tarball** and are refreshed **after** a tag is pushed, never during the release PR — a release's `sha256` only exists once the tarball does. Release tooling therefore never touches it: neither `make release` nor `.github/workflows/auto-patch.yml` bumps its `version`. Refresh it in a follow-up PR once the tag is out:
 
 ```bash
-curl -sSL -o /tmp/t.tar.gz https://github.com/qveys/tm-exclusions/archive/refs/tags/vX.Y.Z.tar.gz
-shasum -a 256 /tmp/t.tar.gz   # paste into sha256, and bump url + version to vX.Y.Z
+t="$(mktemp)" && \
+  curl -sSL --fail -o "$t" https://github.com/qveys/tm-exclusions/archive/refs/tags/vX.Y.Z.tar.gz && \
+  shasum -a 256 "$t"   # paste into sha256, and bump url + version to vX.Y.Z
 ```
+
+`--fail` and the `&&` chain matter: without them a 404 page gets hashed into a plausible-looking checksum, which is the exact failure this procedure exists to avoid. `mktemp` avoids hashing a stale download.
 
 `tests/test_release_logic.sh` fails the build when `version` and the tag in `url` disagree. It cannot check `sha256` (no network in the test suite), so verify it with the command above — a wrong checksum makes `brew install --formula ./Formula/tm-exclusions.rb` fail outright, and one went unnoticed for several releases.
 
