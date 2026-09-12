@@ -200,7 +200,7 @@ The current architecture (config-driven, function-based) supports these addition
 
 ## Default rule catalog
 
-`config/default.conf` ships approximately 146 rules organized in 17 categories. Categories use `#@CategoryName` markers — cosmetic in 1.x (treated as comments by the loader), forward-compatible with the category-aware report grouping tracked in [#34](https://github.com/qveys/tm-exclusions/issues/34).
+`config/default.conf` ships approximately 150 rules organized in 17 categories. Categories use `#@CategoryName` markers — cosmetic in 1.x (treated as comments by the loader), forward-compatible with the category-aware report grouping tracked in [#34](https://github.com/qveys/tm-exclusions/issues/34).
 
 | # | Category | Section(s) | Sample entries |
 |---|---|---|---|
@@ -259,7 +259,7 @@ The `TM_EXCLUSIONS_EXTRA_CONF` loader requires the value to be **both a regular 
 ### Catalog invariants
 
 The smoke test suite (`tests/smoke.bats-like.sh`) guards these catalog invariants:
-- ≥ 146 active rules (path/pattern/prune lines).
+- ≥ 150 active rules (path/pattern/prune lines).
 - Exactly 17 distinct `#@` category labels.
 - Three section banners present (`# ── STATIC EXCLUSIONS (path) ──`, `# ── DYNAMIC SCAN PATTERNS (pattern) ──`, `# ── SCAN PRUNE ZONES (prune) ──`); the smoke test matches them by prefix.
 - No rule uses the `~/` home prefix (must be `$HOME/`).

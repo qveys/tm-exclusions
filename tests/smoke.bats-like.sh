@@ -426,7 +426,7 @@ CONF="${SCRIPT_DIR}/config/default.conf"
 # Active rules (path/pattern/prune lines, ignoring comments).
 # Floor is pinned to the documented baseline so silent regressions fail CI.
 # Bump this constant when intentionally growing the catalog.
-MIN_ACTIVE_RULES=146
+MIN_ACTIVE_RULES=150
 RULE_COUNT=$(grep -cE '^(path|pattern|prune)\|' "${CONF}" || true)
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ "${RULE_COUNT}" -ge "${MIN_ACTIVE_RULES}" ]]; then
