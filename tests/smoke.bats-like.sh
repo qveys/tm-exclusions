@@ -1187,6 +1187,60 @@ else
     printf '%b  FAIL%b report write failure should warn and skip success log\n' "$RED" "$NC"
 fi
 
+# Two-field `setting|report_path` (no value) must not treat the key as a relative path
+cat > "${REPSET_HOME}/.config/tm_exclusions/custom.conf" << 'EOF'
+setting|report_path
+EOF
+rm -f "${REPSET_HOME}/.config/tm_exclusions/last_report.txt" "${REPSET_HOME}/report_path"
+MISSING_FIELD_ERR="${REPSET_HOME}/missing-field.err"
+assert_exit_code 0 \
+    "setting|report_path without value exits 0" \
+    env -u TM_EXCLUSIONS_REPORT -u TM_EXCLUSIONS_EXTRA_CONF \
+        HOME="${REPSET_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
+        bash "$TM_EXCLUSIONS" --dry-run
+env -u TM_EXCLUSIONS_REPORT -u TM_EXCLUSIONS_EXTRA_CONF \
+    HOME="${REPSET_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
+    bash "$TM_EXCLUSIONS" --dry-run >/dev/null 2>"${MISSING_FIELD_ERR}" || true
+TESTS_RUN=$((TESTS_RUN + 1))
+if grep -q "Empty report_path setting" "${MISSING_FIELD_ERR}" \
+    && [[ -f "${REPSET_HOME}/.config/tm_exclusions/last_report.txt" ]] \
+    && [[ ! -e "${REPSET_HOME}/report_path" ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b setting|report_path without value warns and keeps default report\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b setting|report_path without value should warn and ignore\n' "$RED" "$NC"
+fi
+
+# Empty third field
+cat > "${REPSET_HOME}/.config/tm_exclusions/custom.conf" << 'EOF'
+setting|report_path|
+EOF
+assert_output_contains "Empty report_path setting" \
+    "setting|report_path| empty value warns" \
+    env -u TM_EXCLUSIONS_REPORT -u TM_EXCLUSIONS_EXTRA_CONF \
+        HOME="${REPSET_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
+        bash "$TM_EXCLUSIONS" --dry-run
+
+# Invalid desktop_report value is ignored
+rm -f "${DESK_COPY}"
+cat > "${REPSET_HOME}/.config/tm_exclusions/custom.conf" << 'EOF'
+setting|desktop_report|maybe
+EOF
+assert_output_contains "Invalid desktop_report value" \
+    "setting|desktop_report|maybe warns" \
+    env -u TM_EXCLUSIONS_REPORT -u TM_EXCLUSIONS_EXTRA_CONF -u TM_EXCLUSIONS_REPORT_DESKTOP \
+        HOME="${REPSET_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
+        bash "$TM_EXCLUSIONS" --dry-run
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ -f "${DESK_COPY}" ]]; then
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b invalid desktop_report should not write Desktop copy\n' "$RED" "$NC"
+else
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b invalid desktop_report does not enable Desktop copy\n' "$GREEN" "$NC"
+fi
+
 # Unknown setting warns, still exits 0
 cat > "${REPSET_HOME}/.config/tm_exclusions/custom.conf" << 'EOF'
 setting|not_a_real_key|zzz

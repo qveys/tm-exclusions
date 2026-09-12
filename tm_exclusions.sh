@@ -497,7 +497,12 @@ parse_config_file() {
         entry_type="${line%%|*}"
         local rest="${line#*|}"
         entry_target="${rest%%|*}"
-        entry_reason="${rest#*|}"
+        # No third field (`setting|report_path`) must not reuse the key as the value.
+        if [[ "$rest" != *'|'* ]]; then
+            entry_reason=""
+        else
+            entry_reason="${rest#*|}"
+        fi
 
         # Expand ~ to $HOME
         case "$entry_target" in
