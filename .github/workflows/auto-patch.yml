@@ -1,0 +1,60 @@
+name: Auto Patch
+
+# Checks after every push on master if >=5 PRs were merged since the last release tag.
+# If so, directly applies the patch release on master and pushes the tag (without PR)
+# using the my-housekeeper GitHub App token (which has bypass authorization).
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+    inputs:
+      threshold:
+        description: "PR threshold (default: 5)"
+        required: false
+        default: "5"
+        type: string
+      dry_run:
+        description: "Dry run (true to test without modifying or pushing)"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: auto-patch
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  check-auto-patch:
+    runs-on: [self-hosted, linux, hostinger]
+    steps:
+      - name: Generate Housekeeper App Token
+        id: app-token
+        if: ${{ env.HAS_APP_KEY != '' }}
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.HOUSEKEEPER_APP_ID || '4537342' }}
+          private-key: ${{ secrets.HOUSEKEEPER_PRIVATE_KEY }}
+          permission-contents: write
+        env:
+          HAS_APP_KEY: ${{ secrets.HOUSEKEEPER_PRIVATE_KEY }}
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+
+      - name: Check and apply auto-patch directly if threshold reached
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          AUTO_PATCH_THRESHOLD: ${{ inputs.threshold || '5' }}
+        run: |
+          EXTRA_ARGS=""
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            EXTRA_ARGS="--dry-run"
+          fi
+          bash scripts/check-auto-patch.sh $EXTRA_ARGS

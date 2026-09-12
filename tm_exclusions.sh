@@ -54,132 +54,80 @@ EXTRA_PATHS=""
 # Unique existing paths for optional du summary in report
 DU_PATHS=""
 SUDO_KEEPALIVE_PID=""
+# Temporary files to remove on exit/signal
+TMP_FILES=""
 # When 1, log_info also appends to FD 5 (opened from TM_EXCLUSIONS_DEBUG_FIFO)
 DEBUG_LOG_FD=0
 
 # ---------------------------------------------------------------------------
-# i18n strings
+# i18n locale resolution
 # ---------------------------------------------------------------------------
-declare_i18n_en() {
-    MSG_HELP_USAGE="Usage: ${PROGRAM_NAME} [OPTIONS]"
-    MSG_HELP_DESC="macOS Time Machine exclusion manager for developer machines."
-    MSG_HELP_MODES="Modes:"
-    MSG_HELP_DEFAULT="  (default)          Apply exclusions"
-    MSG_HELP_DRY_RUN="  --dry-run          Show what would be done without making changes"
-    MSG_HELP_REPORT="  --report-only      Scan and report without applying exclusions"
-    MSG_HELP_UNINSTALL="  --uninstall        Remove exclusions matching the current configured rules"
-    MSG_HELP_OPTIONS="Options:"
-    MSG_HELP_QUIET="  -q, --quiet        Suppress non-essential output"
-    MSG_HELP_FORCE="  --force            With --uninstall, also remove matched paths that no longer exist"
-    MSG_HELP_DESKTOP_REPORT="  --desktop-report   Write a report copy to ~/Desktop (default: off)"
-    MSG_HELP_LANG="  --lang <en|fr>     Set output language"
-    MSG_HELP_VERSION="  --version          Show version"
-    MSG_HELP_HELP="  --help             Show this help"
-    MSG_HELP_HELP_SHORT="  -h                 Same as --help"
-    MSG_HELP_CONFIG="Config management:"
-    MSG_HELP_ADD="  --add <type> <path> <reason>  Add a custom exclusion rule"
-    MSG_HELP_LIST="  --list             List custom exclusion rules"
-    MSG_HELP_EDIT="  --edit             Open custom config in \$EDITOR"
-    MSG_HELP_INIT="  --init             Create custom config directory"
-    MSG_HELP_TYPES="Supported types: path, pattern, prune"
-    MSG_DRY_RUN_PREFIX="[DRY-RUN]"
-    MSG_APPLYING="Applying exclusion:"
-    MSG_ALREADY="Already excluded:"
-    MSG_REMOVING="Removing exclusion:"
-    MSG_NOT_EXCLUDED="Not currently excluded:"
-    MSG_SCANNING="Scanning for regenerable directories..."
-    MSG_STATIC="Applying static exclusion rules..."
-    MSG_EXTRA_PATHS="Applying discovered paths (brew cache, large VM images)..."
-    MSG_REPORT_TITLE="=== tm-exclusions Report ==="
-    MSG_REPORT_CHECKED="Paths checked:"
-    MSG_REPORT_EXCLUDED="Newly excluded:"
-    MSG_REPORT_WOULD_EXCLUDE="Would exclude:"
-    MSG_REPORT_NEED_EXCLUSION="Paths not yet excluded (action needed):"
-    MSG_REPORT_ALREADY="Already excluded:"
-    MSG_REPORT_SKIPPED="Skipped:"
-    MSG_REPORT_ERRORS="Errors:"
-    MSG_REPORT_REMOVED="Removed:"
-    MSG_REPORT_SAVED="Report saved to:"
-    MSG_REPORT_DESKTOP_COPY="Also saved report copy to:"
-    MSG_UNINSTALL_START="Removing tm-exclusions applied exclusions..."
-    MSG_UNINSTALL_DONE="Uninstall complete."
-    MSG_UNINSTALL_FORCE="Force mode: removing all matched exclusions."
-    MSG_CONFIG_CREATED="Custom config directory created:"
-    MSG_CONFIG_EXISTS="Custom config directory already exists:"
-    MSG_CONFIG_AUTO_CREATED="Created default custom config (first run):"
-    MSG_CONFIG_ADDED="Rule added to custom config:"
-    MSG_CONFIG_EMPTY="No custom rules found."
-    MSG_CONFIG_NO_FILE="Custom config file not found. Run --init first."
-    MSG_ERROR_INVALID_ARG="Unknown argument:"
-    MSG_ERROR_INVALID_TYPE="Invalid type. Supported: path, pattern, prune"
-    MSG_ERROR_INVALID_LANG="Unsupported language for --lang. Supported values: en, fr."
-    MSG_ERROR_MISSING_ARGS="Missing required arguments."
-    MSG_ERROR_NOT_MACOS="Warning: Not running on macOS. Some features will be simulated."
-    MSG_ERROR_NO_TMUTIL="Warning: tmutil not found. Running in simulation mode."
-    MSG_PATH_NOT_FOUND="Path not found, skipping:"
-    MSG_PRUNE_SKIP="Pruning (skipping scan of):"
-    MSG_SKIP_PRIVILEGED="Skipping (non-interactive / no sudo cache) for system path:"
+# Finds the locales/ directory. Tries in order:
+#   1. TM_EXCLUSIONS_LOCALES_DIR env var (escape hatch for tests / unusual installs;
+#      ignored when running as root to avoid sourcing an untrusted path)
+#   2. <script_dir>/locales/          (source-checkout layout)
+#   3. <script_dir>/../share/tm-exclusions/locales/  (installed layout)
+#   4. /usr/local/share, /opt/homebrew/share, /usr/share (Homebrew / system install roots)
+resolve_locales_dir() {
+    local script_dir candidate
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+    # Env-var override takes precedence when set, but only for non-root runs.
+    # Under `sudo -E`, allowing this variable to control a `source`d path would be
+    # a privilege-escalation footgun.
+    if [[ -n "${TM_EXCLUSIONS_LOCALES_DIR:-}" && "${EUID}" -ne 0 ]]; then
+        echo "${TM_EXCLUSIONS_LOCALES_DIR}"
+        return 0
+    fi
+
+    for candidate in \
+        "${script_dir}/locales" \
+        "${script_dir}/../share/tm-exclusions/locales" \
+        "/usr/local/share/tm-exclusions/locales" \
+        "/opt/homebrew/share/tm-exclusions/locales" \
+        "/usr/share/tm-exclusions/locales"
+    do
+        if [[ -d "${candidate}" ]]; then
+            echo "${candidate}"
+            return 0
+        fi
+    done
+
+    return 1
 }
 
-declare_i18n_fr() {
-    MSG_HELP_USAGE="Utilisation : ${PROGRAM_NAME} [OPTIONS]"
-    MSG_HELP_DESC="Gestionnaire d'exclusions Time Machine pour machines de développement macOS."
-    MSG_HELP_MODES="Modes :"
-    MSG_HELP_DEFAULT="  (défaut)           Appliquer les exclusions"
-    MSG_HELP_DRY_RUN="  --dry-run          Montrer les actions sans les exécuter"
-    MSG_HELP_REPORT="  --report-only      Scanner et rapporter sans appliquer"
-    MSG_HELP_UNINSTALL="  --uninstall        Supprimer les exclusions correspondant aux règles configurées"
-    MSG_HELP_OPTIONS="Options :"
-    MSG_HELP_QUIET="  -q, --quiet        Mode silencieux"
-    MSG_HELP_FORCE="  --force            Avec --uninstall, supprimer aussi les chemins correspondants absents"
-    MSG_HELP_DESKTOP_REPORT="  --desktop-report   Écrire une copie du rapport sur le Bureau (défaut : désactivé)"
-    MSG_HELP_LANG="  --lang <en|fr>     Langue de sortie"
-    MSG_HELP_VERSION="  --version          Afficher la version"
-    MSG_HELP_HELP="  --help             Afficher cette aide"
-    MSG_HELP_HELP_SHORT="  -h                 Identique à --help"
-    MSG_HELP_CONFIG="Gestion de la configuration :"
-    MSG_HELP_ADD="  --add <type> <chemin> <raison>  Ajouter une règle personnalisée"
-    MSG_HELP_LIST="  --list             Lister les règles personnalisées"
-    MSG_HELP_EDIT="  --edit             Ouvrir la configuration dans \$EDITOR"
-    MSG_HELP_INIT="  --init             Créer le répertoire de configuration"
-    MSG_HELP_TYPES="Types supportés : path, pattern, prune"
-    MSG_DRY_RUN_PREFIX="[SIMULATION]"
-    MSG_APPLYING="Application de l'exclusion :"
-    MSG_ALREADY="Déjà exclu :"
-    MSG_REMOVING="Suppression de l'exclusion :"
-    MSG_NOT_EXCLUDED="Non exclu actuellement :"
-    MSG_SCANNING="Recherche des répertoires régénérables..."
-    MSG_STATIC="Application des règles d'exclusion statiques..."
-    MSG_EXTRA_PATHS="Application des chemins découverts (cache brew, grosses images VM)..."
-    MSG_REPORT_TITLE="=== Rapport tm-exclusions ==="
-    MSG_REPORT_CHECKED="Chemins vérifiés :"
-    MSG_REPORT_EXCLUDED="Nouvellement exclus :"
-    MSG_REPORT_WOULD_EXCLUDE="Seraient exclus :"
-    MSG_REPORT_NEED_EXCLUSION="Chemins pas encore exclus (action requise) :"
-    MSG_REPORT_ALREADY="Déjà exclus :"
-    MSG_REPORT_SKIPPED="Ignorés :"
-    MSG_REPORT_ERRORS="Erreurs :"
-    MSG_REPORT_REMOVED="Supprimés :"
-    MSG_REPORT_SAVED="Rapport sauvegardé dans :"
-    MSG_REPORT_DESKTOP_COPY="Copie du rapport également enregistrée dans :"
-    MSG_UNINSTALL_START="Suppression des exclusions tm-exclusions..."
-    MSG_UNINSTALL_DONE="Désinstallation terminée."
-    MSG_UNINSTALL_FORCE="Mode forcé : suppression de toutes les exclusions correspondantes."
-    MSG_CONFIG_CREATED="Répertoire de configuration créé :"
-    MSG_CONFIG_EXISTS="Répertoire de configuration existant :"
-    MSG_CONFIG_AUTO_CREATED="Configuration personnalisée par défaut créée (premier lancement) :"
-    MSG_CONFIG_ADDED="Règle ajoutée à la configuration :"
-    MSG_CONFIG_EMPTY="Aucune règle personnalisée trouvée."
-    MSG_CONFIG_NO_FILE="Fichier de configuration non trouvé. Exécutez --init d'abord."
-    MSG_ERROR_INVALID_ARG="Argument inconnu :"
-    MSG_ERROR_INVALID_TYPE="Type invalide. Supportés : path, pattern, prune"
-    MSG_ERROR_INVALID_LANG="Langue non supportée pour --lang. Valeurs supportées : en, fr."
-    MSG_ERROR_MISSING_ARGS="Arguments requis manquants."
-    MSG_ERROR_NOT_MACOS="Attention : pas sous macOS. Certaines fonctions seront simulées."
-    MSG_ERROR_NO_TMUTIL="Attention : tmutil introuvable. Mode simulation activé."
-    MSG_PATH_NOT_FOUND="Chemin introuvable, ignoré :"
-    MSG_PRUNE_SKIP="Élagage (scan ignoré pour) :"
-    MSG_SKIP_PRIVILEGED="Ignoré (non interactif / pas de cache sudo) pour chemin système :"
+# Source the locale file for the given language and call its declare function.
+# Exits non-zero with a clear error if the locale file cannot be found.
+# lang is allowlisted (en|fr) so untrusted --lang values never become filenames.
+load_i18n() {
+    local lang="$1"
+    local locales_dir locale_file
+
+    case "$lang" in
+        en|fr) ;;
+        *) lang="en" ;;
+    esac
+
+    locales_dir="$(resolve_locales_dir)" || {
+        echo "Error: locale files not found; expected locales/${lang}.sh in <script-dir>/locales or installed share dir" >&2
+        exit 1
+    }
+
+    locale_file="${locales_dir}/${lang}.sh"
+    if [[ ! -f "${locale_file}" ]]; then
+        echo "Error: locale files not found; expected locales/${lang}.sh in ${locales_dir}" >&2
+        exit 1
+    fi
+
+    # shellcheck source=/dev/null
+    source "${locale_file}"
+
+    if ! declare -F "declare_i18n_${lang}" >/dev/null 2>&1; then
+        echo "Error: ${locale_file} does not define declare_i18n_${lang}()" >&2
+        exit 1
+    fi
+
+    "declare_i18n_${lang}"
 }
 
 # ---------------------------------------------------------------------------
@@ -222,6 +170,18 @@ $p"
     fi
 }
 
+# KiB on disk for $1. Permission-denied children (typical of /private/var/folders)
+# make BSD/GNU du exit non-zero even when a partial total was printed. Capture
+# du independently so set -euo pipefail cannot abort report generation (#18, #55).
+du_size_kb() {
+    local raw=""
+    raw="$(du -sk -- "$1" 2>/dev/null || true)"
+    [[ -z "$raw" ]] && return 0
+    awk '{print $1; exit}' <<EOF
+${raw}
+EOF
+}
+
 # True if path is $HOME or under it (normalized, no trailing slash ambiguity)
 path_under_home() {
     local p="$1"
@@ -252,6 +212,49 @@ sudo_keepalive_start() {
         done
     ) &
     SUDO_KEEPALIVE_PID=$!
+}
+
+register_tmp_file() {
+    local f="$1"
+    [[ -z "$f" ]] && return 0
+    if [[ -z "${TMP_FILES}" ]]; then
+        TMP_FILES="$f"
+    else
+        TMP_FILES="${TMP_FILES}
+$f"
+    fi
+}
+
+unregister_tmp_file() {
+    local f="$1"
+    [[ -z "$f" || -z "${TMP_FILES}" ]] && return 0
+    TMP_FILES="$(printf '%s\n' "${TMP_FILES}" | grep -Fvx "$f" || true)"
+}
+
+cleanup_tmp_files() {
+    if [[ -n "${TMP_FILES}" ]]; then
+        local f
+        while IFS= read -r f; do
+            if [[ -n "$f" && -e "$f" ]]; then
+                rm -f "$f" 2>/dev/null || true
+            fi
+        done <<EOF
+${TMP_FILES}
+EOF
+        TMP_FILES=""
+    fi
+}
+
+cleanup() {
+    sudo_keepalive_stop
+    cleanup_tmp_files
+}
+
+on_signal() {
+    local sig="$1"
+    cleanup
+    trap - "$sig" EXIT
+    kill -s "$sig" "$$"
 }
 
 # Refresh sudo timestamp once before privileged tmutil calls (TTY may prompt)
@@ -372,7 +375,10 @@ detect_language() {
     local loc=""
 
     if [[ -n "${LANG_OVERRIDE}" ]]; then
-        CURRENT_LANG="${LANG_OVERRIDE}"
+        case "${LANG_OVERRIDE}" in
+            en|fr) CURRENT_LANG="${LANG_OVERRIDE}" ;;
+            *) CURRENT_LANG="en" ;;
+        esac
     else
         if [[ -n "${LC_ALL:-}" ]]; then
             loc="${LC_ALL}"
@@ -390,10 +396,7 @@ detect_language() {
         fi
     fi
 
-    case "${CURRENT_LANG}" in
-        fr) declare_i18n_fr ;;
-        *)  declare_i18n_en ;;
-    esac
+    load_i18n "${CURRENT_LANG}"
 }
 
 # Check if running on macOS with tmutil available
@@ -552,6 +555,37 @@ load_config() {
             log_error "Warning: TM_EXCLUSIONS_EXTRA_CONF is set but file is missing or unreadable: ${TM_EXCLUSIONS_EXTRA_CONF}"
         fi
     fi
+
+    # Derive .bak / .old prune entries from every static path rule so that
+    # shadow copies (e.g. ~/.bun.bak from a Bun reinstall) are silently skipped
+    # during the dynamic scan without requiring explicit catalog entries.
+    # Only path| entries are processed — pattern| and prune| are excluded.
+    # Skipped in uninstall mode so prior exclusions under shadow trees can be cleaned up.
+    if [[ "${MODE}" != "uninstall" ]]; then
+        derive_bak_old_prunes
+    fi
+}
+
+# For every static 'path' catalog entry P, append P.bak and P.old to
+# CONF_PRUNES (if not already present).  These auto-derived prunes only
+# affect is_pruned() / scan_dynamic_patterns(); apply_static_paths() is
+# not changed — .bak/.old paths are never passed to tmutil addexclusion.
+derive_bak_old_prunes() {
+    [[ -z "${CONF_PATHS}" ]] && return 0
+    local p clean_p suffix new_entries=""
+    while IFS= read -r p; do
+        [[ -z "$p" ]] && continue
+        clean_p="${p%/}"
+        for suffix in .bak .old; do
+            new_entries="${new_entries}${clean_p}${suffix}
+"
+        done
+    done <<EOF
+$(printf '%s\n' "${CONF_PATHS}")
+EOF
+
+    # Append and deduplicate once using awk (Bash 3.2 compatible)
+    CONF_PRUNES=$(printf '%s\n%s' "${CONF_PRUNES}" "${new_entries}" | awk 'NF && !seen[$0]++')
 }
 
 # ---------------------------------------------------------------------------
@@ -640,7 +674,9 @@ cmd_config_edit() {
     fi
 
     local editor="${EDITOR:-vi}"
-    exec "${editor}" "${CUSTOM_CONF}"
+    local -a editor_cmd
+    read -r -a editor_cmd <<< "${editor}"
+    exec "${editor_cmd[@]}" "${CUSTOM_CONF}"
 }
 
 # ---------------------------------------------------------------------------
@@ -751,11 +787,9 @@ is_pruned() {
     while IFS= read -r prune_entry; do
         [[ -z "$prune_entry" ]] && continue
         # Check if check_path starts with prune_entry
-        case "$check_path" in
-            "${prune_entry}"|"${prune_entry}/"*)
-                return 0
-                ;;
-        esac
+        if [[ "$check_path" == "$prune_entry" || "$check_path" == "$prune_entry/"* ]]; then
+            return 0
+        fi
     done <<EOF
 ${CONF_PRUNES}
 EOF
@@ -810,6 +844,7 @@ scan_dynamic_patterns() {
     # exclusion (e.g. ~/.npm covers ~/.npm/_npx/X/node_modules) are also pruned.
     local kept_file
     kept_file="$(mktemp "${TMPDIR:-/tmp}/tm_exc_kept.XXXXXX")"
+    register_tmp_file "$kept_file"
     if [[ -n "${CONF_PATHS}" ]]; then
         printf '%s\n' "${CONF_PATHS}" | grep -v '^[[:space:]]*$' > "$kept_file" || true
     fi
@@ -819,12 +854,14 @@ scan_dynamic_patterns() {
     # ancestor path is a strict string prefix of any descendant.
     local all_results
     all_results="$(mktemp "${TMPDIR:-/tmp}/tm_exc_all.XXXXXX")"
+    register_tmp_file "$all_results"
 
     local pattern_name
     while IFS= read -r pattern_name; do
         [[ -z "$pattern_name" ]] && continue
         local tmp_pattern
         tmp_pattern="$(mktemp "${TMPDIR:-/tmp}/tm_exc.XXXXXX")"
+        register_tmp_file "$tmp_pattern"
         find "$scan_root" -maxdepth 6 -type d -name "$pattern_name" > "$tmp_pattern" 2>/dev/null || true
         # Tag each match with its pattern so pattern_match_allowed can re-check later.
         # Tab-separated; pattern names never contain tabs in our config schema.
@@ -834,6 +871,7 @@ scan_dynamic_patterns() {
             printf '%s\t%s\n' "$found_dir" "$pattern_name" >> "$all_results"
         done < "$tmp_pattern"
         rm -f "$tmp_pattern"
+        unregister_tmp_file "$tmp_pattern"
     done <<EOF
 ${CONF_PATTERNS}
 EOF
@@ -842,8 +880,10 @@ EOF
     # therefore kept first; descendants are then dropped by is_covered_by_kept.
     local sorted_results
     sorted_results="$(mktemp "${TMPDIR:-/tmp}/tm_exc_sorted.XXXXXX")"
+    register_tmp_file "$sorted_results"
     LC_ALL=C sort -t$'\t' -k1,1 "$all_results" > "$sorted_results"
     rm -f "$all_results"
+    unregister_tmp_file "$all_results"
 
     local line found_dir matched_pattern
     while IFS= read -r line; do
@@ -898,6 +938,8 @@ EOF
     done < "$sorted_results"
 
     rm -f "$sorted_results" "$kept_file"
+    unregister_tmp_file "$sorted_results"
+    unregister_tmp_file "$kept_file"
 }
 
 apply_static_paths() {
@@ -940,6 +982,30 @@ ${CONF_PATHS}
 EOF
 }
 
+# Paths previously shipped as path| rules that the catalog no longer excludes.
+# Apply / dry-run / uninstall drop them from tmutil when still present so an
+# upgrade does not keep the old parent exclusion forever. Silent when the
+# path is not currently excluded (simulation mode, fresh install, already migrated).
+migrate_retired_exclusions() {
+    local retired_path
+    while IFS= read -r retired_path; do
+        [[ -z "$retired_path" ]] && continue
+        if [[ ! -e "$retired_path" ]] && [[ "${FORCE}" -eq 0 ]]; then
+            continue
+        fi
+        if cannot_privileged_tmutil "$retired_path"; then
+            continue
+        fi
+        if ! tm_is_excluded "$retired_path" && [[ "${FORCE}" -eq 0 ]]; then
+            continue
+        fi
+        log_info "  ${MSG_RETIRED_EXCLUSION} ${retired_path}"
+        remove_exclusion "$retired_path"
+    done <<EOF
+${HOME}/Library/Developer/CoreSimulator
+EOF
+}
+
 # Append one path to EXTRA_PATHS if not already listed (Bash 3.2 — no associative arrays)
 extra_paths_append() {
     local x="$1"
@@ -967,6 +1033,7 @@ collect_post_scan_paths() {
     fi
 
     tmp="$(mktemp "${TMPDIR:-/tmp}/tm_exc_disk.XXXXXX")"
+    register_tmp_file "$tmp"
     # One tree walk from $HOME covers ~/Library. BSD/GNU find: uppercase M for megabytes.
     # .sparsebundle is a directory bundle on macOS — match with -type d; other images as files.
     find "$HOME" \( -path '*/Mobile Documents/*' -o -path '*/Library/Mobile Documents/*' \) -prune -o \
@@ -979,6 +1046,7 @@ collect_post_scan_paths() {
         extra_paths_append "$line"
     done < "$tmp"
     rm -f "$tmp"
+    unregister_tmp_file "$tmp"
 }
 
 apply_extra_paths() {
@@ -1076,11 +1144,11 @@ PATH: ${path_dirs} existing directories (of ${path_total} colon-separated entrie
         total_k=0
         while IFS= read -r p; do
             [[ -z "$p" || ! -e "$p" ]] && continue
-            # du exits non-zero when a subdir is unreadable (e.g. /private/var/folders);
-            # || true prevents set -euo pipefail from aborting the script (#18).
-            # `--` guards against paths starting with `-` being parsed as options.
-            szk="$(du -sk -- "$p" 2>/dev/null | awk '{print $1}' || true)"
-            [[ -z "$szk" ]] && continue
+            # `--` is applied inside du_size_kb; unreadable children must not abort.
+            szk="$(du_size_kb "$p")"
+            case "$szk" in
+                ''|*[!0-9]*) continue ;;
+            esac
             total_k=$((total_k + szk))
             sh="$(awk -v k="$szk" 'BEGIN {
                 if (k < 1024) { printf "%dK", k; exit }
@@ -1290,6 +1358,11 @@ parse_args() {
 # Main
 # ---------------------------------------------------------------------------
 main() {
+    trap 'cleanup' EXIT
+    trap 'on_signal INT' INT
+    trap 'on_signal TERM' TERM
+    trap 'on_signal HUP' HUP
+
     # First pass: detect --lang and --quiet before i18n init
     local arg
     for arg in "$@"; do
@@ -1308,6 +1381,9 @@ main() {
             for a2 in "$@"; do
                 j=$((j + 1))
                 if [[ "$j" -eq "$next_i" ]]; then
+                    # Capture raw value; detect_language/load_i18n allowlist
+                    # before any locale path is built. parse_args reports
+                    # MSG_ERROR_INVALID_LANG for unsupported codes.
                     LANG_OVERRIDE="$a2"
                     break
                 fi
@@ -1356,8 +1432,6 @@ main() {
             ;;
     esac
 
-    trap 'sudo_keepalive_stop' EXIT
-
     if [[ -n "${TM_EXCLUSIONS_DEBUG_FIFO:-}" ]]; then
         # FIFO: open read+write so open(2) does not block waiting for a separate reader.
         if [[ -p "${TM_EXCLUSIONS_DEBUG_FIFO}" ]]; then
@@ -1382,6 +1456,10 @@ main() {
     load_config
 
     collect_post_scan_paths
+
+    if [[ "${MODE}" != "report-only" ]]; then
+        migrate_retired_exclusions
+    fi
 
     # Execute based on mode
     case "${MODE}" in

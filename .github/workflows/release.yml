@@ -1,6 +1,7 @@
 name: Release
 
-# On tag v*, create/update GitHub Release and bump Formula/tm-exclusions.rb in qveys/homebrew-tools.
+# On tag v*, create/update GitHub Release with notes from CHANGELOG.md
+# and bump Formula/tm-exclusions.rb in qveys/homebrew-tools.
 # Repository secret: HOMEBREW_TOKEN — PAT with repo scope on qveys/homebrew-tools
 
 on:
@@ -10,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing release tag to re-sync to the tap (e.g. v1.2.0). Leave empty to fail."
+        description: "Existing release tag to re-sync to the tap (e.g. v1.2.0)"
         required: true
         type: string
 
@@ -23,11 +24,23 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, hostinger]
     steps:
-      - uses: actions/checkout@v6
+      - name: Generate Housekeeper App Token
+        id: app-token
+        if: ${{ env.HAS_APP_KEY != '' }}
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.HOUSEKEEPER_APP_ID || '4537342' }}
+          private-key: ${{ secrets.HOUSEKEEPER_PRIVATE_KEY }}
+          permission-contents: write
+        env:
+          HAS_APP_KEY: ${{ secrets.HOUSEKEEPER_PRIVATE_KEY }}
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.tag || github.ref }}
+          token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
 
       - name: Extract version
         id: version
@@ -39,15 +52,42 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Create GitHub Release
+      - name: Extract release notes from CHANGELOG.md
+        id: notes
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release edit "$TAG" --title "tm-exclusions $TAG"
+          NOTES_FILE="release_notes.md"
+          awk -v ver="$VERSION" '
+            $0 ~ "^## (v)?" ver "([[:space:]]|$)" { found=1; next }
+            found && /^## / { found=0 }
+            found { print }
+          ' CHANGELOG.md > "$NOTES_FILE"
+          if [ -s "$NOTES_FILE" ] && grep -q '[^[:space:]]' "$NOTES_FILE"; then
+            echo "has_notes=true" >> "$GITHUB_OUTPUT"
           else
-            gh release create "$TAG" --title "tm-exclusions $TAG" --generate-notes
+            echo "has_notes=false" >> "$GITHUB_OUTPUT"
+            rm -f "$NOTES_FILE"
+          fi
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          HAS_NOTES: ${{ steps.notes.outputs.has_notes }}
+        run: |
+          if [ "$HAS_NOTES" = "true" ]; then
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              gh release edit "$TAG" --title "tm-exclusions $TAG" --notes-file release_notes.md
+            else
+              gh release create "$TAG" --title "tm-exclusions $TAG" --notes-file release_notes.md
+            fi
+          else
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              gh release edit "$TAG" --title "tm-exclusions $TAG" --generate-notes
+            else
+              gh release create "$TAG" --title "tm-exclusions $TAG" --generate-notes
+            fi
           fi
 
       - name: Compute tarball SHA256
@@ -64,7 +104,7 @@ jobs:
 
       - name: Update Homebrew tap
         env:
-          HOMEBREW_TOKEN: ${{ secrets.HOMEBREW_TOKEN }}
+          HOMEBREW_TOKEN: ${{ secrets.HOMEBREW_TOKEN || secrets.RELEASE_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
           TAG: ${{ steps.version.outputs.tag }}
           URL: ${{ steps.sha256.outputs.url }}

@@ -1,12 +1,22 @@
-.PHONY: setup check-hooks help test lint install uninstall check release tag
+.PHONY: setup check-hooks help test lint install uninstall check release tag version auto-patch
 
 SCRIPT = tm_exclusions.sh
-PREFIX ?= /usr/local/bin
+# Homebrew bin if writable (typical Apple Silicon), else /usr/local/bin.
+# Override with: make install PREFIX=/some/bin
+PREFIX ?= $(shell \
+  bp=""; \
+  if [ -n "$$HOMEBREW_PREFIX" ]; then bp="$$HOMEBREW_PREFIX"; \
+  elif command -v brew >/dev/null 2>&1; then bp=$$(brew --prefix 2>/dev/null); fi; \
+  if [ -n "$$bp" ] && [ -d "$$bp/bin" ] && [ -w "$$bp/bin" ]; then echo "$$bp/bin"; \
+  else echo /usr/local/bin; fi)
 INSTALL_NAME = tm-exclusions
 SHARE_DIR ?= $(abspath $(PREFIX)/../share/tm-exclusions)
 BASE_BRANCH ?= master
+INSTALL_BIN = /usr/bin/install
+RM_BIN = /bin/rm
+RMDIR_BIN = /bin/rmdir
 
-# Auto-detect whether sudo is required for install/uninstall.
+# Auto-detect whether elevation is required for install/uninstall.
 # Override with: make install SUDO= (skip) or make install SUDO=sudo (force)
 SUDO := $(shell \
   prefix_ok=''; share_ok=''; \
@@ -22,6 +32,28 @@ SUDO := $(shell \
   fi; \
   if [ -n "$$prefix_ok" ] && [ -n "$$share_ok" ]; then echo ''; \
   else echo 'sudo'; fi)
+
+# Guard: install paths are embedded in shell source as single-quoted literals,
+# so a path containing a single quote would silently mangle the destination.
+# Checked at make level: by the time the shell sees it, the quoting is broken.
+QUOTE := '
+CHECK_QUOTES = $(if $(findstring $(QUOTE),$(CURDIR)$(PREFIX)$(SHARE_DIR)),\
+  $(error Paths containing a single quote are not supported: $(CURDIR) $(PREFIX) $(SHARE_DIR)))
+
+# Shell snippet: request macOS admin (Authorization Services), else print fallback.
+# Expects $$cmd (POSIX command string, absolute paths, single-quoted arguments).
+# Bypasses sudoers whitelist.
+OSASCRIPT_OR_DIE = \
+	echo "Requesting administrator privileges..."; \
+	quoted=$$(printf '%s' "$$cmd" | sed 's/\\/\\\\/g; s/"/\\"/g'); \
+	if command -v osascript >/dev/null 2>&1 && osascript -e "do shell script \"$$quoted\" with administrator privileges"; then \
+	  :; \
+	else \
+	  echo "Error: could not modify $$PRE (privilege elevation failed)." >&2; \
+	  echo "Try:  make install PREFIX=\"\$$(brew --prefix)/bin\"" >&2; \
+	  echo "  or: brew install --formula ./Formula/tm-exclusions.rb" >&2; \
+	  exit 1; \
+	fi
 
 # Auto-bootstrap the versioned hooks path on every `make` invocation so the
 # local Conventional Commit hooks are active without requiring manual setup.
@@ -51,11 +83,18 @@ help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
+version: ## Print the current tm-exclusions version
+	@version="$$(sed -n 's/^readonly VERSION="\([^"]*\)"/\1/p' $(SCRIPT))"; \
+	  test -n "$$version" || { echo "Error: could not determine version from $(SCRIPT)." >&2; exit 1; }; \
+	  printf '%s\n' "$$version"
+
 test: ## Run smoke tests
 	@echo "Running smoke tests..."
 	@bash tests/smoke.bats-like.sh
+	@echo "Running release logic tests..."
+	@bash tests/test_release_logic.sh
 
-lint: ## Run ShellCheck on all shell scripts
+lint: ## Run ShellCheck on all shell scripts and syntax-check locale tables
 	@if ! command -v shellcheck >/dev/null 2>&1; then \
 	  echo "Error: shellcheck is not installed." >&2; \
 	  echo "Install it with: brew install shellcheck" >&2; \
@@ -66,27 +105,53 @@ lint: ## Run ShellCheck on all shell scripts
 	@shellcheck -x -s bash $(SCRIPT)
 	@shellcheck -x -s bash tests/test_helpers.sh
 	@shellcheck -x -s bash tests/smoke.bats-like.sh
+	@for f in locales/*.sh; do bash -n "$$f" || exit 1; done
 	@shellcheck -x -s sh .githooks/post-checkout
 	@shellcheck -x -s sh .githooks/post-checkout-fallback
 	@shellcheck -x -s sh .githooks/post-merge
 	@shellcheck -x -s sh .githooks/post-merge-fallback
 	@shellcheck -x -s sh .githooks/prune-gone-branches.sh
+	@shellcheck -x -s bash scripts/check-auto-patch.sh
 	@echo "ShellCheck passed."
 
-install: setup ## Install tm-exclusions to PREFIX (default: /usr/local/bin)
+install: setup ## Install tm-exclusions to PREFIX (Homebrew bin if writable, else /usr/local/bin)
 	@echo "Installing $(INSTALL_NAME) to $(PREFIX)..."
-	@if [ -n "$(SUDO)" ]; then $(SUDO) -v; fi
-	@$(SUDO) sh -c 'install -d "$(SHARE_DIR)" && install -m 755 "$(SCRIPT)" "$(PREFIX)/$(INSTALL_NAME)" && install -m 644 config/default.conf "$(SHARE_DIR)/default.conf" && install -m 644 config/extra-prunes.example.conf "$(SHARE_DIR)/extra-prunes.example.conf"'
+	@$(CHECK_QUOTES)CUR='$(CURDIR)'; PRE='$(PREFIX)'; SHR='$(SHARE_DIR)'; \
+	cmd="$(INSTALL_BIN) -d '$$SHR' '$$SHR/locales' '$$PRE' && $(INSTALL_BIN) -m 755 '$$CUR/$(SCRIPT)' '$$PRE/$(INSTALL_NAME)' && $(INSTALL_BIN) -m 644 '$$CUR/config/default.conf' '$$SHR/default.conf' && $(INSTALL_BIN) -m 644 '$$CUR/config/extra-prunes.example.conf' '$$SHR/extra-prunes.example.conf' && $(INSTALL_BIN) -m 644 '$$CUR'/locales/*.sh '$$SHR/locales/'"; \
+	if [ -z "$(SUDO)" ]; then \
+	  $(INSTALL_BIN) -d "$$SHR" "$$SHR/locales" "$$PRE" \
+	  && $(INSTALL_BIN) -m 755 "$$CUR/$(SCRIPT)" "$$PRE/$(INSTALL_NAME)" \
+	  && $(INSTALL_BIN) -m 644 "$$CUR/config/default.conf" "$$SHR/default.conf" \
+	  && $(INSTALL_BIN) -m 644 "$$CUR/config/extra-prunes.example.conf" "$$SHR/extra-prunes.example.conf" \
+	  && $(INSTALL_BIN) -m 644 "$$CUR"/locales/*.sh "$$SHR/locales/"; \
+	elif $(SUDO) $(INSTALL_BIN) -d "$$SHR" "$$SHR/locales" "$$PRE" \
+	  && $(SUDO) $(INSTALL_BIN) -m 755 "$$CUR/$(SCRIPT)" "$$PRE/$(INSTALL_NAME)" \
+	  && $(SUDO) $(INSTALL_BIN) -m 644 "$$CUR/config/default.conf" "$$SHR/default.conf" \
+	  && $(SUDO) $(INSTALL_BIN) -m 644 "$$CUR/config/extra-prunes.example.conf" "$$SHR/extra-prunes.example.conf" \
+	  && $(SUDO) $(INSTALL_BIN) -m 644 "$$CUR"/locales/*.sh "$$SHR/locales/"; then \
+	  :; \
+	else \
+	  $(OSASCRIPT_OR_DIE); \
+	fi
 	@echo "Installed. Run '$(INSTALL_NAME) --help' to get started."
 
 uninstall: ## Remove tm-exclusions from PREFIX
-	@if [ ! -f "$(PREFIX)/$(INSTALL_NAME)" ] && [ ! -f "$(SHARE_DIR)/default.conf" ]; then \
+	@$(CHECK_QUOTES)PRE='$(PREFIX)'; SHR='$(SHARE_DIR)'; \
+	if [ ! -f "$$PRE/$(INSTALL_NAME)" ] && [ ! -f "$$SHR/default.conf" ]; then \
 	  echo "$(INSTALL_NAME) is not installed. Nothing to remove."; \
 	else \
-	  echo "Removing $(INSTALL_NAME) from $(PREFIX)..."; \
-	  if [ -n "$(SUDO)" ]; then $(SUDO) -v; fi; \
-	  $(SUDO) rm -f "$(PREFIX)/$(INSTALL_NAME)" "$(SHARE_DIR)/default.conf" "$(SHARE_DIR)/extra-prunes.example.conf"; \
-	  if [ -d "$(SHARE_DIR)" ]; then $(SUDO) rmdir "$(SHARE_DIR)" 2>/dev/null || true; fi; \
+	  echo "Removing $(INSTALL_NAME) from $$PRE..."; \
+	  cmd="$(RM_BIN) -f '$$PRE/$(INSTALL_NAME)' '$$SHR/default.conf' '$$SHR/extra-prunes.example.conf' '$$SHR/locales/'*.sh || exit \$$?; if [ -d '$$SHR/locales' ]; then $(RMDIR_BIN) '$$SHR/locales' 2>/dev/null || true; fi; if [ -d '$$SHR' ]; then $(RMDIR_BIN) '$$SHR' 2>/dev/null || true; fi"; \
+	  if [ -z "$(SUDO)" ]; then \
+	    $(RM_BIN) -f "$$PRE/$(INSTALL_NAME)" "$$SHR/default.conf" "$$SHR/extra-prunes.example.conf" "$$SHR/locales/"*.sh || exit $$?; \
+	    if [ -d "$$SHR/locales" ]; then $(RMDIR_BIN) "$$SHR/locales" 2>/dev/null || true; fi; \
+	    if [ -d "$$SHR" ]; then $(RMDIR_BIN) "$$SHR" 2>/dev/null || true; fi; \
+	  elif $(SUDO) $(RM_BIN) -f "$$PRE/$(INSTALL_NAME)" "$$SHR/default.conf" "$$SHR/extra-prunes.example.conf" "$$SHR/locales/"*.sh; then \
+	    if [ -d "$$SHR/locales" ]; then $(SUDO) $(RMDIR_BIN) "$$SHR/locales" 2>/dev/null || true; fi; \
+	    if [ -d "$$SHR" ]; then $(SUDO) $(RMDIR_BIN) "$$SHR" 2>/dev/null || true; fi; \
+	  else \
+	    $(OSASCRIPT_OR_DIE); \
+	  fi; \
 	  echo "Removed."; \
 	fi
 
@@ -112,19 +177,36 @@ release: ## Cut a release PR — make release VERSION=x.y.z  (run make tag after
 	fi
 	@grep -q '^## Unreleased$$' CHANGELOG.md || \
 	  { echo "Error: CHANGELOG.md is missing a '## Unreleased' section to roll into v$(VERSION)." >&2; exit 1; }
+	@unreleased_content="$$(awk '/^## Unreleased$$/{found=1; next} found && /^## /{found=0} found && NF{print}' CHANGELOG.md)"; \
+	  test -n "$$unreleased_content" || { \
+	    echo "Error: '## Unreleased' section in CHANGELOG.md is empty. Add release notes before cutting a release." >&2; \
+	    exit 1; \
+	  }
 	@$(MAKE) check
 	@git checkout -b release/v$(VERSION) origin/$(BASE_BRANCH)
 	@current_version="$$(sed -n 's/^readonly VERSION="\([^"]*\)"/\1/p' $(SCRIPT))"; \
 	  test -n "$$current_version" || { echo "Error: could not determine current version from $(SCRIPT)." >&2; exit 1; }; \
 	  tmp_file="$$(mktemp)"; \
 	  sed 's|^readonly VERSION=".*"|readonly VERSION="$(VERSION)"|' $(SCRIPT) > "$$tmp_file" && mv "$$tmp_file" $(SCRIPT)
+	@if [ -f Formula/tm-exclusions.rb ]; then \
+	  tmp_file="$$(mktemp)"; \
+	  sed 's|^  version ".*"|  version "$(VERSION)"|' Formula/tm-exclusions.rb > "$$tmp_file" && mv "$$tmp_file" Formula/tm-exclusions.rb; \
+	  git add Formula/tm-exclusions.rb; \
+	fi
 	@tmp_file="$$(mktemp)"; \
 	  awk '/^## Unreleased$$/{print; print ""; print "## v$(VERSION)"; next}1' CHANGELOG.md > "$$tmp_file" && mv "$$tmp_file" CHANGELOG.md
 	@git add $(SCRIPT) CHANGELOG.md
 	@git commit -m "🔖 chore(release): bump to v$(VERSION)"
 	@git push -u origin release/v$(VERSION)
-	@printf 'Release v$(VERSION).\n\nAfter merge, push the tag to trigger the GitHub release workflow:\n```\nmake tag VERSION=$(VERSION)\n```\n' | \
-	  gh pr create --title "🔖 chore(release): v$(VERSION)" --body-file - --base $(BASE_BRANCH)
+	@pr_body="$$(printf 'Release v%s.\n\n### Changelog\n\n%s\n\n---\nAfter merge, push the tag to trigger the GitHub release workflow:\n```\nmake tag VERSION=%s\n```\n' "$(VERSION)" "$$(awk '/^## v$(VERSION)$$/{found=1; next} found && /^## /{found=0} found && NF{print}' CHANGELOG.md)" "$(VERSION)")"; \
+	  printf '%s\n' "$$pr_body" | gh pr create --title "🔖 chore(release): v$(VERSION)" --body-file - --base $(BASE_BRANCH)
+
+auto-patch: ## Check or execute auto-patch PR after >=5 PRs (use DRY_RUN=1 for test only)
+	@if [ "$$(echo "$${DRY_RUN:-0}")" = "1" ]; then \
+	  bash scripts/check-auto-patch.sh --dry-run; \
+	else \
+	  bash scripts/check-auto-patch.sh; \
+	fi
 
 tag: ## Push the signed release tag after the release PR is merged — make tag VERSION=x.y.z
 	@test -n "$(VERSION)" || { echo "Usage: make tag VERSION=x.y.z" >&2; exit 1; }
