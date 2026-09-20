@@ -21,20 +21,12 @@
 
 ## 🤔 Why?
 
-A typical developer Mac wastes **30–60 GB** of backup space on content that's trivially regenerable:
+Developer caches and downloaded dependencies can occupy many GB in backups.
+The default catalog targets regenerable content. Mixed data directories, VM disks,
+archives and agent sessions require an explicit choice because they can hold unique data.
 
-```
-node_modules/     ██████████████████████  12 GB
-Docker data       ████████████████████    14 GB
-.venv/            ████████                 4 GB
-Xcode DevSupport  ██████████               5 GB
-Homebrew          ██████████████          10 GB
-Ollama models     ████████████████        11 GB
-                  ─────────────────────────────
-                  Total wasted: ~56 GB 💸
-```
 - **Static exclusion rules** for known cache/artifact paths across multiple ecosystems
-- **Dynamic scanning** to discover `node_modules`, `.venv`, `build`, `dist`, and other regenerable directories
+- **Dynamic scanning** to discover `node_modules`, `.venv`, `__pycache__`, and other regenerable directories
 - **Prune support** to skip scanning irrelevant trees
 - **Dry-run mode** to preview changes without applying them
 - **Report-only mode** to audit current exclusion status
@@ -43,19 +35,50 @@ Ollama models     ████████████████        11 GB
 - **Multilingual** — English and French output
 - **Config management** — add custom rules, init/list/edit config
 - **Human-readable reports** after each run (host/user/version, optional inventory, `du` summary, `tmutil listexclusions` excerpt)
+- Reports group actions by rule, distinguish missing and privilege-blocked paths, and state the `tmutil listexclusions` result.
 
 Optional environment variables (see **`docs/ARCHITECTURE.md`**): `TM_EXCLUSIONS_REPORT`, `TM_EXCLUSIONS_REPORT_DESKTOP`, `TM_EXCLUSIONS_SKIP_INVENTORY`, `TM_EXCLUSIONS_DEBUG_FIFO`.
 
-**tm-exclusions** finds and excludes all of it in one command.
+Preview the selected exclusions with `tm-exclusions --dry-run` before applying them.
 
 ---
+
+## 🎨 Terminal display
+
+Interactive terminals get cyan section headings, status colors, emojis, progress
+bars and a compact final summary. During cache and disk-image discovery, the
+current directory updates (when `setting|scan_images|true` is enabled) on a single line (long paths show their tail).
+Progress counts completed static rules and
+completed scan patterns, not elapsed time. The full inventory, disk usage and
+per-path details remain in the saved report, whose location is printed at the end.
+
+```text
+  🛡️  tm-exclusions  v1.3.0
+
+  📁  Application des règles d’exclusion statiques...
+
+  ━━━━━━━━━━━━━━━━━━━━ 100%  42/42
+
+  📊  Bilan
+
+  Chemins vérifiés : 42
+  Seraient exclus : 12
+  Déjà exclus : 25
+  Ignorés : 5
+  Erreurs : 0
+```
+
+Try `bash tm_exclusions.sh --dry-run --lang fr` in your terminal.
+Pipes, redirected output, `TERM=dumb`, `NO_COLOR=1` and `--quiet` keep the
+plain full report without decorations or progress updates. Saved reports and
+debug logs always remain plain text. No extra dependencies are required.
 
 ## ✨ Features
 
 | | Feature | Details |
 |---|---|---|
-| 📦 | **Built-in rules** | ~150 rules across 17 categories (Node.js, Python, Rust, Java, Xcode, AI/LLM, Docker, Homebrew, …) |
-| 🔍 | **Dynamic scan** | Recursively finds `node_modules`, `.venv`, `__pycache__`, build dirs |
+| 📦 | **Built-in rules** | 100+ active rules across 17 categories, plus opt-in examples (Node.js, Python, Rust, Java, Xcode, AI/LLM, Docker, Homebrew, …) |
+| 🔍 | **Dynamic scan** | Recursively finds `node_modules`, `.venv`, `__pycache__`, tool-specific build caches |
 | 🔒 | **Dual tmutil strategy** | User paths via `tmutil addexclusion`; system paths via `sudo tmutil ... -p` |
 | 🌍 | **Multilingual** | French / English (auto-detected from `$LANG`) |
 | 📊 | **Rich report** | Saved report with counters/details (+ optional inventory and desktop copy) |
@@ -110,21 +133,21 @@ Config files are loaded, merged, then applied via a dual `tmutil` strategy (user
 
 | Category | Examples |
 |---|---|
-| 🍎 **Applications** | `/Applications`, `$HOME/Applications` |
-| 📗 **Node.js / JavaScript** | npm/yarn/pnpm caches, `.bun`, `.nvm`; dynamic `node_modules`, `.next`, `.turbo`, `.parcel-cache` |
-| 🐍 **Python** | pip/uv/pipx caches, `.pyenv`, conda forges; dynamic `.venv`, `venv`, `__pycache__`, `.pytest_cache`, `.ruff_cache` |
-| 🐳 **Docker** | Docker Desktop containers and group containers (`.docker` itself stays in backups for credentials) |
-| 🍺 **Homebrew** | `/opt/homebrew`, `/usr/local/Cellar`, Homebrew download cache (+ discovered `brew --cache`) |
+| 🍎 **Applications** | Opt-in: `/Applications`, `$HOME/Applications` |
+| 📗 **Node.js / JavaScript** | npm/yarn/pnpm caches; opt-in `.bun` and `.nvm`;  dynamic `node_modules`, `.next`, `.turbo`, `.parcel-cache` |
+| 🐍 **Python** | pip/pipx caches and Python environments; opt-in mixed uv/conda roots; dynamic `.venv`, `venv`, `__pycache__`, `.pytest_cache`, `.ruff_cache` |
+| 🐳 **Docker** | Opt-in Docker Desktop data (may contain databases and persistent volumes) |
+| 🍺 **Homebrew** | `/usr/local/Cellar` and discovered `brew --cache`; `/opt/homebrew` is opt-in (includes `etc` and `var`) |
 | 🦀 **Rust / Cargo** | Cargo registry/git, rustup toolchains; dynamic `target` |
-| ☕ **Java / JVM** | Maven, Gradle, Ivy, SBT, Coursier caches; dynamic `.gradle` |
+| ☕ **Java / JVM** | Maven, Gradle, Ivy and Coursier caches; opt-in SBT root; dynamic `.gradle` |
 | 🐹 **Go** | Go module cache, build cache |
-| 💎 **Ruby / iOS** | rbenv, RVM, gems, CocoaPods repo; dynamic `Pods` |
-| 🔨 **Xcode / Apple Dev Tools** | DerivedData, Archives, iOS/watchOS/tvOS/visionOS DeviceSupport, CoreSimulator Caches/Temp/Volumes/Devices (not the parent tree) |
-| 🗄️ **macOS Caches** | `~/Library/Caches`, `~/Library/Logs`, `/private/var/folders` |
-| 🛠️ **Dev Tools** | IDE caches (JetBrains, VS Code), Terraform, Pulumi, Helm, kubectl plugin caches |
-| 🤖 **AI / LLM** | Hugging Face, LM Studio, Ollama models, Claude Code VM bundles, SuperWhisper |
-| 🧰 **IDE and Dev Tool Caches** | Selective Application Support caches: Cursor workspaceStorage, JetBrains plugins, Zed languages, Discord Cache, … |
-| 🤝 **Claude Code / Codex** | Dynamic `.auto-claude`, `.codex`, `worktrees` |
+| 💎 **Ruby / iOS** | rbenv; opt-in mixed RVM/gems/CocoaPods roots; dynamic `Pods` |
+| 🔨 **Xcode / Apple Dev Tools** | DerivedData, DeviceSupport, CoreSimulator Caches/Temp/Volumes; Archives and Devices are opt-in |
+| 🗄️ **macOS Caches** | `~/Library/Caches`, `/private/var/folders`; Logs are opt-in |
+| 🛠️ **Dev Tools** | IDE caches (JetBrains, VS Code), Terraform and kubectl caches; mixed Pulumi/Helm roots are opt-in |
+| 🤖 **AI / LLM** | Hugging Face, LM Studio, Claude runtime bundles, SuperWhisper; Ollama models and agent sessions are opt-in |
+| 🧰 **IDE and Dev Tool Caches** | Selective Application Support caches: Cursor Chromium cache, JetBrains plugins, Zed languages, Discord Cache, … |
+| 🤝 **Claude Code / Codex** | Opt-in `.auto-claude`, `.codex`, `worktrees` (may contain uncommitted work and settings) |
 | 🧼 **Generic caches** | (opt-in — see config) Pattern `.cache` |
 | 🚫 **Prune zones** | Skip-scan-only: `~/Library`, `~/.Trash`, `~/.bun`, `~/.nvm`, package-manager `.bak`/`.old` shadow copies (`.bun.bak`, `.npm.bak`, …) |
 
@@ -149,8 +172,8 @@ Persistent config file management:
   --init                           Create user config
 
 Uninstall (idempotent — missing xattrs/paths silently skipped):
-  --uninstall      Remove all TM exclusions set by this script
-  --uninstall --force   Remove without confirmation prompt
+  --uninstall      Remove exclusions matching current rules (except keep paths)
+  --uninstall --force   Also remove matching paths that no longer exist
   --uninstall --dry-run Preview what would be removed
 
 Other:
@@ -189,7 +212,53 @@ setting|desktop_report|true
 | `path` | 🎯 Static exclusion → `tmutil addexclusion` (targets may include `*` `?` `[` globs, expanded at load time) |
 | `pattern` | 🔍 Directory name matched by `find -name` during scan |
 | `prune` | ✂️ Path ignored by scan (no TM exclusion applied) |
-| `setting` | ⚙️ Preference (`report_path`, `desktop_report`); not a Time Machine rule |
+| `keep` | Protect a literal path and its descendants; blocks exclusions of ancestors too |
+| `setting` | ⚙️ Preference (`report_path`, `desktop_report`, `scan_images`); not a Time Machine rule |
+
+### Protect data and choose broader exclusions
+
+```conf
+keep|~/VMs|VMs contain persistent data
+keep|~/.codex|Agent settings and sessions
+# Optional: only enable if you can regenerate every discovered image.
+setting|scan_images|true
+```
+
+`keep` accepts literal absolute paths, `~` and `$HOME` (no glob expansion).
+It protects the path and descendants in apply, dry-run, audit and uninstall modes,
+including discovered images. An exclusion of an ancestor is skipped as well; other
+sibling rules can still apply. Dot components and existing directory symlinks are resolved.
+Unlike `prune`, it applies to static rules and discovery as well as dynamic matches.
+Use `tm-exclusions --add keep ~/VMs "VM data"` to add a protection.
+
+`keep` does **not** remove existing exclusions. If its existing target is still
+excluded, the report flags the conflict and the command exits 1. Check the target
+and its parents with `tmutil isexcluded`, then remove the relevant exclusion manually.
+For a missing target, only future exclusions by this tool are prevented.
+
+Mixed roots (Docker data, `/opt/homebrew`, `.pulumi`, Xcode Archives, simulator
+Devices, IDE workspaceStorage, agent directories) and generic `build`/`dist`
+patterns now ship commented out. Copy individual rules from `config/default.conf`
+to `custom.conf` if needed. An upgrade does not remove previously applied exclusions
+for these paths or old discovered images: review them explicitly before relying on backups.
+
+Image discovery is off by default. With `scan_images=true`, it considers at most
+50 `.sparsebundle` directories or `.vmdk`/`.qcow2`/`.raw`/`.img` files larger than
+512 MiB. Extra candidates are disclosed as `LIMIT` in the report. This is a cap
+on processed images, not traversal time. `scan_images=false` disables it again.
+
+### Results and exit codes
+
+Exit 0 means processing completed without recorded errors; exit 1 means a failed
+operation, unknown exclusion status, unavailable required privileges, incomplete scan,
+invalid protection rule, keep conflict, or failed report write. Partial scan results
+are still processed and reported. An unknown `tmutil isexcluded` result never permits
+an add/remove, even with `--force`. Missing paths remain ordinary skips.
+
+Report details include the source config file and line, matching rule and reason.
+For discovery, the origin is indicated instead. Disk totals omit nested paths already
+covered by a parent; they remain approximate disk usage, not guaranteed backup savings
+(hard links, APFS clones and partial `du` totals can affect estimates).
 
 ### Report destination preference
 
@@ -202,7 +271,7 @@ setting|report_path|~/Documents/tm-exclusions-last.txt
 setting|desktop_report|true
 ```
 
-`report_path` is a **file** path (`~/` and `$HOME` expand like other config targets). `desktop_report` accepts `true`/`1`/`yes` or `false`/`0`/`no`. Later config files override earlier `setting` lines (last wins); rule types (`path`/`pattern`/`prune`) still append.
+`report_path` is a **file** path (`~/` and `$HOME` expand like other config targets). `desktop_report` accepts `true`/`1`/`yes` or `false`/`0`/`no`. Later config files override earlier `setting` lines (last wins); rule types (`path`/`pattern`/`prune`/`keep`) still append; `keep` always wins.
 
 **Precedence** (highest first):
 
@@ -211,7 +280,7 @@ setting|desktop_report|true
 3. Config `setting|…` lines
 4. Built-in default: `~/.config/tm_exclusions/last_report.txt` (Desktop copy off)
 
-`--add` still accepts only `path`, `pattern`, and `prune`. Add `setting` lines with `--edit` or by editing `custom.conf`.
+`--add` accepts `path`, `pattern`, `prune`, and `keep`. Add `setting` lines with `--edit` or by editing `custom.conf`.
 
 ### Add custom exclusions
 
@@ -223,7 +292,7 @@ tm-exclusions --add path ~/.deno "Deno cache — reinstallable"
 tm-exclusions --add pattern .angular "Angular CLI cache"
 
 # ✂️ Ignore a directory during scan
-tm-exclusions --add prune ~/VMs
+tm-exclusions --add prune ~/VMs "Skip dynamic matches"
 ```
 
 ### Power users: cloud-sync prune opt-in
@@ -351,6 +420,7 @@ launchctl load ~/Library/LaunchAgents/com.tm-exclusions.weekly.plist
 
 - In non-interactive runs without cached/passwordless sudo (`sudo -n`), system paths are skipped (no blocking prompt). Privileged exclusions such as `/private/var/folders` use `sudo tmutil addexclusion -p` when credentials are available.
 - Report disk-usage uses `du -sk` and ignores permission-denied children, so partially-readable trees like `/private/var/folders` cannot abort a run under `set -euo pipefail`.
+- Reports include a rule summary, separate missing-path and privilege-blocked counts, and an explicit `tmutil listexclusions` status (`ok`, `empty`, `failed`, or `unavailable`).
 - `--uninstall` removes exclusions matching current configured static rules, dynamic matches, and discovered extra paths. It also drops retired catalog paths that are still excluded (today: the former `$HOME/Library/Developer/CoreSimulator` parent).
 - Apply and `--dry-run` drop that same retired parent exclusion when `tmutil` still has it, then add the granular CoreSimulator subdirs. Manual equivalent: `tmutil removeexclusion "$HOME/Library/Developer/CoreSimulator"`.
 - Dynamic scan depth is intentionally capped to `find -maxdepth 6`.

@@ -42,16 +42,24 @@ TOTAL_ALREADY=0
 TOTAL_SKIPPED=0
 TOTAL_ERRORS=0
 TOTAL_REMOVED=0
+TOTAL_BLOCKED=0
+TOTAL_NOT_FOUND=0
 
 # Arrays (Bash 3.2 compatible — indexed arrays)
 # We store paths/patterns/prunes as newline-delimited strings
 CONF_PATHS=""
 CONF_PATTERNS=""
 CONF_PRUNES=""
+CONF_KEEPS=""
+CONF_RULES=""
+RULE_CONTEXT=""
+CONF_SCAN_IMAGES=0
 # Report destination preferences from setting|key|value (last file wins)
 CONF_REPORT_PATH=""
 CONF_DESKTOP_REPORT=0
 REPORT_LINES=""
+RULE_SUMMARY=""
+TM_LIST_STATUS="not-run"
 # Paths discovered after config (brew cache, large VM images); newline-separated
 EXTRA_PATHS=""
 # Unique existing paths for optional du summary in report
@@ -136,9 +144,118 @@ load_i18n() {
 # ---------------------------------------------------------------------------
 # Utility functions
 # ---------------------------------------------------------------------------
+# Presentation is terminal-only; reports, pipes and debug logs stay plain.
+UI=0
+UI_PROGRESS=0
+UI_DONE=0
+UI_TOTAL=0
+UI_RESET=""
+UI_CYAN=""
+UI_GREEN=""
+UI_DIM=""
+
+init_ui() {
+    if [[ -t 1 && "${TERM:-dumb}" != "dumb" && -z "${NO_COLOR:-}" && "${QUIET}" -eq 0 ]]; then
+        UI=1
+        UI_RESET=$'\033[0m'
+        UI_CYAN=$'\033[1;36m'
+        UI_GREEN=$'\033[32m'
+        UI_DIM=$'\033[2m'
+    fi
+}
+
+clear_progress() {
+    if [[ "${UI_PROGRESS}" -eq 1 ]]; then
+        printf '\r\033[2K'
+        UI_PROGRESS=0
+    fi
+}
+
+ui_section() {
+    clear_progress
+    if [[ "${UI}" -eq 1 ]]; then
+        printf '\n%s  %s  %s%s\n\n' "$UI_CYAN" "$1" "$2" "$UI_RESET"
+    else
+        log_info ""
+        log_info "$2"
+    fi
+}
+
+# Reserve two cells per character so wide Unicode paths cannot wrap the status.
+show_scan_path() {
+    [[ "${UI}" -eq 1 ]] || return 0
+    local display="$1" width=$(((SCAN_COLUMNS - 6) / 2))
+    [[ "$width" -gt 3 ]] || return 0
+    # Literal home abbreviation for display only.
+    # shellcheck disable=SC2088
+    case "$display" in
+        "$HOME") display="~" ;;
+        "$HOME/"*) display="~/${display#"$HOME/"}" ;;
+    esac
+    display="${display//[[:cntrl:]]/?}"
+    if [[ "${#display}" -gt "$width" ]]; then
+        display="…${display: -$((width - 1))}"
+    fi
+    printf '\r\033[2K  %s› %s%s' "$UI_DIM" "$display" "$UI_RESET"
+    UI_PROGRESS=1
+}
+
+progress_start() {
+    [[ "${UI}" -eq 1 ]] || return 0
+    UI_DONE=0
+    UI_TOTAL=$(printf '%s\n' "$1" | awk 'length($0) {n++} END {print n+0}')
+    progress_draw
+}
+
+progress_draw() {
+    [[ "${UI}" -eq 1 && "${UI_TOTAL}" -gt 0 ]] || return 0
+    local filled=$((UI_DONE * 20 / UI_TOTAL)) bar="" i
+    for ((i=0; i<20; i++)); do
+        if [[ "$i" -lt "$filled" ]]; then bar="${bar}━"; else bar="${bar}·"; fi
+    done
+    printf '\r\033[2K  %s%s%s %3d%%  %d/%d' "$UI_CYAN" "$bar" "$UI_RESET" \
+        "$((UI_DONE * 100 / UI_TOTAL))" "$UI_DONE" "$UI_TOTAL"
+    UI_PROGRESS=1
+    if [[ "${UI_DONE}" -eq "${UI_TOTAL}" ]]; then
+        printf '\n'
+        UI_PROGRESS=0
+    fi
+}
+
+progress_step() {
+    [[ "${UI}" -eq 1 ]] || return 0
+    UI_DONE=$((UI_DONE + 1))
+    progress_draw
+}
+
+ui_summary() {
+    ui_section "📊" "${MSG_UI_SUMMARY}"
+    printf '  %s %s\n' "$MSG_REPORT_CHECKED" "$TOTAL_CHECKED"
+    printf '  %s%s %s%s\n' "$UI_GREEN" "$1" "$TOTAL_EXCLUDED" "$UI_RESET"
+    printf '  %s %s\n' "$MSG_REPORT_ALREADY" "$TOTAL_ALREADY"
+    printf '  %s%s %s%s\n' "$UI_DIM" "$MSG_REPORT_SKIPPED" "$TOTAL_SKIPPED" "$UI_RESET"
+    printf '  %s %s\n' "$MSG_REPORT_ERRORS" "$TOTAL_ERRORS"
+    printf '  %s %s\n' "$MSG_REPORT_BLOCKED" "$TOTAL_BLOCKED"
+    if [[ "${MODE}" = "uninstall" ]]; then
+        printf '  %s %s\n' "$MSG_REPORT_REMOVED" "$TOTAL_REMOVED"
+    fi
+}
+
 log_info() {
     if [[ "${QUIET}" -eq 0 ]]; then
-        echo "$@"
+        clear_progress
+        if [[ "${UI}" -eq 1 && -n "$*" ]]; then
+            local color="$UI_DIM" icon="•"
+            case "$*" in
+                *"${MSG_DRY_RUN_PREFIX}"*) color="$UI_CYAN"; icon="🧪" ;;
+                *"${MSG_APPLYING}"*|*"${MSG_ALREADY}"*) color="$UI_GREEN"; icon="✓" ;;
+                *"${MSG_REMOVING}"*) color="$UI_CYAN"; icon="↩" ;;
+                *"${MSG_REPORT_SAVED}"*|*"${MSG_REPORT_DESKTOP_COPY}"*) color="$UI_CYAN"; icon="📄" ;;
+            esac
+            printf '  %s%s %s%s\n' "$color" "$icon" "$*" "$UI_RESET"
+        else
+            printf '%s\n' "$*"
+        fi
         if [[ "${DEBUG_LOG_FD}" -eq 1 ]]; then
             echo "$@" >&5 2>/dev/null || true
         fi
@@ -146,31 +263,66 @@ log_info() {
 }
 
 log_error() {
-    echo "$@" >&2
+    clear_progress
+    if [[ -t 2 && "${TERM:-dumb}" != "dumb" && -z "${NO_COLOR:-}" ]]; then
+        printf '\033[33m  ⚠ %s\033[0m\n' "$*" >&2
+    else
+        printf '%s\n' "$*" >&2
+    fi
 }
 
 add_report_line() {
+    local detail="$1"
+    case "$detail" in
+        SKIP\ *\(not\ found\))
+            TOTAL_NOT_FOUND=$((TOTAL_NOT_FOUND + 1))
+            return 0
+            ;;
+    esac
+    update_rule_summary "$detail"
+    if [[ -n "$RULE_CONTEXT" ]]; then detail="$detail [$RULE_CONTEXT]"; fi
     if [[ -z "${REPORT_LINES}" ]]; then
-        REPORT_LINES="$1"
+        REPORT_LINES="$detail"
     else
         REPORT_LINES="${REPORT_LINES}
-$1"
+$detail"
     fi
+}
+
+update_rule_summary() {
+    local action="$1" key="$RULE_CONTEXT" line count found=0 new_summary=""
+    [[ -z "$key" ]] && return 0
+    action="${action%% *}"
+    while IFS=$'\t' read -r line count; do
+        [[ -z "$line" ]] && continue
+        if [[ "$line" = "$key" ]]; then
+            count=$((count + 1))
+            found=1
+        fi
+        new_summary="${new_summary}${line}"$'\t'"${count}"$'\n'
+    done <<EOF
+${RULE_SUMMARY}
+EOF
+    if [[ "$found" -eq 0 ]]; then
+        new_summary="${new_summary}${key}"$'\t1\n'
+    fi
+    RULE_SUMMARY="$new_summary"
 }
 
 # Track paths for optional du summary (dedupe; Bash 3.2 — no associative arrays)
 du_track_path() {
     local p="$1"
     [[ -z "$p" || ! -e "$p" ]] && return 0
-    if printf '%s\n' "${DU_PATHS}" | grep -Fqx "$p" 2>/dev/null; then
-        return 0
-    fi
-    if [[ -z "${DU_PATHS}" ]]; then
-        DU_PATHS="$p"
-    else
-        DU_PATHS="${DU_PATHS}
-$p"
-    fi
+    local entry retained=""
+    while IFS= read -r entry; do
+        [[ -z "$entry" ]] && continue
+        path_under "$p" "$entry" && return 0
+        if ! path_under "$entry" "$p"; then retained="${retained}${entry}
+"; fi
+    done <<EOF
+${DU_PATHS}
+EOF
+    DU_PATHS="${retained}${p}"
 }
 
 # KiB on disk for $1. Permission-denied children (typical of /private/var/folders)
@@ -187,13 +339,15 @@ EOF
 
 # True if path is $HOME or under it (normalized, no trailing slash ambiguity)
 path_under_home() {
-    local p="$1"
-    local h="${HOME%/}"
-    local pn="${p%/}"
-    case "$pn" in
-        "${h}"|"${h}/"*) return 0 ;;
-        *) return 1 ;;
+    local p="$1" h="${HOME%/}"
+    case "${p%/}" in
+        "$h"|"$h/"*) return 0 ;;
     esac
+    # macOS exposes /var through /private/var; normalized keep paths use the latter.
+    p="$(normalize_path "$p")" || return 1
+    h="$(normalize_path "$HOME")" || return 1
+    path_under "$p" "$h"
+
 }
 
 sudo_keepalive_stop() {
@@ -249,6 +403,7 @@ EOF
 }
 
 cleanup() {
+    clear_progress
     sudo_keepalive_stop
     cleanup_tmp_files
 }
@@ -423,17 +578,18 @@ tm_is_excluded() {
     if [[ "${HAS_TMUTIL}" -eq 1 ]]; then
         local result=""
         if path_under_home "$path"; then
-            result="$(tmutil isexcluded "$path" 2>/dev/null)" || result=""
+            result="$(tmutil isexcluded "$path" 2>/dev/null)" || return 2
         else
             if ! privileged_tmutil_ok "$path"; then
-                return 1
+                return 2
             fi
             sudo_prepare_for_path "$path"
-            result="$(sudo tmutil isexcluded "$path" 2>/dev/null)" || result=""
+            result="$(sudo tmutil isexcluded "$path" 2>/dev/null)" || return 2
         fi
         case "$result" in
             *"[Excluded]"*) return 0 ;;
-            *) return 1 ;;
+            *"[Included]"*) return 1 ;;
+            *) return 2 ;;
         esac
     else
         # Simulation: never excluded
@@ -482,6 +638,8 @@ tm_remove_exclusion() {
 append_conf_path() {
     local p="$1"
     [[ -z "$p" ]] && return 0
+    CONF_RULES="${CONF_RULES}path|${p}|${RULE_CONTEXT}
+"
     if [[ -z "${CONF_PATHS}" ]]; then
         CONF_PATHS="${p}"
     else
@@ -549,11 +707,29 @@ parse_config_file() {
         home_token="\$HOME"
         entry_target="${entry_target//${home_token}/$HOME}"
 
+        RULE_CONTEXT="${file}:${line_num} | ${entry_type}|${entry_target} | ${entry_reason}"
         case "$entry_type" in
+            keep)
+                if [[ "$entry_target" != /* || "$entry_target" == *$'\t'* ]]; then
+                    record_error "$MSG_INVALID_KEEP ${file}:${line_num}"
+                    continue
+                fi
+                local keep_path
+                if ! keep_path="$(normalize_path "$entry_target")"; then
+                    record_error "$MSG_INVALID_KEEP ${file}:${line_num}"
+                    continue
+                fi
+                CONF_KEEPS="${CONF_KEEPS}${keep_path}
+"
+                CONF_RULES="${CONF_RULES}keep|${keep_path}|${RULE_CONTEXT}
+"
+                ;;
             path)
                 append_conf_path_target "$entry_target"
                 ;;
             pattern)
+                CONF_RULES="${CONF_RULES}pattern|${entry_target}|${RULE_CONTEXT}
+"
                 if [[ -z "${CONF_PATTERNS}" ]]; then
                     CONF_PATTERNS="${entry_target}"
                 else
@@ -584,6 +760,13 @@ ${entry_target}"
                             CONF_REPORT_PATH="$entry_reason"
                         fi
                         ;;
+                    scan_images)
+                        case "$entry_reason" in
+                            true|1|yes) CONF_SCAN_IMAGES=1 ;;
+                            false|0|no) CONF_SCAN_IMAGES=0 ;;
+                            *) record_error "$MSG_INVALID_IMAGES ${file}:${line_num}" ;;
+                        esac
+                        ;;
                     desktop_report)
                         case "$entry_reason" in
                             true|1|yes)
@@ -613,6 +796,9 @@ load_config() {
     CONF_PATHS=""
     CONF_PATTERNS=""
     CONF_PRUNES=""
+    CONF_KEEPS=""
+    CONF_RULES=""
+    CONF_SCAN_IMAGES=0
     CONF_REPORT_PATH=""
     CONF_DESKTOP_REPORT=0
 
@@ -629,6 +815,8 @@ load_config() {
             log_error "Warning: TM_EXCLUSIONS_EXTRA_CONF is set but file is missing or unreadable: ${TM_EXCLUSIONS_EXTRA_CONF}"
         fi
     fi
+
+    RULE_CONTEXT=""
 
     # Derive .bak / .old prune entries from every static path rule so that
     # shadow copies (e.g. ~/.bun.bak from a Bun reinstall) are silently skipped
@@ -673,12 +861,15 @@ write_custom_config_if_absent() {
 # tm-exclusions custom configuration
 # Format: type|target|reason
 # Types: path (static path), pattern (directory name for scan), prune (skip during scan)
-#        setting (preferences: report_path, desktop_report)
+#        keep (protect a path and descendants from exclusion)
+#        setting (preferences: report_path, desktop_report, scan_images)
 #
 # Examples:
 # path|~/MyLargeDataset|Large dataset not needed in backup
 # pattern|.myframework_cache|Framework cache directories
-# prune|~/Archive|Skip scanning archive directory
+# prune|~/Archive|Skip dynamic matches in archive directory
+# keep|~/VMs|Keep VM data in backups
+# setting|scan_images|false
 # setting|report_path|~/Documents/tm-exclusions-last.txt
 # setting|desktop_report|true
 CONF_EOF
@@ -708,7 +899,7 @@ cmd_config_add() {
     local entry_reason="$3"
 
     case "${entry_type}" in
-        path|pattern|prune) ;;
+        path|pattern|prune|keep) ;;
         *)
             log_error "${MSG_ERROR_INVALID_TYPE}"
             exit 1
@@ -720,6 +911,16 @@ cmd_config_add() {
         exit 1
     fi
 
+    if [[ "$entry_path$entry_reason" == *$'\n'* || "$entry_path" == *'|'* || "$entry_path" == *$'\t'* ]]; then
+        log_error "$MSG_INVALID_RULE"
+        exit 1
+    fi
+    # Literal config placeholders are expanded when loading.
+    # shellcheck disable=SC2088,SC2016
+    if [[ "$entry_type" = keep && "$entry_path" != /* && "$entry_path" != '~' && "$entry_path" != '~/'* && "$entry_path" != '$HOME' && "$entry_path" != '$HOME/'* ]]; then
+        log_error "$MSG_INVALID_KEEP"
+        exit 1
+    fi
     echo "${entry_type}|${entry_path}|${entry_reason}" >> "${CUSTOM_CONF}"
     log_info "${MSG_CONFIG_ADDED} ${entry_type}|${entry_path}|${entry_reason}"
 }
@@ -759,96 +960,152 @@ cmd_config_edit() {
 # ---------------------------------------------------------------------------
 # Exclusion application
 # ---------------------------------------------------------------------------
-apply_exclusion() {
-    local path="$1"
-    TOTAL_CHECKED=$((TOTAL_CHECKED + 1))
+record_error() {
+    TOTAL_ERRORS=$((TOTAL_ERRORS + 1))
+    log_error "$*"
+    add_report_line "ERROR $*"
+}
 
-    # Check if path exists
-    if [[ ! -e "$path" ]]; then
+record_blocked() {
+    TOTAL_BLOCKED=$((TOTAL_BLOCKED + 1))
+    TOTAL_ERRORS=$((TOTAL_ERRORS + 1))
+    log_error "$*"
+    add_report_line "BLOCKED $*"
+}
+
+set_rule_context() {
+    local type target context
+    RULE_CONTEXT=""
+    while IFS='|' read -r type target context; do
+        if [[ "$type" = "$1" && "$target" = "$2" ]]; then
+            RULE_CONTEXT="$context"
+            return 0
+        fi
+    done <<EOF
+${CONF_RULES}
+EOF
+}
+
+# Normalize dot components and existing symlink prefixes without requiring realpath.
+normalize_path() {
+    local path="$1" part normalized="" physical
+    local -a parts
+    IFS='/' read -r -a parts <<< "$path"
+    for part in "${parts[@]}"; do
+        case "$part" in
+            ''|.) ;;
+            ..) normalized="${normalized%/*}" ;;
+            *) normalized="${normalized}/$part" ;;
+        esac
+        if [[ -d "${normalized:-/}" ]]; then
+            physical="$(cd -P "${normalized:-/}" 2>/dev/null && pwd)" || return 1
+            normalized="${physical%/}"
+        fi
+    done
+    printf '%s\n' "${normalized:-/}"
+}
+
+# Reject both descendants and ancestors: excluding a parent would defeat keep.
+keep_blocks() {
+    [[ -n "$CONF_KEEPS" ]] || return 1
+    local candidate entry
+    if ! candidate="$(normalize_path "$1")"; then
+        record_error "$MSG_INVALID_KEEP $1"
+        return 0
+    fi
+    while IFS= read -r entry; do
+        [[ -z "$entry" ]] && continue
+        if path_under "$candidate" "$entry" || path_under "$entry" "$candidate"; then
+            return 0
+        fi
+    done <<EOF
+${CONF_KEEPS}
+EOF
+    return 1
+}
+
+check_keeps() {
+    local path status
+    while IFS= read -r path; do
+        [[ -z "$path" ]] && continue
+        set_rule_context keep "$path"
+        add_report_line "KEEP  $path"
+        [[ -e "$path" ]] || continue
+        if tm_is_excluded "$path"; then
+            record_error "$MSG_KEEP_EXCLUDED $path"
+        else
+            status=$?
+            if [[ "$status" -ne 1 ]]; then record_error "$MSG_CHECK_FAILED $path"; fi
+        fi
+    done <<EOF
+${CONF_KEEPS}
+EOF
+    RULE_CONTEXT=""
+}
+
+# One decision path for static rules, dynamic matches and discovered paths.
+process_path() {
+    local path="$1" status
+    TOTAL_CHECKED=$((TOTAL_CHECKED + 1))
+    if keep_blocks "$path"; then
+        TOTAL_SKIPPED=$((TOTAL_SKIPPED + 1))
+        add_report_line "KEEP  $path ($MSG_KEEP_SKIP)"
+        return 0
+    fi
+    if [[ ! -e "$path" && ! ( "$MODE" = uninstall && "$FORCE" -eq 1 ) ]]; then
         TOTAL_SKIPPED=$((TOTAL_SKIPPED + 1))
         log_info "  ${MSG_PATH_NOT_FOUND} ${path}"
         add_report_line "SKIP  ${path} (not found)"
         return 0
     fi
-
-    du_track_path "$path"
-
     if cannot_privileged_tmutil "$path"; then
-        TOTAL_SKIPPED=$((TOTAL_SKIPPED + 1))
-        log_info "  ${MSG_SKIP_PRIVILEGED} ${path}"
-        add_report_line "SKIP  ${path} (needs sudo for system path)"
+        record_blocked "$MSG_SKIP_PRIVILEGED $path"
         return 0
     fi
-
-    # Check if already excluded
-    if tm_is_excluded "$path"; then
+    if tm_is_excluded "$path"; then status=0; else status=$?; fi
+    if [[ "$status" -gt 1 ]]; then
+        record_error "$MSG_CHECK_FAILED $path"
+        return 0
+    fi
+    du_track_path "$path"
+    if [[ "$MODE" = uninstall ]]; then
+        if [[ "$status" -eq 1 && "$FORCE" -eq 0 ]]; then
+            TOTAL_SKIPPED=$((TOTAL_SKIPPED + 1))
+            add_report_line "SKIP  $path (not excluded)"
+        elif [[ "$DRY_RUN" -eq 1 ]]; then
+            TOTAL_REMOVED=$((TOTAL_REMOVED + 1))
+            add_report_line "WOULD_REMOVE $path"
+        elif tm_remove_exclusion "$path"; then
+            TOTAL_REMOVED=$((TOTAL_REMOVED + 1))
+            log_info "  $MSG_REMOVING $path"
+            add_report_line "REMOVE $path"
+        else
+            record_error "$MSG_REMOVE_FAILED $path"
+        fi
+    elif [[ "$status" -eq 0 ]]; then
         TOTAL_ALREADY=$((TOTAL_ALREADY + 1))
-        log_info "  ${MSG_ALREADY} ${path}"
-        add_report_line "OK    ${path} (already excluded)"
-        return 0
-    fi
-
-    if [[ "${DRY_RUN}" -eq 1 ]]; then
+        log_info "  $MSG_ALREADY $path"
+        add_report_line "OK    $path (already excluded)"
+    elif [[ "$MODE" = report-only ]]; then
         TOTAL_EXCLUDED=$((TOTAL_EXCLUDED + 1))
-        log_info "  ${MSG_DRY_RUN_PREFIX} ${MSG_APPLYING} ${path}"
-        add_report_line "WOULD ${path}"
-        return 0
-    fi
-
-    if tm_add_exclusion "$path"; then
+        add_report_line "NEED  $path (not excluded)"
+    elif [[ "$DRY_RUN" -eq 1 ]]; then
         TOTAL_EXCLUDED=$((TOTAL_EXCLUDED + 1))
-        log_info "  ${MSG_APPLYING} ${path}"
-        add_report_line "ADD   ${path}"
+        log_info "  $MSG_DRY_RUN_PREFIX $MSG_APPLYING $path"
+        add_report_line "WOULD $path"
+    elif tm_add_exclusion "$path"; then
+        TOTAL_EXCLUDED=$((TOTAL_EXCLUDED + 1))
+        log_info "  $MSG_APPLYING $path"
+        add_report_line "ADD   $path"
     else
-        TOTAL_ERRORS=$((TOTAL_ERRORS + 1))
-        log_error "  Error excluding: ${path}"
-        add_report_line "ERROR ${path}"
+        record_error "$MSG_ADD_FAILED $path"
     fi
 }
 
+# Retirement always removes, even when the current mode is apply.
 remove_exclusion() {
-    local path="$1"
-    TOTAL_CHECKED=$((TOTAL_CHECKED + 1))
-
-    if [[ ! -e "$path" ]] && [[ "${FORCE}" -eq 0 ]]; then
-        TOTAL_SKIPPED=$((TOTAL_SKIPPED + 1))
-        add_report_line "SKIP  ${path} (not found)"
-        return 0
-    fi
-
-    if [[ -e "$path" ]]; then
-        du_track_path "$path"
-    fi
-
-    if cannot_privileged_tmutil "$path"; then
-        TOTAL_SKIPPED=$((TOTAL_SKIPPED + 1))
-        log_info "  ${MSG_SKIP_PRIVILEGED} ${path}"
-        add_report_line "SKIP  ${path} (needs sudo for system path)"
-        return 0
-    fi
-
-    if ! tm_is_excluded "$path" && [[ "${FORCE}" -eq 0 ]]; then
-        log_info "  ${MSG_NOT_EXCLUDED} ${path}"
-        add_report_line "SKIP  ${path} (not excluded)"
-        return 0
-    fi
-
-    if [[ "${DRY_RUN}" -eq 1 ]]; then
-        TOTAL_REMOVED=$((TOTAL_REMOVED + 1))
-        log_info "  ${MSG_DRY_RUN_PREFIX} ${MSG_REMOVING} ${path}"
-        add_report_line "WOULD_REMOVE ${path}"
-        return 0
-    fi
-
-    if tm_remove_exclusion "$path"; then
-        TOTAL_REMOVED=$((TOTAL_REMOVED + 1))
-        log_info "  ${MSG_REMOVING} ${path}"
-        add_report_line "REMOVE ${path}"
-    else
-        TOTAL_ERRORS=$((TOTAL_ERRORS + 1))
-        log_error "  Error removing exclusion: ${path}"
-        add_report_line "ERROR ${path}"
-    fi
+    local MODE=uninstall
+    process_path "$1"
 }
 
 # ---------------------------------------------------------------------------
@@ -884,6 +1141,7 @@ path_under() {
     local ancestor="${2%/}"
     [[ -z "$descendant" ]] && descendant="/"
     [[ -z "$ancestor" ]] && ancestor="/"
+    [[ "$ancestor" = / ]] && return 0
     case "$descendant" in
         "$ancestor"|"$ancestor"/*) return 0 ;;
     esac
@@ -905,8 +1163,7 @@ is_covered_by_kept() {
 }
 
 scan_dynamic_patterns() {
-    log_info ""
-    log_info "${MSG_SCANNING}"
+    ui_section "🔍" "${MSG_SCANNING}"
 
     if [[ -z "${CONF_PATTERNS}" ]]; then
         return 0
@@ -923,7 +1180,13 @@ scan_dynamic_patterns() {
     kept_file="$(mktemp "${TMPDIR:-/tmp}/tm_exc_kept.XXXXXX")"
     register_tmp_file "$kept_file"
     if [[ -n "${CONF_PATHS}" ]]; then
-        printf '%s\n' "${CONF_PATHS}" | grep -v '^[[:space:]]*$' > "$kept_file" || true
+        local static_seed
+        while IFS= read -r static_seed; do
+            [[ -z "$static_seed" ]] && continue
+            if ! keep_blocks "$static_seed"; then printf '%s\n' "$static_seed" >> "$kept_file"; fi
+        done <<EOF
+${CONF_PATHS}
+EOF
     fi
 
     # Collect all dynamic matches up-front (across all patterns) so we can sort
@@ -933,13 +1196,17 @@ scan_dynamic_patterns() {
     all_results="$(mktemp "${TMPDIR:-/tmp}/tm_exc_all.XXXXXX")"
     register_tmp_file "$all_results"
 
+    progress_start "${CONF_PATTERNS}"
     local pattern_name
     while IFS= read -r pattern_name; do
         [[ -z "$pattern_name" ]] && continue
         local tmp_pattern
         tmp_pattern="$(mktemp "${TMPDIR:-/tmp}/tm_exc.XXXXXX")"
         register_tmp_file "$tmp_pattern"
-        find "$scan_root" -maxdepth 6 -type d -name "$pattern_name" > "$tmp_pattern" 2>/dev/null || true
+        if ! find "$scan_root" -maxdepth 6 -type d -name "$pattern_name" > "$tmp_pattern" 2>/dev/null; then
+            RULE_CONTEXT=""
+            record_error "$MSG_SCAN_FAILED $scan_root ($pattern_name)"
+        fi
         # Tag each match with its pattern so pattern_match_allowed can re-check later.
         # Tab-separated; pattern names never contain tabs in our config schema.
         local found_dir
@@ -949,6 +1216,7 @@ scan_dynamic_patterns() {
         done < "$tmp_pattern"
         rm -f "$tmp_pattern"
         unregister_tmp_file "$tmp_pattern"
+        progress_step
     done <<EOF
 ${CONF_PATTERNS}
 EOF
@@ -972,9 +1240,17 @@ EOF
             continue
         fi
 
+        set_rule_context pattern "$matched_pattern"
+
         # Skip if a config-level prune zone covers this path.
         if is_pruned "$found_dir"; then
             log_info "  ${MSG_PRUNE_SKIP} ${found_dir}"
+            add_report_line "SKIP  $found_dir ($MSG_PRUNE_SKIP)"
+            continue
+        fi
+
+        if keep_blocks "$found_dir"; then
+            process_path "$found_dir"
             continue
         fi
 
@@ -994,24 +1270,7 @@ EOF
             printf '%s\n' "$found_dir" >> "$kept_file"
         fi
 
-        if [[ "${MODE}" = "uninstall" ]]; then
-            remove_exclusion "$found_dir"
-        elif [[ "${MODE}" = "report-only" ]]; then
-            TOTAL_CHECKED=$((TOTAL_CHECKED + 1))
-            du_track_path "$found_dir"
-            if cannot_privileged_tmutil "$found_dir"; then
-                TOTAL_SKIPPED=$((TOTAL_SKIPPED + 1))
-                add_report_line "SKIP  ${found_dir} (needs sudo for system path)"
-            elif tm_is_excluded "$found_dir"; then
-                TOTAL_ALREADY=$((TOTAL_ALREADY + 1))
-                add_report_line "OK    ${found_dir} (excluded)"
-            else
-                TOTAL_EXCLUDED=$((TOTAL_EXCLUDED + 1))
-                add_report_line "NEED  ${found_dir} (not excluded)"
-            fi
-        else
-            apply_exclusion "$found_dir"
-        fi
+        process_path "$found_dir"
     done < "$sorted_results"
 
     rm -f "$sorted_results" "$kept_file"
@@ -1020,40 +1279,20 @@ EOF
 }
 
 apply_static_paths() {
-    log_info ""
-    log_info "${MSG_STATIC}"
+    ui_section "📁" "${MSG_STATIC}"
 
     if [[ -z "${CONF_PATHS}" ]]; then
         return 0
     fi
 
+    progress_start "${CONF_PATHS}"
     local static_path
     while IFS= read -r static_path; do
         [[ -z "$static_path" ]] && continue
 
-        if [[ "${MODE}" = "uninstall" ]]; then
-            remove_exclusion "$static_path"
-        elif [[ "${MODE}" = "report-only" ]]; then
-            TOTAL_CHECKED=$((TOTAL_CHECKED + 1))
-            if [[ ! -e "$static_path" ]]; then
-                TOTAL_SKIPPED=$((TOTAL_SKIPPED + 1))
-                add_report_line "SKIP  ${static_path} (not found)"
-            elif [[ -e "$static_path" ]]; then
-                du_track_path "$static_path"
-                if cannot_privileged_tmutil "$static_path"; then
-                    TOTAL_SKIPPED=$((TOTAL_SKIPPED + 1))
-                    add_report_line "SKIP  ${static_path} (needs sudo for system path)"
-                elif tm_is_excluded "$static_path"; then
-                    TOTAL_ALREADY=$((TOTAL_ALREADY + 1))
-                    add_report_line "OK    ${static_path} (excluded)"
-                else
-                    TOTAL_EXCLUDED=$((TOTAL_EXCLUDED + 1))
-                    add_report_line "NEED  ${static_path} (not excluded)"
-                fi
-            fi
-        else
-            apply_exclusion "$static_path"
-        fi
+        set_rule_context path "$static_path"
+        process_path "$static_path"
+        progress_step
     done <<EOF
 ${CONF_PATHS}
 EOF
@@ -1073,9 +1312,15 @@ migrate_retired_exclusions() {
         if cannot_privileged_tmutil "$retired_path"; then
             continue
         fi
-        if ! tm_is_excluded "$retired_path" && [[ "${FORCE}" -eq 0 ]]; then
-            continue
+        if tm_is_excluded "$retired_path"; then :; else
+            local status=$?
+            if [[ "$status" -gt 1 ]]; then
+                record_error "$MSG_CHECK_FAILED $retired_path"
+                continue
+            fi
+            [[ "$FORCE" -eq 0 ]] && continue
         fi
+        RULE_CONTEXT="$MSG_RETIRED_EXCLUSION"
         log_info "  ${MSG_RETIRED_EXCLUSION} ${retired_path}"
         remove_exclusion "$retired_path"
     done <<EOF
@@ -1100,7 +1345,16 @@ $x"
 
 collect_post_scan_paths() {
     EXTRA_PATHS=""
+    RULE_CONTEXT=""
     local line tmp
+    local SCAN_COLUMNS=80
+    if [[ "${UI}" -eq 1 ]]; then
+        SCAN_COLUMNS="$(tput cols 2>/dev/null || printf '80')"
+        case "$SCAN_COLUMNS" in
+            ''|*[!0-9]*) SCAN_COLUMNS=80 ;;
+        esac
+        show_scan_path "$MSG_UI_BREW"
+    fi
 
     if command -v brew >/dev/null 2>&1; then
         line="$(brew --cache 2>/dev/null)" || line=""
@@ -1109,17 +1363,38 @@ collect_post_scan_paths() {
         fi
     fi
 
+    if [[ "$CONF_SCAN_IMAGES" -eq 0 ]]; then clear_progress; return 0; fi
     tmp="$(mktemp "${TMPDIR:-/tmp}/tm_exc_disk.XXXXXX")"
     register_tmp_file "$tmp"
-    # One tree walk from $HOME covers ~/Library. BSD/GNU find: uppercase M for megabytes.
-    # .sparsebundle is a directory bundle on macOS — match with -type d; other images as files.
-    find "$HOME" \( -path '*/Mobile Documents/*' -o -path '*/Library/Mobile Documents/*' \) -prune -o \
-        \( -type d -name '*.sparsebundle' -prune -print \) -o \
-        \( -type f \( -name '*.vmdk' -o -name '*.qcow2' -o -name '*.raw' -o -name '*.img' \) -size +512M -print \) \
-        2>/dev/null | head -n 50 >>"$tmp" || true
+    # Stream directories and matching images from the same walk, NUL-delimited.
+    # Sparsebundles are reported as candidates but their contents stay pruned.
+    show_scan_path "$HOME"
+    if ! find "$HOME" \( -path '*/Mobile Documents/*' -o -path '*/Library/Mobile Documents/*' \) -prune -o \
+        \( -type d -print0 \( -name '*.sparsebundle' -prune \) \) -o \
+        \( -type f \( -name '*.vmdk' -o -name '*.qcow2' -o -name '*.raw' -o -name '*.img' \) -size +512M -print0 \) \
+        2>/dev/null | {
+            local candidate count=0
+            while IFS= read -r -d '' candidate; do
+                if [[ -d "$candidate" ]]; then
+                    show_scan_path "$candidate"
+                    [[ "$candidate" = *.sparsebundle ]] || continue
+                fi
+                count=$((count + 1))
+                if [[ "$count" -le 51 ]]; then printf '%s\n' "$candidate" >> "$tmp"; fi
+            done
+        }; then
+        record_error "$MSG_SCAN_FAILED $HOME"
+    fi
+    clear_progress
+    if [[ "$(wc -l < "$tmp")" -gt 50 ]]; then
+        add_report_line "LIMIT $MSG_IMAGE_LIMIT"
+    fi
+    local image_count=0
 
     while IFS= read -r line || [[ -n "$line" ]]; do
         [[ -z "$line" ]] && continue
+        image_count=$((image_count + 1))
+        [[ "$image_count" -gt 50 ]] && break
         extra_paths_append "$line"
     done < "$tmp"
     rm -f "$tmp"
@@ -1131,36 +1406,16 @@ apply_extra_paths() {
         return 0
     fi
 
-    log_info ""
-    log_info "${MSG_EXTRA_PATHS}"
+    ui_section "📦" "${MSG_EXTRA_PATHS}"
 
+    progress_start "${EXTRA_PATHS}"
     local extra_path
     while IFS= read -r extra_path; do
         [[ -z "$extra_path" ]] && continue
 
-        if [[ "${MODE}" = "uninstall" ]]; then
-            remove_exclusion "$extra_path"
-        elif [[ "${MODE}" = "report-only" ]]; then
-            TOTAL_CHECKED=$((TOTAL_CHECKED + 1))
-            if [[ ! -e "$extra_path" ]]; then
-                TOTAL_SKIPPED=$((TOTAL_SKIPPED + 1))
-                add_report_line "SKIP  ${extra_path} (not found)"
-            elif [[ -e "$extra_path" ]]; then
-                du_track_path "$extra_path"
-                if cannot_privileged_tmutil "$extra_path"; then
-                    TOTAL_SKIPPED=$((TOTAL_SKIPPED + 1))
-                    add_report_line "SKIP  ${extra_path} (needs sudo for system path)"
-                elif tm_is_excluded "$extra_path"; then
-                    TOTAL_ALREADY=$((TOTAL_ALREADY + 1))
-                    add_report_line "OK    ${extra_path} (excluded)"
-                else
-                    TOTAL_EXCLUDED=$((TOTAL_EXCLUDED + 1))
-                    add_report_line "NEED  ${extra_path} (not excluded)"
-                fi
-            fi
-        else
-            apply_exclusion "$extra_path"
-        fi
+        RULE_CONTEXT="$MSG_DISCOVERED | $extra_path"
+        process_path "$extra_path"
+        progress_step
     done <<EOF
 ${EXTRA_PATHS}
 EOF
@@ -1205,10 +1460,12 @@ desktop_report_enabled() {
 # Report
 # ---------------------------------------------------------------------------
 generate_report() {
+    RULE_CONTEXT=""
+    if [[ "${UI}" -eq 1 ]]; then ui_section "📝" "$MSG_UI_REPORT"; fi
     local report=""
     local dry_run_note=""
     local excluded_label="${MSG_REPORT_EXCLUDED}"
-    local inv du_sec tm_list out_path path_total path_dirs p szk sh total_k desk_copy raw_list
+    local inv du_sec tm_list out_path path_total path_dirs p szk sh total_k desk_copy raw_list tm_list_rc
 
     if [ "${DRY_RUN}" -eq 1 ]; then
         dry_run_note=" (dry-run)"
@@ -1225,13 +1482,13 @@ generate_report() {
     else
         if [[ -d /Applications ]]; then
             inv="${inv}
-/Applications (top-level): $(find /Applications -maxdepth 1 -mindepth 1 2>/dev/null | wc -l | tr -d '[:space:]')"
+/Applications (top-level): $(find /Applications -maxdepth 1 -mindepth 1 2>/dev/null | wc -l | tr -d '[:space:]' || true)"
         fi
         if command -v brew >/dev/null 2>&1; then
             inv="${inv}
-Homebrew formulas: $(brew list --formula 2>/dev/null | wc -l | tr -d '[:space:]')"
+Homebrew formulas: $(brew list --formula 2>/dev/null | wc -l | tr -d '[:space:]' || true)"
             inv="${inv}
-Homebrew casks: $(brew list --cask 2>/dev/null | wc -l | tr -d '[:space:]')"
+Homebrew casks: $(brew list --cask 2>/dev/null | wc -l | tr -d '[:space:]' || true)"
         fi
         path_total="$(printf '%s' "${PATH:-}" | awk -F: '{print NF}')"
         path_dirs=0
@@ -1292,7 +1549,9 @@ ${MSG_REPORT_CHECKED} ${TOTAL_CHECKED}
 ${excluded_label} ${TOTAL_EXCLUDED}
 ${MSG_REPORT_ALREADY} ${TOTAL_ALREADY}
 ${MSG_REPORT_SKIPPED} ${TOTAL_SKIPPED}
-${MSG_REPORT_ERRORS} ${TOTAL_ERRORS}"
+${MSG_REPORT_ERRORS} ${TOTAL_ERRORS}
+${MSG_REPORT_BLOCKED} ${TOTAL_BLOCKED}
+${MSG_REPORT_NOT_FOUND} ${TOTAL_NOT_FOUND}"
 
     if [[ "${MODE}" = "uninstall" ]]; then
         report="${report}
@@ -1315,15 +1574,47 @@ ${REPORT_LINES}"
 
     tm_list=""
     if [[ "${HAS_TMUTIL}" -eq 1 ]]; then
-        raw_list="$( { tmutil listexclusions 2>/dev/null || true; } | head -n 500)" || raw_list=""
+        raw_list=""
+        tm_list_rc=0
+        raw_list="$(tmutil listexclusions 2>/dev/null)" || tm_list_rc=$?
+        if [[ "$tm_list_rc" -ne 0 ]]; then
+            TM_LIST_STATUS="failed (exit ${tm_list_rc})"
+            raw_list="${MSG_REPORT_TMLIST_FAILED}"
+        elif [[ -n "$raw_list" ]]; then
+            TM_LIST_STATUS="ok"
+            raw_list="$(printf '%s\n' "$raw_list" | head -n 500)"
+        else
+            TM_LIST_STATUS="empty"
+            raw_list="${MSG_REPORT_TMLIST_EMPTY}"
+        fi
         tm_list="
-=== tmutil listexclusions (first 500 lines) ===
+=== tmutil listexclusions (first 500 lines; status: ${TM_LIST_STATUS}) ===
 ${raw_list}"
+    else
+        TM_LIST_STATUS="unavailable"
     fi
     report="${report}${tm_list}"
 
-    echo ""
-    echo "$report"
+    report="${report}
+
+=== ${MSG_REPORT_RULE_SUMMARY} ==="
+    if [[ -n "$RULE_SUMMARY" ]]; then
+        while IFS=$'\t' read -r key count; do
+            [[ -z "$key" ]] && continue
+            report="${report}"$'\n'"${count}"$'\t'"${key}"
+        done <<EOF
+${RULE_SUMMARY}
+EOF
+    else
+        report="${report}
+${MSG_REPORT_RULE_SUMMARY_EMPTY}"
+    fi
+
+    if [[ "${UI}" -eq 1 ]]; then
+        ui_summary "$excluded_label"
+    else
+        printf '\n%s\n' "$report"
+    fi
 
     out_path="$(resolve_report_out_path)"
 
@@ -1331,7 +1622,9 @@ ${raw_list}"
         log_info ""
         log_info "${MSG_REPORT_SAVED} ${out_path}"
     else
-        log_error "${MSG_ERROR_REPORT_WRITE} ${out_path}"
+        record_error "${MSG_ERROR_REPORT_WRITE} ${out_path}"
+        # Keep the detailed results accessible if the compact view cannot link a file.
+        if [[ "${UI}" -eq 1 ]]; then printf '\n%s\n' "$report"; fi
     fi
 
     if desktop_report_enabled; then
@@ -1339,7 +1632,7 @@ ${raw_list}"
         if mkdir -p "${HOME}/Desktop" 2>/dev/null && printf '%s\n' "$report" > "${desk_copy}" 2>/dev/null; then
             log_info "${MSG_REPORT_DESKTOP_COPY} ${desk_copy}"
         else
-            log_error "${MSG_ERROR_REPORT_WRITE} ${desk_copy}"
+            record_error "${MSG_ERROR_REPORT_WRITE} ${desk_copy}"
         fi
     fi
 }
@@ -1508,6 +1801,8 @@ main() {
     # Initialize language
     detect_language
 
+    init_ui
+
     # Parse arguments fully
     parse_args "$@"
 
@@ -1567,12 +1862,30 @@ main() {
 
     # Load config
     load_config
+    if [[ "$TOTAL_ERRORS" -gt 0 ]]; then
+        generate_report
+        return 1
+    fi
 
+    if [[ "${UI}" -eq 1 ]]; then
+        printf '\n%s  🛡️  %s%s  v%s\n' "$UI_CYAN" "$PROGRAM_NAME" "$UI_RESET" "$VERSION"
+        printf '  %s\n' "$MSG_HELP_DESC"
+        local mode_label="$MSG_UI_APPLY"
+        case "$MODE" in
+            report-only) mode_label="$MSG_UI_AUDIT" ;;
+            uninstall) mode_label="$MSG_UI_UNINSTALL" ;;
+        esac
+        printf '  %s%s%s\n' "$UI_DIM" "$mode_label" "$UI_RESET"
+        if [[ "${DRY_RUN}" -eq 1 ]]; then log_info "$MSG_DRY_RUN_PREFIX"; fi
+    fi
+    ui_section "🔎" "$MSG_UI_DISCOVERY"
     collect_post_scan_paths
 
     if [[ "${MODE}" != "report-only" ]]; then
         migrate_retired_exclusions
     fi
+
+    check_keeps
 
     # Execute based on mode
     case "${MODE}" in
@@ -1601,6 +1914,7 @@ main() {
             generate_report
             ;;
     esac
+    [[ "$TOTAL_ERRORS" -eq 0 ]]
 }
 
 main "$@"
