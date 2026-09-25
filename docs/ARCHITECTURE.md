@@ -17,7 +17,8 @@ main()
   │   ├── parse_config_file(default.conf)
   │   ├── parse_config_file(custom.conf)  [merged]
   │   └── parse_config_file($TM_EXCLUSIONS_EXTRA_CONF)  [optional, append]
-  ├── collect_post_scan_paths()  ← brew --cache + large VM/disk images (deduped list)
+  ├── collect_post_scan_paths()  ← brew --cache + opt-in VM/disk images (deduped list)
+  ├── check_keeps()              ← flag existing exclusions on protected paths
   ├── apply_static_paths()       ← process 'path' entries
   ├── scan_dynamic_patterns()    ← process 'pattern' entries with find
   ├── apply_extra_paths()        ← apply paths from collect_post_scan_paths()
@@ -33,9 +34,9 @@ Configuration is loaded and merged in this order:
 
 After all three config files are parsed, `derive_bak_old_prunes()` runs a one-time pass over `CONF_PATHS`. For every static `path|<P>` rule, it automatically appends `<P>.bak` and `<P>.old` to `CONF_PRUNES` (if not already present). This means common shadow copies produced by tool reinstalls or migrations (e.g. `.bun.bak`, `.npm.bak`, `.cargo.bak`) are silently skipped during the dynamic scan without requiring explicit catalog entries. Only `path|` entries trigger auto-derivation — `pattern|` and `prune|` entries are not processed. The auto-derived prune entries only affect `is_pruned()` / `scan_dynamic_patterns()`; `apply_static_paths()` is unchanged and will never call `tmutil addexclusion` on `.bak`/`.old` paths (which may not exist on most machines).
 
-Strings for **en** / **fr** are embedded in `tm_exclusions.sh` (not external locale files); see **`docs/I18N.md`**.
+Strings for **en** / **fr** live in `locales/{en,fr}.sh`; see **`docs/I18N.md`**.
 
-Later **rule** entries (`path` / `pattern` / `prune`) are appended; there is no override or deduplication. **`setting`** lines are last-wins (a later file or later line replaces the earlier value for that key). Both files use the same `type|target|reason` format.
+Later **rule** entries (`path` / `pattern` / `prune` / `keep`) are appended; there is no override or deduplication. **`setting`** lines are last-wins (a later file or later line replaces the earlier value for that key). Both files use the same `type|target|reason` format.
 
 Targets may use leading `~` (expanded to `$HOME`) or the literal substring `$HOME` (expanded at parse time). For `setting|report_path|<file>`, those expansions apply to the **value** (third field). `path` targets may also contain glob metacharacters (`*`, `?`, `[`); they are expanded with `compgen -G` at load time. Unmatched globs are dropped so a literal `*` is never passed to `tmutil`. This is how versioned folders such as `$HOME/Library/Application Support/JetBrains/*/plugins` are covered without listing every IDE release.
 
@@ -46,7 +47,8 @@ Targets may use leading `~` (expanded to `$HOME`) or the literal substring `$HOM
 | `path` | Static exclusion: apply `tmutil addexclusion` to the expanded path (optional glob expansion at load time) |
 | `pattern` | Dynamic scan: `find $HOME -maxdepth 6 -type d -name <pattern>` and exclude matches |
 | `prune` | Scan skip: paths under this prefix are ignored during dynamic pattern scanning (not excluded from backup) |
-| `setting` | Preference, not a Time Machine rule. Keys: `report_path` (saved report **file** path) and `desktop_report` (`true`/`1`/`yes` or `false`/`0`/`no`). Unknown keys and invalid `desktop_report` values warn on stderr and are ignored. |
+| `keep` | Protect a literal path and descendants across all modes; also block ancestor exclusions. Existing exclusions are reported, not automatically removed. |
+| `setting` | Preference, not a Time Machine rule. Keys: `report_path` (saved report **file** path) and boolean `desktop_report` / `scan_images` (`true`/`1`/`yes` or `false`/`0`/`no`). Unknown keys and invalid `desktop_report` values warn on stderr and are ignored. |
 
 ## Scan Logic
 
@@ -80,15 +82,15 @@ Package-manager reinstalls often leave a sibling of a catalogued cache (e.g. `~/
 
 ## Exclusion Application Strategy
 
-For each path to exclude:
-1. Check if the path exists on disk. If not, skip it.
-2. Check if already excluded via `tmutil isexcluded`. If yes, record as "already excluded."
+Static, dynamic and discovered paths share `process_path()`. For each path:
+1. Reject keep-protected paths and ancestors; then check if the path exists on disk. If not, skip it.
+2. Check `tmutil isexcluded`: 0 = excluded, 1 = included, 2 = unknown/error. Unknown status is an error and never permits a mutation; excluded paths are recorded as already excluded.
 3. If not excluded, call `tmutil addexclusion` (or simulate in dry-run).
 4. Record the result for the report.
 
 This makes the tool **idempotent**: running it multiple times produces the same result.
 
-Paths **outside `$HOME`** (for example `/Applications`) use **`sudo tmutil … -p`** (privileged sticky exclusions). When stdin is not a TTY and there is no **passwordless sudo** cache (`sudo -n` fails), those paths are **skipped** with a clear log/report line so CI and automated smoke tests do not block on a sudo password.
+Paths **outside `$HOME`** (for example `/Applications`) use **`sudo tmutil … -p`** (privileged sticky exclusions). When stdin is not a TTY and there is no **passwordless sudo** cache (`sudo -n` fails), those paths are **reported as errors** with exit 1 and a clear log/report line so CI and automated smoke tests do not block on a sudo password.
 
 ### tmutil Wrappers
 
@@ -107,15 +109,42 @@ The tool traps `EXIT`, `INT` (SIGINT), `TERM` (SIGTERM), and `HUP` (SIGHUP) via 
 
 Some exclusions applied via `tmutil addexclusion` (user-level "sticky" exclusions) may not be visible in System Settings > Time Machine. This is expected macOS behavior. Use `tmutil isexcluded <path>` to verify exclusion status.
 
+## Terminal presentation
+
+`init_ui()` enables presentation only for a TTY stdout, a non-dumb `TERM`,
+non-quiet output and no non-empty `NO_COLOR`. Section headings and status logs
+use ANSI colors and Unicode icons. `progress_start` / `progress_step` count
+static rules, discovered extra paths, and completed dynamic scan patterns;
+percentages describe work items, not time or discovered-directory counts.
+Progress lines are cleared before messages and on cleanup; no cursor hiding or
+background animation process is used. Opt-in image discovery streams visited directories and
+matching images from one NUL-delimited `find` traversal. `show_scan_path()`
+rewrites one status line, abbreviates HOME, sanitizes control characters and
+truncates long paths to fit the terminal (allowing two cells per character).
+The Homebrew lookup gets a waiting message before traversal starts. Only image
+candidates count toward the 50-result cap; a 51st candidate produces a `LIMIT` report line. The stream is drained so genuine `find` failures remain detectable; sparsebundle contents and
+iCloud subtrees remain pruned. Report preparation keeps a heading because its
+total work is not known in advance.
+
+Interactive runs print a compact localized summary instead of duplicating the
+full report. The complete report is still saved unchanged. Plain output (including
+`--quiet`) preserves the full report, and debug FD 5 receives undecorated messages.
+
 ## Report Generation
 
 After processing all paths, a human-readable report is printed and saved. The default file is `~/.config/tm_exclusions/last_report.txt`. The report includes:
 - Hostname, user, program version, timestamp, and mode
 - Counts: checked, newly excluded, already excluded, skipped, errors
 - **Inventory** (optional): `/Applications` item count, Homebrew formula/cask counts when `brew` exists, PATH directory stats. Set **`TM_EXCLUSIONS_SKIP_INVENTORY=1`** to skip this block (faster smoke/CI; `brew list` can be slow).
-- **Disk usage**: `du -sk` per path touched in the run (existing paths only), formatted for display, and an approximate total in KiB. `du_size_kb()` captures `du` independently of any pipeline so a non-zero exit from unreadable children (e.g. `/private/var/folders`) cannot trip `set -euo pipefail`.
-- Per-path detail lines
+- **Disk usage**: `du -sk` per path touched in the run (existing paths only), formatted for display, and an approximate total in KiB. `du_track_path()` removes nested entries when a parent is present, regardless of insertion order. Hard links and APFS clones can still affect estimates. `du_size_kb()` captures `du` independently of any pipeline so a non-zero exit from unreadable children (e.g. `/private/var/folders`) cannot trip `set -euo pipefail`.
+- Per-path detail lines with source file/line, rule target and reason (including expanded path globs), or discovery origin
+- A compact summary grouped by rule context, plus separate counts for missing paths and paths blocked by unavailable privileges
 - When `tmutil` is available: an excerpt of **`tmutil listexclusions`** (first 500 lines)
+
+The `tmutil listexclusions` section always reports its status: `ok`, `empty`,
+`failed (exit N)`, or `unavailable`. An empty result is therefore distinguishable
+from a command failure. Missing configured paths are counted but omitted from the
+long detail list; the rule summary remains available for them.
 
 **Report path overrides** (precedence: CLI > environment > config `setting` > built-in default)
 
@@ -187,7 +216,7 @@ Tests validate:
 - Language selection
 - Config parsing with custom entries
 
-Tests run without real `tmutil` mutations. On non-macOS systems (like CI runners), the tmutil wrappers simulate behavior, allowing full CLI testing.
+Smoke and safety tests inject fake `tmutil`, `brew` and `sudo` commands and use temporary HOME directories. `tests/test_safety.sh` exercises keep conflicts, mutation/status/scan failures, image opt-in/capping, provenance and nested disk totals without modifying host exclusions.
 
 ## Future Work (v2)
 
@@ -200,47 +229,46 @@ The current architecture (config-driven, function-based) supports these addition
 
 ## Default rule catalog
 
-`config/default.conf` ships approximately 150 rules organized in 17 categories. Categories use `#@CategoryName` markers — cosmetic in 1.x (treated as comments by the loader), forward-compatible with the category-aware report grouping tracked in [#34](https://github.com/qveys/tm-exclusions/issues/34).
+`config/default.conf` contains 100+ active rules organized under 17 category labels.
+Mixed roots and generic `build`/`dist` patterns ship commented out as opt-in examples.
+The active catalog keeps focused caches and dependencies. Docker state, `/opt/homebrew`,
+Pulumi state, Xcode Archives, CoreSimulator Devices, IDE workspaceStorage, agent
+sessions/worktrees and locally created Ollama models are not assumed regenerable.
+Copy a commented rule to `custom.conf` to explicitly enable it.
 
-| # | Category | Section(s) | Sample entries |
-|---|---|---|---|
-| 1 | Applications | path | `/Applications`, `$HOME/Applications` |
-| 2 | Node.js / JavaScript | path + pattern | `$HOME/.npm`, `$HOME/.pnpm-store`, `node_modules`, `.next`, `.turbo` |
-| 3 | Python | path + pattern | `$HOME/.cache/pip`, `$HOME/.pyenv/versions`, `.venv`, `__pycache__`, `.ruff_cache` |
-| 4 | Docker | path | `$HOME/.docker`, `$HOME/Library/Containers/com.docker.docker` |
-| 5 | Homebrew | path | `/opt/homebrew`, `/usr/local/Cellar`, `$HOME/Library/Caches/Homebrew` |
-| 6 | Rust / Cargo | path + pattern | `$HOME/.cargo/registry`, `$HOME/.rustup/toolchains`, `target` |
-| 7 | Java / JVM | path + pattern | `$HOME/.m2/repository`, `$HOME/.gradle/caches`, `.gradle` |
-| 8 | Go | path | `$HOME/go/pkg/mod`, `$HOME/.cache/go-build` |
-| 9 | Ruby / iOS | path + pattern | `$HOME/.rbenv/versions`, `$HOME/.cocoapods`, `Pods` |
-| 10 | Xcode / Apple Dev Tools | path | `$HOME/Library/Developer/Xcode/DerivedData`, `…/CoreSimulator/{Caches,Temp,Volumes,Devices}` |
-| 11 | macOS Caches | path | `$HOME/Library/Caches`, `$HOME/Library/Logs`, `/private/var/folders` |
-| 12 | Dev Tools | path | `$HOME/.terraform.d/plugin-cache`, IDE extensions and caches |
-| 13 | AI / LLM | path | `$HOME/.cache/huggingface`, `$HOME/.ollama/models`, Claude VM bundles |
-| 14 | IDE and Dev Tool Caches | path | Selective Application Support caches (Cursor workspaceStorage, JetBrains `*/plugins`, Zed languages, Discord Cache, …). Parent app folders stay in backups. |
-| 15 | Claude Code / Codex | pattern | `.auto-claude`, `.codex`, `worktrees` |
-| 16 | Generic caches | pattern (opt-in) | `.cache` (commented out — uncomment to enable) |
-| 17 | Prune zones | prune | `$HOME/Library`, `$HOME/.Trash`, `$HOME/.nvm`, `$HOME/.bun.bak`, … |
+### Protection and upgrades
 
-### Path style
+`CONF_KEEPS` contains normalized literal paths. `keep_blocks()` compares candidates
+in both directions (ancestor/descendant), resolving dot components and existing directory
+symlinks. Protected static parents do not seed dynamic prefix suppression, allowing
+unprotected sibling matches to be processed. `check_keeps()` reports already-excluded
+existing targets (including inherited exclusions) as errors. It never removes them.
+Missing keep targets are protected from future exclusions but cannot be checked with tmutil.
+Malformed protection rules abort before exclusion processing.
 
-Home-rooted paths use `$HOME/...`. The loader also accepts the legacy `~/...` form. System paths are absolute (`/Applications`, `/opt/homebrew`).
+The existing CoreSimulator parent migration is retained. Newly disabled catalog rules
+and old image exclusions are **not automatically removed**: ownership is unknown.
+Users must audit and remove those existing exclusions explicitly. `keep` cannot force
+Time Machine to include a child of an excluded parent.
 
-### Opt-in entries
+### Rule provenance and failures
 
-Several entries ship commented out:
-- `path|$HOME/.docker` — kept in backups because it holds `config.json` (registry auth tokens). Bulky Docker data is covered by other rules.
-- Parent `path|$HOME/Library/Application Support/<app>` roots (Cursor, JetBrains, Zed, …) are **not** in the default catalog — those directories mix user data (settings, keymaps, tokens, sessions) with caches. Fine-grained regenerable subdirectories ship enabled under **IDE and Dev Tool Caches** (see [#53](https://github.com/qveys/tm-exclusions/issues/53)).
-- `pattern|.cache` — would match any project's `.cache/` directory (too broad as a default).
-- `pattern|site-packages` — already covered by `.venv` patterns.
+`CONF_RULES` preserves expanded path targets or pattern/keep targets with config file,
+line, original rule and reason. `set_rule_context()` selects the first matching rule's
+provenance before processing. Identical duplicate rules therefore use the first source.
+The report adds this context to action lines; discovered paths use a discovery label.
 
-Uncomment them in your installed `default.conf` if you have specific use cases.
+`record_error()` increments `TOTAL_ERRORS` and appends a diagnostic. Dynamic `find`
+failures retain partial results but mark the scan incomplete. The final exit status is
+1 when errors were recorded, including add/remove/status failures, required privileges,
+keep conflicts, invalid keep rules and report persistence errors. A report-write error
+is printed to stderr (and full results to stdout in terminal mode); an unwritable report
+cannot contain its own persistence failure. Optional inventory remains informational.
 
-### CoreSimulator subtrees
-
-`$HOME/Library/Developer/CoreSimulator` is **not** excluded as a parent tree. The default catalog targets `Caches`, `Temp`, `Volumes`, and `Devices` so root-level simulator metadata stays in backups. To keep device containers in Time Machine while still excluding caches, comment out the `Devices` line in a local catalog copy (or point `TM_EXCLUSIONS_DEFAULT_CONF` at that copy) — `custom.conf` is additive and cannot drop a default rule. `/Library/Developer/CoreSimulator` remains a whole-tree exclusion (system runtimes, not user device metadata).
-
-Upgrades from a catalog that excluded the HOME parent: apply, `--dry-run`, and `--uninstall` call `tmutil removeexclusion` on `$HOME/Library/Developer/CoreSimulator` when that path is still excluded. Manual equivalent: `tmutil removeexclusion "$HOME/Library/Developer/CoreSimulator"`. Commenting out `Devices` does not undo an already-applied parent exclusion.
+`setting|scan_images|true` enables the otherwise disabled image scan. At most 50
+candidates are processed; additional images produce a `LIMIT` line. The traversal is
+still per-pattern for dynamic rules: this change does not implement the separate
+single-traversal performance proposal.
 
 ### Cloud-sync prunes
 
@@ -259,11 +287,11 @@ The `TM_EXCLUSIONS_EXTRA_CONF` loader requires the value to be **both a regular 
 ### Catalog invariants
 
 The smoke test suite (`tests/smoke.bats-like.sh`) guards these catalog invariants:
-- ≥ 150 active rules (path/pattern/prune lines).
+- ≥ 100 active rules (path/pattern/prune lines).
 - Exactly 17 distinct `#@` category labels.
 - Three section banners present (`# ── STATIC EXCLUSIONS (path) ──`, `# ── DYNAMIC SCAN PATTERNS (pattern) ──`, `# ── SCAN PRUNE ZONES (prune) ──`); the smoke test matches them by prefix.
 - No rule uses the `~/` home prefix (must be `$HOME/`).
 - Every rule sits under a `#@` marker.
-- HOME CoreSimulator is split into `Caches` / `Temp` / `Volumes` / `Devices` (no parent-tree rule); `/Library/Developer/CoreSimulator` stays whole-tree.
+- HOME CoreSimulator is split into `Caches` / `Temp` / `Volumes` (Devices is opt-in) (no parent-tree rule); `/Library/Developer/CoreSimulator` stays whole-tree.
 
 Adjusting the taxonomy therefore forces a coordinated update of the docs and the test thresholds.

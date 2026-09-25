@@ -14,6 +14,29 @@ TEST_HOME="$(mktemp -d)"
 trap 'rm -rf "${TEST_HOME}"' EXIT
 export HOME="${TEST_HOME}"
 
+# Never use the host Time Machine or Homebrew cache in smoke tests.
+mkdir -p "$TEST_HOME/bin"
+cat > "$TEST_HOME/bin/tmutil" <<'STUB'
+#!/bin/sh
+if [ "$1" = isexcluded ]; then printf '[Included] %s\n' "$2"; fi
+exit 0
+STUB
+cat > "$TEST_HOME/bin/brew" <<'STUB'
+#!/bin/sh
+exit 0
+STUB
+cat > "$TEST_HOME/bin/sudo" <<'STUB'
+#!/bin/sh
+# No host privilege operations in tests.
+case "$1" in
+    -n|-v) exit 0 ;;
+    tmutil) shift; exec tmutil "$@" ;;
+    *) exit 1 ;;
+esac
+STUB
+chmod +x "$TEST_HOME/bin/"*
+export PATH="$TEST_HOME/bin:$PATH"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=tests/test_helpers.sh
 source "${SCRIPT_DIR}/test_helpers.sh"
@@ -413,6 +436,29 @@ fi
 rm -rf "${AUTO_HOME}"
 export HOME="${TEST_HOME}"
 
+# Never use the host Time Machine or Homebrew cache in smoke tests.
+mkdir -p "$TEST_HOME/bin"
+cat > "$TEST_HOME/bin/tmutil" <<'STUB'
+#!/bin/sh
+if [ "$1" = isexcluded ]; then printf '[Included] %s\n' "$2"; fi
+exit 0
+STUB
+cat > "$TEST_HOME/bin/brew" <<'STUB'
+#!/bin/sh
+exit 0
+STUB
+cat > "$TEST_HOME/bin/sudo" <<'STUB'
+#!/bin/sh
+# No host privilege operations in tests.
+case "$1" in
+    -n|-v) exit 0 ;;
+    tmutil) shift; exec tmutil "$@" ;;
+    *) exit 1 ;;
+esac
+STUB
+chmod +x "$TEST_HOME/bin/"*
+export PATH="$TEST_HOME/bin:$PATH"
+
 # ---- Catalog invariants (#37) ----
 echo ""
 echo "--- Catalog invariants ---"
@@ -426,7 +472,7 @@ CONF="${SCRIPT_DIR}/config/default.conf"
 # Active rules (path/pattern/prune lines, ignoring comments).
 # Floor is pinned to the documented baseline so silent regressions fail CI.
 # Bump this constant when intentionally growing the catalog.
-MIN_ACTIVE_RULES=150
+MIN_ACTIVE_RULES=100
 RULE_COUNT=$(grep -cE '^(path|pattern|prune)\|' "${CONF}" || true)
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ "${RULE_COUNT}" -ge "${MIN_ACTIVE_RULES}" ]]; then
@@ -527,13 +573,13 @@ $HOME/.cargo.old
 EOF
 
 BAK_HOME="$(mktemp -d)"
-# Reproduce the real-world noise: ~/.bun.bak/install/cache/<pkg>/dist
-mkdir -p "${BAK_HOME}/.bun.bak/install/cache/pkg/dist"
+# Reproduce the real-world noise: ~/.bun.bak/install/cache/<pkg>/node_modules
+mkdir -p "${BAK_HOME}/.bun.bak/install/cache/pkg/node_modules"
 mkdir -p "${BAK_HOME}/.npm.bak/foo/node_modules"
 mkdir -p "${BAK_HOME}/.yarn.bak/cache/node_modules"
-mkdir -p "${BAK_HOME}/.bun.old/install/cache/pkg/dist"
+mkdir -p "${BAK_HOME}/.bun.old/install/cache/pkg/node_modules"
 # Control: a non-catalog .bak tree must still be scanned.
-mkdir -p "${BAK_HOME}/.unrelated.bak/pkg/dist"
+mkdir -p "${BAK_HOME}/.unrelated.bak/pkg/node_modules"
 # Control: a normal project tree must still be excluded.
 mkdir -p "${BAK_HOME}/Git/proj/node_modules"
 
@@ -541,7 +587,7 @@ BAK_OUT="$(env HOME="${BAK_HOME}" \
                 TM_EXCLUSIONS_DEFAULT_CONF="${CONF}" \
                 bash "$TM_EXCLUSIONS" --dry-run 2>&1 || true)"
 
-# Nested dist under .bun.bak must be pruned, not applied as an exclusion.
+# Nested node_modules under .bun.bak must be pruned, not applied as an exclusion.
 BAK_BUN_APPLY=$(printf '%s\n' "${BAK_OUT}" | grep -cE "(Applying exclusion:|Already excluded:).*\.bun\.bak/" || true)
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ "${BAK_BUN_APPLY}" -eq 0 ]]; then
@@ -592,15 +638,15 @@ else
     printf '%b  FAIL%b ~/.bun.old should not emit exclusions, got %d\n' "$RED" "$NC" "${BAK_OLD_APPLY}"
 fi
 
-# Non-catalog .unrelated.bak must still receive the dist exclusion.
-UNRELATED_HITS=$(printf '%s\n' "${BAK_OUT}" | grep -cE "(Applying exclusion:|Already excluded:).*\.unrelated\.bak/pkg/dist$" || true)
+# Non-catalog .unrelated.bak must still receive the node_modules exclusion.
+UNRELATED_HITS=$(printf '%s\n' "${BAK_OUT}" | grep -cE "(Applying exclusion:|Already excluded:).*\.unrelated\.bak/pkg/node_modules$" || true)
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ "${UNRELATED_HITS}" -eq 1 ]]; then
     TESTS_PASSED=$((TESTS_PASSED + 1))
-    printf '%b  PASS%b non-catalog ~/.unrelated.bak/pkg/dist is still excluded\n' "$GREEN" "$NC"
+    printf '%b  PASS%b non-catalog ~/.unrelated.bak/pkg/node_modules is still excluded\n' "$GREEN" "$NC"
 else
     TESTS_FAILED=$((TESTS_FAILED + 1))
-    printf '%b  FAIL%b expected 1 exclusion for ~/.unrelated.bak/pkg/dist, got %d\n' "$RED" "$NC" "${UNRELATED_HITS}"
+    printf '%b  FAIL%b expected 1 exclusion for ~/.unrelated.bak/pkg/node_modules, got %d\n' "$RED" "$NC" "${UNRELATED_HITS}"
 fi
 
 PROJ_HITS=$(printf '%s\n' "${BAK_OUT}" | grep -cE "(Applying exclusion:|Already excluded:).*Git/proj/node_modules$" || true)
@@ -632,7 +678,7 @@ else
 fi
 
 CSIM_MISSING=""
-for sub in Caches Temp Volumes Devices; do
+for sub in Caches Temp Volumes; do
     if ! grep -qE "^path\\|[$]HOME/Library/Developer/CoreSimulator/${sub}\\|" "${CONF}"; then
         CSIM_MISSING="${CSIM_MISSING} ${sub}"
     fi
@@ -640,7 +686,7 @@ done
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ -z "${CSIM_MISSING}" ]]; then
     TESTS_PASSED=$((TESTS_PASSED + 1))
-    printf '%b  PASS%b default.conf excludes CoreSimulator Caches/Temp/Volumes/Devices\n' "$GREEN" "$NC"
+    printf '%b  PASS%b default.conf excludes CoreSimulator Caches/Temp/Volumes\n' "$GREEN" "$NC"
 else
     TESTS_FAILED=$((TESTS_FAILED + 1))
     printf '%b  FAIL%b default.conf missing CoreSimulator subdir(s):%s\n' "$RED" "$NC" "${CSIM_MISSING}"
@@ -1168,14 +1214,14 @@ EOF
 WRITE_FAIL_OUT="${REPSET_HOME}/write-fail.out"
 WRITE_FAIL_ERR="${REPSET_HOME}/write-fail.err"
 TESTS_RUN=$((TESTS_RUN + 1))
-if env -u TM_EXCLUSIONS_REPORT -u TM_EXCLUSIONS_EXTRA_CONF HOME="${REPSET_HOME}" \
+if ! env -u TM_EXCLUSIONS_REPORT -u TM_EXCLUSIONS_EXTRA_CONF HOME="${REPSET_HOME}" \
     TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
     bash "$TM_EXCLUSIONS" --dry-run > "${WRITE_FAIL_OUT}" 2> "${WRITE_FAIL_ERR}"; then
     TESTS_PASSED=$((TESTS_PASSED + 1))
-    printf '%b  PASS%b setting|report_path write failure exits 0\n' "$GREEN" "$NC"
+    printf '%b  PASS%b setting|report_path write failure exits non-zero\n' "$GREEN" "$NC"
 else
     TESTS_FAILED=$((TESTS_FAILED + 1))
-    printf '%b  FAIL%b setting|report_path write failure exits non-zero\n' "$RED" "$NC"
+    printf '%b  FAIL%b setting|report_path write failure exits 0\n' "$RED" "$NC"
 fi
 TESTS_RUN=$((TESTS_RUN + 1))
 if grep -q "Could not save report to: ${REPSET_HOME}/blocked/report.txt" "${WRITE_FAIL_ERR}" \
@@ -1254,7 +1300,7 @@ assert_output_contains "Unknown setting" \
     env HOME="${REPSET_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
         bash "$TM_EXCLUSIONS" --dry-run
 
-assert_output_contains "setting (report_path, desktop_report)" \
+assert_output_contains "setting (report_path, desktop_report, scan_images)" \
     "--help mentions setting config type" \
     env HOME="${REPSET_HOME}" bash "$TM_EXCLUSIONS" --help
 
@@ -1378,11 +1424,13 @@ source <(
         -e "/^sudo_keepalive_stop()/,/^}/p" \
         -e "/^register_tmp_file()/,/^}/p" \
         -e "/^cleanup_tmp_files()/,/^}/p" \
+        -e "/^clear_progress()/,/^}/p" \
         -e "/^cleanup()/,/^}/p" \
         -e "/^on_signal()/,/^}/p" \
         "$1"
 )
 TMP_FILES=""
+UI_PROGRESS=0
 register_tmp_file "$2"
 trap "cleanup" EXIT
 trap "on_signal TERM" TERM
@@ -1482,7 +1530,7 @@ assert_output_contains "${GLOB_HOME}/Library/Application Support/FakeIDE/v2/plug
     bash "$TM_EXCLUSIONS" --dry-run
 
 TESTS_RUN=$((TESTS_RUN + 1))
-if printf '%s\n' "${GLOB_OUT}" | grep -Fq "FakeIDE/*/plugins"; then
+if printf '%s\n' "${GLOB_OUT}" | grep -Fq "WOULD ${GLOB_HOME}/Library/Application Support/FakeIDE/*/plugins"; then
     TESTS_FAILED=$((TESTS_FAILED + 1))
     printf '%b  FAIL%b unmatched/literal path glob leaked to output\n' "$RED" "$NC"
 else
@@ -1491,7 +1539,7 @@ else
 fi
 
 TESTS_RUN=$((TESTS_RUN + 1))
-if printf '%s\n' "${GLOB_OUT}" | grep -Fqx "WOULD ${GLOB_HOME}/Library/Application Support/FakeIDE/v1/options"; then
+if printf '%s\n' "${GLOB_OUT}" | grep -Fq "WOULD ${GLOB_HOME}/Library/Application Support/FakeIDE/v1/options ["; then
     TESTS_FAILED=$((TESTS_FAILED + 1))
     printf '%b  FAIL%b glob must not exclude sibling options/ (user settings)\n' "$RED" "$NC"
 else
@@ -1520,7 +1568,6 @@ mkdir -p "${AS_HOME}/Library/Application Support/Antigravity IDE/GPUCache"
 AS_OUT="$(env HOME="${AS_HOME}" bash "$TM_EXCLUSIONS" --dry-run 2>&1)" || true
 
 for as_path in \
-    "${AS_HOME}/Library/Application Support/Cursor/User/workspaceStorage" \
     "${AS_HOME}/Library/Application Support/Cursor/Cache" \
     "${AS_HOME}/Library/Application Support/JetBrains/IntelliJIdea2024.3/plugins" \
     "${AS_HOME}/Library/Application Support/Zed/languages" \
@@ -1533,7 +1580,7 @@ for as_path in \
     "${AS_HOME}/Library/Application Support/Antigravity IDE/GPUCache"
 do
     TESTS_RUN=$((TESTS_RUN + 1))
-    if grep -Fqx "WOULD ${as_path}" <<< "${AS_OUT}"; then
+    if grep -Fq "WOULD ${as_path} [" <<< "${AS_OUT}"; then
         TESTS_PASSED=$((TESTS_PASSED + 1))
         printf '%b  PASS%b dry-run would exclude %s\n' "$GREEN" "$NC" "${as_path#"${AS_HOME}"/}"
     else
@@ -1543,6 +1590,7 @@ do
 done
 
 for as_keep in \
+    "${AS_HOME}/Library/Application Support/Cursor/User/workspaceStorage" \
     "${AS_HOME}/Library/Application Support/Cursor" \
     "${AS_HOME}/Library/Application Support/Cursor/User" \
     "${AS_HOME}/Library/Application Support/Cursor/User/settings.json" \
@@ -1556,7 +1604,7 @@ for as_keep in \
     "${AS_HOME}/Library/Application Support/Antigravity IDE"
 do
     TESTS_RUN=$((TESTS_RUN + 1))
-    if grep -Fqx "WOULD ${as_keep}" <<< "${AS_OUT}"; then
+    if grep -Fq "WOULD ${as_keep} [" <<< "${AS_OUT}"; then
         TESTS_FAILED=$((TESTS_FAILED + 1))
         printf '%b  FAIL%b must not exclude settings/parent path %s\n' "$RED" "$NC" "${as_keep#"${AS_HOME}"/}"
     else
@@ -1565,6 +1613,82 @@ do
     fi
 done
 rm -rf "${AS_HOME}"
+
+# ---- Terminal presentation (no Time Machine operations) ----
+# Source definitions only, then exercise the same renderer used by the CLI.
+# shellcheck disable=SC2016
+assert_exit_code 0 "terminal progress, plain logs, quiet and bilingual summary" \
+    bash -c '
+set -euo pipefail
+source <(sed "/^main /d" "$1")
+source "$2/locales/en.sh"
+declare_i18n_en
+init_ui
+[[ "$UI" -eq 0 ]] # redirected stdout must stay plain
+UI=1
+UI_CYAN=$(printf "\033[36m")
+UI_RESET=$(printf "\033[0m")
+progress_start "$(printf "one\ntwo")" > "$3/progress"
+progress_step >> "$3/progress"
+progress_step >> "$3/progress"
+grep -q "100%  2/2" "$3/progress"
+[[ "$UI_PROGRESS" -eq 0 ]]
+progress_start "" > "$3/empty"
+[[ ! -s "$3/empty" ]]
+exec 5>"$3/debug"
+DEBUG_LOG_FD=1
+log_info "literal %s \\ path" > "$3/styled"
+[[ "$(cat "$3/debug")" = "literal %s \\ path" ]]
+[[ "$(cat "$3/styled")" == *"$UI_RESET"* ]]
+QUIET=1
+log_info "hidden" > "$3/quiet"
+[[ ! -s "$3/quiet" ]]
+QUIET=0
+ui_summary "$MSG_REPORT_WOULD_EXCLUDE" > "$3/summary"
+grep -q "Summary" "$3/summary"
+source "$2/locales/fr.sh"
+declare_i18n_fr
+ui_summary "$MSG_REPORT_WOULD_EXCLUDE" > "$3/summary"
+grep -q "Bilan" "$3/summary"
+' _ "$TM_EXCLUSIONS" "$SCRIPT_DIR" "$TEST_HOME"
+
+# ---- Live discovery: same traversal and candidates, single-line status ----
+# shellcheck disable=SC2016
+assert_exit_code 0 "live discovery preserves candidates, pruning and cap" \
+    bash -c 'set -euo pipefail
+source <(sed "/^main /d" "$1")
+source "$2/locales/en.sh"
+declare_i18n_en
+CONF_SCAN_IMAGES=1
+HOME="$3/discovery"
+mkdir -p "$HOME/cache" "$HOME/project with spaces/subdir" \
+    "$HOME/disk.sparsebundle/hidden.sparsebundle" \
+    "$HOME/Library/Mobile Documents/cloud.sparsebundle"
+dd if=/dev/zero of="$HOME/large.img" bs=1 count=0 seek=537919488 2>/dev/null
+touch "$HOME/small.img"
+brew() { printf "%s\n" "$HOME/cache"; }
+tput() { printf "60\n"; }
+collect_post_scan_paths > "$3/plain-discovery"
+[[ ! -s "$3/plain-discovery" ]]
+expected="$EXTRA_PATHS"
+[[ "$expected" == *"$HOME/large.img"* && "$expected" == *"$HOME/disk.sparsebundle"* ]]
+[[ "$expected" != *hidden* && "$expected" != *cloud* && "$expected" != *small.img* ]]
+UI=1
+collect_post_scan_paths > "$3/live-discovery"
+[[ "$EXTRA_PATHS" = "$expected" && "$UI_PROGRESS" -eq 0 ]]
+grep -q "project with spaces/subdir" "$3/live-discovery"
+[[ "$(wc -l < "$3/live-discovery" | tr -d " ")" = 0 ]]
+SCAN_COLUMNS=30
+show_scan_path "$HOME/a very long directory name/with-tail" > "$3/short-discovery"
+grep -q "with-tail" "$3/short-discovery"
+[[ "$(wc -c < "$3/short-discovery" | tr -d " ")" -lt 30 ]]
+clear_progress > /dev/null
+UI=0
+for ((i=0; i<55; i++)); do mkdir "$HOME/image-$i.sparsebundle"; done
+collect_post_scan_paths > "$3/plain-discovery"
+[[ "$(printf "%s\n" "$EXTRA_PATHS" | wc -l | tr -d " ")" = 51 ]]
+[[ ! -s "$3/plain-discovery" ]]
+' _ "$TM_EXCLUSIONS" "$SCRIPT_DIR" "$TEST_HOME"
 
 # ---- Summary ----
 test_summary

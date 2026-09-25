@@ -91,6 +91,7 @@ version: ## Print the current tm-exclusions version
 test: ## Run smoke tests
 	@echo "Running smoke tests..."
 	@bash tests/smoke.bats-like.sh
+	@bash tests/test_safety.sh
 	@echo "Running release logic tests..."
 	@bash tests/test_release_logic.sh
 
@@ -104,6 +105,7 @@ lint: ## Run ShellCheck on all shell scripts and syntax-check locale tables
 	@echo "Running ShellCheck..."
 	@shellcheck -x -s bash $(SCRIPT)
 	@shellcheck -x -s bash tests/test_helpers.sh
+	@shellcheck -x -s bash tests/test_safety.sh
 	@shellcheck -x -s bash tests/smoke.bats-like.sh
 	@shellcheck -x -s bash tests/test_release_logic.sh
 	@for f in locales/*.sh; do bash -n "$$f" || exit 1; done
