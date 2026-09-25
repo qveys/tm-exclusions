@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # Regression checks: isolated HOME and fake commands, never real Time Machine.
 set -euo pipefail
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# Resolve the repo root before sourcing: test_helpers.sh reuses SCRIPT_DIR for it.
+SAFETY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=tests/test_helpers.sh
+source "${SAFETY_DIR}/test_helpers.sh"
+
 TEST_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEST_DIR"' EXIT
 export HOME="$TEST_DIR/home"
@@ -37,16 +41,10 @@ exit 1
 STUB
 chmod +x "$TEST_DIR/bin/"*
 export PATH="$TEST_DIR/bin:$PATH"
+
+# Uses the shared helpers' run_cli against the CLI under test.
 run() {
-    local expected="$1" actual=0
-    shift
-    : > "$TEST_CALLS"
-    bash "$ROOT/tm_exclusions.sh" "$@" > "$TEST_DIR/out" 2>&1 || actual=$?
-    if [[ "$actual" -ne "$expected" ]]; then
-        cat "$TEST_DIR/out"
-        printf 'Expected exit %s, got %s\n' "$expected" "$actual" >&2
-        exit 1
-    fi
+    run_cli "$1" "$TEST_DIR/out" "${@:2}"
 }
 
 mkdir -p "$HOME/project/cache/saved" "$HOME/project/other/cache" "$HOME/brew-cache" \
@@ -66,40 +64,56 @@ keep|~/brew-cache|retain brew cache
 keep|~/disks/private.sparsebundle|VM data
 CONF
 run 0
-grep -Fq "addexclusion $HOME/project/other/cache" "$TEST_CALLS"
-grep -Fq "addexclusion $HOME/disks/public.sparsebundle" "$TEST_CALLS"
-[[ "$(grep -c '^addexclusion ' "$TEST_CALLS")" -eq 2 ]]
-grep -Fq 'precious state' "$TM_EXCLUSIONS_REPORT"
-grep -Fq 'Summary by rule' "$TM_EXCLUSIONS_REPORT"
-grep -Fq $'\t'"$TM_EXCLUSIONS_DEFAULT_CONF:5 | pattern|cache | regenerable cache" "$TM_EXCLUSIONS_REPORT"
-grep -Fq 'tmutil listexclusions (first 500 lines; status: empty)' "$TM_EXCLUSIONS_REPORT"
-grep -Fq "$TM_EXCLUSIONS_DEFAULT_CONF:5 | pattern|cache | regenerable cache" "$TM_EXCLUSIONS_REPORT"
-grep -Fq "KEEP  $HOME/project (protected by keep" "$TM_EXCLUSIONS_REPORT"
+assert_file_contains "$TEST_CALLS" "addexclusion $HOME/project/other/cache" \
+    "regenerable cache outside keep is excluded"
+assert_file_contains "$TEST_CALLS" "addexclusion $HOME/disks/public.sparsebundle" \
+    "opted-in sparsebundle is excluded"
+assert_eq 2 "$(grep -c '^addexclusion ' "$TEST_CALLS")" "only two mutations are performed"
+assert_file_contains "$TM_EXCLUSIONS_REPORT" 'precious state' "report keeps the rule reason"
+assert_file_contains "$TM_EXCLUSIONS_REPORT" 'Summary by rule' "report includes the rule summary"
+assert_file_contains "$TM_EXCLUSIONS_REPORT" \
+    "$(printf '\t%s:5 | pattern|cache | regenerable cache' "$TM_EXCLUSIONS_DEFAULT_CONF")" \
+    "rule summary attributes the dynamic match to its config line"
+assert_file_contains "$TM_EXCLUSIONS_REPORT" \
+    'tmutil listexclusions (first 500 lines; status: empty)' \
+    "report states the listexclusions status"
+assert_file_contains "$TM_EXCLUSIONS_REPORT" "KEEP  $HOME/project (protected by keep" \
+    "keep blocks the broad parent exclusion"
 run 0 --report-only
-if grep -Eq '^(addexclusion|removeexclusion) ' "$TEST_CALLS"; then exit 1; fi
-grep -Fq "NEED  $HOME/project/other/cache" "$TM_EXCLUSIONS_REPORT"
+assert_file_lacks_regex "$TEST_CALLS" '^(addexclusion|removeexclusion) ' \
+    "report-only performs no mutation"
+assert_file_contains "$TM_EXCLUSIONS_REPORT" "NEED  $HOME/project/other/cache" \
+    "report-only still records the needed exclusion"
 run 0 --uninstall --force --dry-run
-if grep -Eq '^(addexclusion|removeexclusion) ' "$TEST_CALLS"; then exit 1; fi
-grep -Fq "WOULD_REMOVE $HOME/project/other/cache" "$TM_EXCLUSIONS_REPORT"
-if grep -Fq "WOULD_REMOVE $HOME/project/cache/saved" "$TM_EXCLUSIONS_REPORT"; then exit 1; fi
+assert_file_lacks_regex "$TEST_CALLS" '^(addexclusion|removeexclusion) ' \
+    "forced uninstall dry-run performs no mutation"
+assert_file_contains "$TM_EXCLUSIONS_REPORT" "WOULD_REMOVE $HOME/project/other/cache" \
+    "forced uninstall dry-run plans the removable path"
+assert_true "forced uninstall dry-run leaves kept paths alone" \
+    not grep -Fq "WOULD_REMOVE $HOME/project/cache/saved" "$TM_EXCLUSIONS_REPORT"
 
 # Persistent exclusions (including inherited ones) are an error, never silently removed.
 export TEST_STATUS=excluded
 run 1 --dry-run
-grep -Fq 'Protected path is still excluded' "$TM_EXCLUSIONS_REPORT"
-if grep -Eq '^(addexclusion|removeexclusion) ' "$TEST_CALLS"; then exit 1; fi
+assert_file_contains "$TM_EXCLUSIONS_REPORT" 'Protected path is still excluded' \
+    "an already-excluded protected path is reported"
+assert_file_lacks_regex "$TEST_CALLS" '^(addexclusion|removeexclusion) ' \
+    "an already-excluded protected path is not mutated"
 unset TEST_STATUS
 
 # Default discovery does not pick up VM images; opting in discloses truncation.
 : > "$TM_EXCLUSIONS_DEFAULT_CONF"
 : > "$HOME/.config/tm_exclusions/custom.conf"
 run 0 --dry-run
-if grep -Fq 'sparsebundle' "$TM_EXCLUSIONS_REPORT"; then exit 1; fi
+assert_true "image discovery stays off by default" \
+    not grep -Fq 'sparsebundle' "$TM_EXCLUSIONS_REPORT"
 printf '%s\n' 'setting|scan_images|true' > "$TM_EXCLUSIONS_DEFAULT_CONF"
 for ((i=0; i<51; i++)); do mkdir "$HOME/disks/$i.sparsebundle"; done
 run 0 --dry-run
-grep -Fq 'LIMIT Image discovery limited to 50' "$TM_EXCLUSIONS_REPORT"
-[[ "$(grep -c '^WOULD .*sparsebundle' "$TM_EXCLUSIONS_REPORT")" -eq 50 ]]
+assert_file_contains "$TM_EXCLUSIONS_REPORT" 'LIMIT Image discovery limited to 50' \
+    "candidate overflow is disclosed as LIMIT"
+assert_eq 50 "$(grep -c '^WOULD .*sparsebundle' "$TM_EXCLUSIONS_REPORT")" \
+    "image discovery is capped at 50 candidates"
 
 # A failed or unrecognized status must not be treated as Included in any mode.
 # Literal placeholder is expanded by the CLI.
@@ -109,17 +123,23 @@ for TEST_STATUS in fail malformed; do
     export TEST_STATUS
     for mode in --dry-run --report-only --uninstall; do
         run 1 "$mode"
-        grep -Fq 'Unable to determine Time Machine exclusion status:' "$TM_EXCLUSIONS_REPORT"
-        if grep -Eq '^(addexclusion|removeexclusion) ' "$TEST_CALLS"; then exit 1; fi
-        if grep -Eq '^(NEED|WOULD|ADD) ' "$TM_EXCLUSIONS_REPORT"; then exit 1; fi
+        assert_file_contains "$TM_EXCLUSIONS_REPORT" \
+            'Unable to determine Time Machine exclusion status:' \
+            "unknown status ($TEST_STATUS, $mode) is reported"
+        assert_file_lacks_regex "$TEST_CALLS" '^(addexclusion|removeexclusion) ' \
+            "unknown status ($TEST_STATUS, $mode) performs no mutation"
+        assert_file_lacks_regex "$TM_EXCLUSIONS_REPORT" '^(NEED|WOULD|ADD) ' \
+            "unknown status ($TEST_STATUS, $mode) plans no change"
     done
 done
 export TEST_STATUS=included TEST_MUTATE_EXIT=1
 run 1
-grep -Fq 'Error excluding:' "$TM_EXCLUSIONS_REPORT"
+assert_file_contains "$TM_EXCLUSIONS_REPORT" 'Error excluding:' \
+    "a failed add is reported"
 export TEST_STATUS=excluded
 run 1 --uninstall
-grep -Fq 'Error removing exclusion:' "$TM_EXCLUSIONS_REPORT"
+assert_file_contains "$TM_EXCLUSIONS_REPORT" 'Error removing exclusion:' \
+    "a failed removal is reported"
 unset TEST_STATUS TEST_MUTATE_EXIT
 
 # Partial discovery retains its results and records failure in the persisted report.
@@ -135,37 +155,58 @@ chmod +x "$TEST_DIR/bin/find"
 for config in 'pattern|cache|cache reason' 'setting|scan_images|true'; do
     printf '%s\n' "$config" > "$TM_EXCLUSIONS_DEFAULT_CONF"
     run 1 --dry-run
-    grep -Fq 'Incomplete scan:' "$TM_EXCLUSIONS_REPORT"
-    grep -q '^WOULD ' "$TM_EXCLUSIONS_REPORT"
+    assert_file_contains "$TM_EXCLUSIONS_REPORT" 'Incomplete scan:' \
+        "partial scan failure is reported ($config)"
+    assert_file_contains "$TM_EXCLUSIONS_REPORT" 'WOULD ' \
+        "partial scan results are still planned ($config)"
 done
 rm "$TEST_DIR/bin/find"
 
 # Invalid keep input prevents every mutation; CLI --add persists a usable rule.
 printf '%s\n' 'path|~/project|test' 'keep|relative/path|invalid' > "$TM_EXCLUSIONS_DEFAULT_CONF"
 run 1
-if grep -Eq '^(addexclusion|removeexclusion) ' "$TEST_CALLS"; then exit 1; fi
-grep -Fq 'Invalid keep rule' "$TM_EXCLUSIONS_REPORT"
+assert_file_lacks_regex "$TEST_CALLS" '^(addexclusion|removeexclusion) ' \
+    "an invalid keep rule prevents all mutation"
+assert_file_contains "$TM_EXCLUSIONS_REPORT" 'Invalid keep rule' \
+    "an invalid keep rule is reported"
 : > "$TM_EXCLUSIONS_DEFAULT_CONF"
 run 0 --add keep "$HOME/project" 'preserve state'
-grep -Fq "keep|$HOME/project|preserve state" "$HOME/.config/tm_exclusions/custom.conf"
+assert_file_contains "$HOME/.config/tm_exclusions/custom.conf" \
+    "keep|$HOME/project|preserve state" "--add persists the keep rule"
 run 1 --add keep 'relative/path' 'invalid'
 run 1 --add keep "$HOME/project" $'bad\npath|/|injection'
 run 0 --lang fr --dry-run
-grep -Fq 'preserve state' "$TM_EXCLUSIONS_REPORT"
+assert_file_contains "$TM_EXCLUSIONS_REPORT" 'preserve state' \
+    "the added keep rule survives a localized run"
 
 # Literal keeps support root and symlink/dot spellings; nested du entries count once.
 # shellcheck disable=SC1090
 source <(sed '/^main /d' "$ROOT/tm_exclusions.sh")
+# du accounting stores physical spellings, so expectations are normalized too
+# (/var is a symlink to /private/var on macOS).
+PHYSICAL_PROJECT="$(normalize_path "$HOME/project")"
 DU_PATHS=""
 du_track_path "$HOME/project/cache/saved"
 du_track_path "$HOME/project"
 du_track_path "$HOME/project/other/cache"
-[[ "$DU_PATHS" = "$HOME/project" ]]
+assert_eq "$PHYSICAL_PROJECT" "$DU_PATHS" "nested du entries collapse into their parent"
+DU_PATHS=""
+du_track_path "$HOME/project/other/cache"
+du_track_path "$HOME/cache-alias/saved"
+assert_eq "$(printf '%s\n%s' \
+    "$(normalize_path "$HOME/project/other/cache")" \
+    "$(normalize_path "$HOME/project/cache/saved")")" "$DU_PATHS" \
+    "symlinked and dot spellings dedupe against their physical parent"
+DU_PATHS=""
+du_track_path "$HOME/project"
+du_track_path "$HOME/cache-alias/saved"
+assert_eq "$PHYSICAL_PROJECT" "$DU_PATHS" \
+    "a physical parent absorbs its symlinked descendants"
 CONF_KEEPS="$(normalize_path "$HOME/cache-alias/../cache/saved")"
-keep_blocks "$HOME/project/cache"
-if keep_blocks "$HOME/project/other/cache"; then exit 1; fi
+assert_true "keep blocks its parent" keep_blocks "$HOME/project/cache"
+assert_true "keep ignores unrelated siblings" not keep_blocks "$HOME/project/other/cache"
 CONF_KEEPS=/
-keep_blocks "$HOME/project"
+assert_true "root keep blocks everything" keep_blocks "$HOME/project"
 
 # Catalog protects mixed state roots and retains regenerable caches.
 # Used by sourced functions.
@@ -176,10 +217,14 @@ declare_i18n_en
 parse_config_file "$ROOT/config/default.conf"
 for target in /opt/homebrew "$HOME/.pulumi" "$HOME/Library/Developer/Xcode/Archives" \
     "$HOME/Library/Containers/com.docker.docker" "$HOME/Library/Developer/CoreSimulator/Devices"; do
-    if printf '%s\n' "$CONF_PATHS" | grep -Fxq "$target"; then exit 1; fi
+    assert_true "catalog does not ship $target" \
+        not grep -Fxq "$target" <<<"$CONF_PATHS"
 done
 for pattern in .codex .auto-claude worktrees build dist; do
-    if printf '%s\n' "$CONF_PATTERNS" | grep -Fxq "$pattern"; then exit 1; fi
+    assert_true "catalog does not ship the $pattern pattern" \
+        not grep -Fxq "$pattern" <<<"$CONF_PATTERNS"
 done
-printf '%s\n' "$CONF_PATTERNS" | grep -Fxq node_modules
+assert_true "catalog still ships the node_modules pattern" \
+    grep -Fxq node_modules <<<"$CONF_PATTERNS"
 printf 'Safety checks passed.\n'
+test_summary

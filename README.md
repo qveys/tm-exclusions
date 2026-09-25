@@ -246,6 +246,8 @@ Image discovery is off by default. With `scan_images=true`, it considers at most
 50 `.sparsebundle` directories or `.vmdk`/`.qcow2`/`.raw`/`.img` files larger than
 512 MiB. Extra candidates are disclosed as `LIMIT` in the report. This is a cap
 on processed images, not traversal time. `scan_images=false` disables it again.
+Candidate paths containing a newline are rejected and reported, because the
+candidate list is newline-delimited.
 
 ### Results and exit codes
 
@@ -418,7 +420,7 @@ launchctl load ~/Library/LaunchAgents/com.tm-exclusions.weekly.plist
 
 ## 🔎 Current behavior notes
 
-- In non-interactive runs without cached/passwordless sudo (`sudo -n`), system paths are skipped (no blocking prompt). Privileged exclusions such as `/private/var/folders` use `sudo tmutil addexclusion -p` when credentials are available.
+- In non-interactive runs without cached/passwordless sudo (`sudo -n`), system paths are not silently skipped: each one is recorded as a privilege-blocked entry in the report and counted, so the run exits non-zero (see [Results and exit codes](#results-and-exit-codes)). No blocking prompt is ever shown. Privileged exclusions such as `/private/var/folders` use `sudo tmutil addexclusion -p` when credentials are available.
 - Report disk-usage uses `du -sk` and ignores permission-denied children, so partially-readable trees like `/private/var/folders` cannot abort a run under `set -euo pipefail`.
 - Reports include a rule summary, separate missing-path and privilege-blocked counts, and an explicit `tmutil listexclusions` status (`ok`, `empty`, `failed`, or `unavailable`).
 - `--uninstall` removes exclusions matching current configured static rules, dynamic matches, and discovered extra paths. It also drops retired catalog paths that are still excluded (today: the former `$HOME/Library/Developer/CoreSimulator` parent).

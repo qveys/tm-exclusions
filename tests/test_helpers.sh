@@ -8,6 +8,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Exported for use by test scripts that source this file
 # shellcheck disable=SC2034
+ROOT="${SCRIPT_DIR}"
+# shellcheck disable=SC2034
 TM_EXCLUSIONS="${SCRIPT_DIR}/tm_exclusions.sh"
 
 # Test counters
@@ -102,4 +104,95 @@ test_summary() {
         exit 1
     fi
     exit 0
+}
+
+# Run the CLI under test, clearing the recorded stub calls first.
+# Usage: run_cli <expected_exit_code> <log_file> [args...]
+run_cli() {
+    local expected="$1"
+    local log_file="$2"
+    shift 2
+    [[ -n "${TEST_CALLS:-}" ]] && : > "$TEST_CALLS"
+    local actual=0
+    bash "$TM_EXCLUSIONS" "$@" > "$log_file" 2>&1 || actual=$?
+    TESTS_RUN=$((TESTS_RUN + 1))
+    if [[ "$actual" -ne "$expected" ]]; then
+        cat "$log_file" >&2
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        printf "${RED}  FAIL${NC} CLI exit %d (expected %d): %s\n" "$actual" "$expected" "$*"
+        return 1
+    fi
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf "${GREEN}  PASS${NC} CLI exit %d: %s\n" "$expected" "$*"
+    return 0
+}
+
+# Assert a file contains a literal string
+# Usage: assert_file_contains <file> <expected_string> <description>
+assert_file_contains() {
+    local file="$1"
+    local expected="$2"
+    local desc="$3"
+    TESTS_RUN=$((TESTS_RUN + 1))
+    if [[ -f "$file" ]] && grep -Fq -- "$expected" "$file"; then
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        printf "${GREEN}  PASS${NC} %s\n" "$desc"
+    else
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        printf "${RED}  FAIL${NC} %s (missing '%s')\n" "$desc" "$expected"
+        [[ -f "$file" ]] && tail -n 40 "$file" >&2
+    fi
+}
+
+# Assert a file does NOT contain a regular expression
+# Usage: assert_file_lacks_regex <file> <regex> <description>
+assert_file_lacks_regex() {
+    local file="$1"
+    local pattern="$2"
+    local desc="$3"
+    TESTS_RUN=$((TESTS_RUN + 1))
+    if [[ -f "$file" ]] && grep -Eq -- "$pattern" "$file"; then
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        printf "${RED}  FAIL${NC} %s (unexpected '%s')\n" "$desc" "$pattern"
+    else
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        printf "${GREEN}  PASS${NC} %s\n" "$desc"
+    fi
+}
+
+# Assert two values are equal
+# Usage: assert_eq <expected> <actual> <description>
+assert_eq() {
+    local expected="$1"
+    local actual="$2"
+    local desc="$3"
+    TESTS_RUN=$((TESTS_RUN + 1))
+    if [[ "$expected" = "$actual" ]]; then
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        printf "${GREEN}  PASS${NC} %s\n" "$desc"
+    else
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        printf "${RED}  FAIL${NC} %s (expected '%s', got '%s')\n" "$desc" "$expected" "$actual"
+    fi
+}
+
+# Assert that a shell predicate succeeds
+# Usage: assert_true <description> <command> [args...]
+assert_true() {
+    local desc="$1"
+    shift
+    TESTS_RUN=$((TESTS_RUN + 1))
+    if "$@"; then
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        printf "${GREEN}  PASS${NC} %s\n" "$desc"
+    else
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        printf "${RED}  FAIL${NC} %s\n" "$desc"
+    fi
+}
+
+# Invert a predicate for assert_true: not <command> [args...]
+not() {
+    "$@" && return 1
+    return 0
 }

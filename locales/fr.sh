@@ -90,4 +90,5 @@ declare_i18n_fr() {
     MSG_REMOVE_FAILED="Échec de la suppression de l’exclusion :"
     MSG_DISCOVERED="Découverte : cache brew ou image disque activée explicitement"
     MSG_IMAGE_LIMIT="Découverte limitée à 50 images ; les images supplémentaires ont été ignorées."
+    MSG_SCAN_NEWLINE_PATH="Chemin découvert ignoré car il contient un saut de ligne (non pris en charge dans les listes délimitées par des retours à la ligne) :"
 }

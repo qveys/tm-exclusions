@@ -61,6 +61,9 @@ This file provides guidance to AI agentic LLM CLI tools when working with code i
 ## Constraints and repo-specific rules
 - Bash compatibility target is Bash 3.2+ (stock macOS). Avoid Bash 4+ features.
 - Keep quoting strict and portable shell style consistent with current script.
-- Config file format is `type|target|reason`; supported types are `path`, `pattern`, `prune`, and `setting`. The `target` field supports leading `~` expansion to the user’s home directory (`setting|report_path` expands `~` / `$HOME` in the value field).
+- Config file format is `type|target|reason`; supported types are `path`, `pattern`, `prune`, `keep`, and `setting`.
+  - `path` / `pattern` / `prune` create exclusions and filters; `keep` protects a path from ever being excluded (including by a parent rule), and `setting` configures tool behavior.
+  - Raw `keep` targets must be `/...`, `~`, `~/...`, `$HOME`, or `$HOME/...` before expansion; see `parse_config_file` in `tm_exclusions.sh`.
+  - Keep `config/default.conf`'s format header, the README, and this list in sync when a new type is added.
 - Conventional Commits with leading emoji are enforced by local hooks in `.githooks/`.
   - Ensure hooks are active via `make setup` (also auto-bootstrapped by the Makefile).

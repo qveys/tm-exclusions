@@ -311,13 +311,21 @@ EOF
 
 # Track paths for optional du summary (dedupe; Bash 3.2 — no associative arrays)
 du_track_path() {
-    local p="$1"
+    local p="$1" entry normalized retained=""
     [[ -z "$p" || ! -e "$p" ]] && return 0
-    local entry retained=""
+    # Compare physical spellings: symlinked and `..`-relative duplicates must not
+    # inflate the total, and stored entries are normalized on the way in too.
+    if ! p="$(normalize_path "$p")"; then
+        return 0
+    fi
     while IFS= read -r entry; do
         [[ -z "$entry" ]] && continue
-        path_under "$p" "$entry" && return 0
-        if ! path_under "$entry" "$p"; then retained="${retained}${entry}
+        normalized="$entry"
+        if [[ -e "$entry" ]]; then
+            normalized="$(normalize_path "$entry")" || normalized="$entry"
+        fi
+        path_under "$p" "$normalized" && return 0
+        if ! path_under "$normalized" "$p"; then retained="${retained}${normalized}
 "; fi
     done <<EOF
 ${DU_PATHS}
@@ -698,6 +706,21 @@ parse_config_file() {
             entry_reason="${rest#*|}"
         fi
 
+        # Validate the raw target before expansion: a typo such as
+        # `$HOMEE/VMs` or `~other` would otherwise expand into a real absolute
+        # path and silently protect the wrong tree.
+        # shellcheck disable=SC2088,SC2016
+        case "$entry_target" in
+            /*|\~|\~/*|\$HOME|\$HOME/*) ;;
+            *)
+                if [[ "$entry_type" = keep ]]; then
+                    RULE_CONTEXT="${file}:${line_num} | ${entry_type}|${entry_target} | ${entry_reason}"
+                    record_error "$MSG_INVALID_KEEP ${file}:${line_num}"
+                    continue
+                fi
+                ;;
+        esac
+
         # Expand ~ to $HOME
         case "$entry_target" in
             "~"*) entry_target="${HOME}${entry_target#\~}" ;;
@@ -1008,14 +1031,20 @@ normalize_path() {
 # Reject both descendants and ancestors: excluding a parent would defeat keep.
 keep_blocks() {
     [[ -n "$CONF_KEEPS" ]] || return 1
-    local candidate entry
+    local candidate entry normalized
     if ! candidate="$(normalize_path "$1")"; then
         record_error "$MSG_INVALID_KEEP $1"
         return 0
     fi
     while IFS= read -r entry; do
         [[ -z "$entry" ]] && continue
-        if path_under "$candidate" "$entry" || path_under "$entry" "$candidate"; then
+        # Stored keeps may use symlink or `..` spellings; compare physical paths
+        # so an alias cannot smuggle an exclusion past its protected target.
+        normalized="$entry"
+        if [[ -e "$entry" ]]; then
+            normalized="$(normalize_path "$entry")" || normalized="$entry"
+        fi
+        if path_under "$candidate" "$normalized" || path_under "$normalized" "$candidate"; then
             return 0
         fi
     done <<EOF
@@ -1062,10 +1091,21 @@ process_path() {
         record_blocked "$MSG_SKIP_PRIVILEGED $path"
         return 0
     fi
-    if tm_is_excluded "$path"; then status=0; else status=$?; fi
-    if [[ "$status" -gt 1 ]]; then
-        record_error "$MSG_CHECK_FAILED $path"
-        return 0
+    local forced_missing=0
+    if [[ ! -e "$path" && "$MODE" = uninstall && "$FORCE" -eq 1 ]]; then
+        forced_missing=1
+    fi
+    if [[ "$forced_missing" -eq 0 ]]; then
+        if tm_is_excluded "$path"; then status=0; else status=$?; fi
+        if [[ "$status" -gt 1 ]]; then
+            record_error "$MSG_CHECK_FAILED $path"
+            return 0
+        fi
+    else
+        # Forced removal of an already-deleted path has no exclusion status to
+        # read; skipping the lookup still routes through tm_remove_exclusion so
+        # leftover Time Machine records are cleaned and failures are reported.
+        status=0
     fi
     du_track_path "$path"
     if [[ "$MODE" = uninstall ]]; then
@@ -1375,6 +1415,13 @@ collect_post_scan_paths() {
         2>/dev/null | {
             local candidate count=0
             while IFS= read -r -d '' candidate; do
+                # The find stream is NUL-delimited but the candidate batch file is
+                # newline-delimited (Bash 3.2); a path containing a newline would
+                # be split into bogus entries, so reject it explicitly.
+                if [[ "$candidate" = *$'\n'* ]]; then
+                    record_error "$MSG_SCAN_NEWLINE_PATH"
+                    continue
+                fi
                 if [[ -d "$candidate" ]]; then
                     show_scan_path "$candidate"
                     [[ "$candidate" = *.sparsebundle ]] || continue
