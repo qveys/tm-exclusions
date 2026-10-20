@@ -8,7 +8,7 @@ on:
 
 jobs:
   label:
-    if: github.event_name == 'pull_request_target'
+    if: (github.event_name == 'pull_request_target') && ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, hostinger]
     permissions:
       contents: read
@@ -21,7 +21,7 @@ jobs:
           sync-labels: false
 
   normalize-title:
-    if: github.event_name == 'issues' || (github.event_name == 'pull_request_target' && github.event.action != 'synchronize')
+    if: (github.event_name == 'issues' || (github.event_name == 'pull_request_target' && github.event.action != 'synchronize')) && ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, hostinger]
     permissions:
       issues: write
@@ -166,7 +166,8 @@ jobs:
     # classification; default `needs` would skip this job if the needed job was skipped.
     if: |
       (github.event_name == 'issues' || github.event_name == 'pull_request_target') &&
-      (needs.normalize-title.result == 'success' || needs.normalize-title.result == 'skipped')
+      (needs.normalize-title.result == 'success' || needs.normalize-title.result == 'skipped') &&
+      ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, hostinger]
     permissions:
       contents: read
