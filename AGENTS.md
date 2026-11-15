@@ -67,3 +67,14 @@ This file provides guidance to AI agentic LLM CLI tools when working with code i
   - Keep `config/default.conf`'s format header, the README, and this list in sync when a new type is added.
 - Conventional Commits with leading emoji are enforced by local hooks in `.githooks/`.
   - Ensure hooks are active via `make setup` (also auto-bootstrapped by the Makefile).
+
+## Agent skills
+
+### Issue tracker
+Issues and specs live in GitHub Issues (`qveys/tm-exclusions`, via `gh`). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+Default five-role vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+Single-context: one `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
