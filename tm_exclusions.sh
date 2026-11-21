@@ -283,8 +283,12 @@ batch_root() {
             case "$first" in
                 .*) BATCH_ROOT="$HOME/$first" ;;
                 Git)
-                    rest="${relative#*/}"
-                    BATCH_ROOT="$HOME/Git/${rest%%/*}"
+                    if [[ "$relative" = Git ]]; then
+                        BATCH_ROOT="$HOME/Git"
+                    else
+                        rest="${relative#*/}"
+                        BATCH_ROOT="$HOME/Git/${rest%%/*}"
+                    fi
                     ;;
             esac
             ;;
@@ -315,7 +319,12 @@ flush_path_results() {
             missing) label="$MSG_REPORT_NOT_FOUND" ;;
             already) label="$MSG_REPORT_ALREADY" ;;
             prune) label="$MSG_BATCH_PRUNED" ;;
-            remove) label="$MSG_REPORT_REMOVED" ;;
+            remove)
+                label="$MSG_REPORT_REMOVED"
+                if [[ "$DRY_RUN" -eq 1 ]]; then
+                    label="$MSG_DRY_RUN_PREFIX $label"
+                fi
+                ;;
             need) label="$MSG_REPORT_NEED_EXCLUSION" ;;
             apply)
                 label="$MSG_REPORT_EXCLUDED"
@@ -1315,7 +1324,7 @@ process_path() {
             add_report_line "SKIP  $path (not excluded)"
         elif [[ "$DRY_RUN" -eq 1 ]]; then
             TOTAL_REMOVED=$((TOTAL_REMOVED + 1))
-            log_path_result remove "$path"
+            log_path_result remove "$path" "  $MSG_DRY_RUN_PREFIX $MSG_REMOVING $(path_suffix "$size_col" "$path")"
             add_report_line "WOULD_REMOVE $path"
         elif tm_remove_exclusion "$path"; then
             TOTAL_REMOVED=$((TOTAL_REMOVED + 1))
@@ -1330,7 +1339,7 @@ process_path() {
         add_report_line "OK    $path (already excluded)"
     elif [[ "$MODE" = report-only ]]; then
         TOTAL_EXCLUDED=$((TOTAL_EXCLUDED + 1))
-        log_path_result need "$path"
+        log_path_result need "$path" "  $MSG_REPORT_NEED_EXCLUSION $(path_suffix "$size_col" "$path")"
         add_report_line "NEED  $path (not excluded)"
     elif [[ "$DRY_RUN" -eq 1 ]]; then
         TOTAL_EXCLUDED=$((TOTAL_EXCLUDED + 1))

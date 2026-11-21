@@ -2054,7 +2054,7 @@ if [[ -d /Applications ]]; then
     printf '%s\n' 'path|/Applications|system applications' >> "$BATCH_HOME/rules"
     BATCH_RC=0
     "${BATCH_ENV[@]}" bash "$TM_EXCLUSIONS" --dry-run \
-        > "$BATCH_HOME/system-out" 2> "$BATCH_HOME/system-err" || BATCH_RC=$?
+        < /dev/null > "$BATCH_HOME/system-out" 2> "$BATCH_HOME/system-err" || BATCH_RC=$?
     assert_eq 1 "$BATCH_RC" "system privilege skips still exit nonzero"
     assert_file_contains "$BATCH_HOME/system-err" \
         'Skipping (non-interactive / no sudo cache) for system path: /Applications' \
