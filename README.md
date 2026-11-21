@@ -452,6 +452,7 @@ launchctl load ~/Library/LaunchAgents/com.tm-exclusions.weekly.plist
 ```bash
 make test     # Run TAP-format smoke tests (--dry-run, no tmutil calls)
 make lint     # ShellCheck on all .sh files
+make check-conf  # Validate config/*.conf syntax (also part of make check)
 make version  # Print the current tm-exclusions version
 make install  # Homebrew bin if writable, else /usr/local (admin prompt if needed)
 ```
