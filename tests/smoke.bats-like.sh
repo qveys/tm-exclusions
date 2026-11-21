@@ -1012,8 +1012,13 @@ assert_file_lacks_regex "${SZ_SD_OUT}" \
 # Unit check (#77 review): du_total_kb is the single source of the cumulative
 # total — a path deleted after its measurement must be skipped, exactly like
 # the report's per-path lines, so summary and report can never diverge.
+# Temp file instead of process substitution: `source <(...)` does not load
+# functions under Bash 3.2 (macOS default).
+_du_src=$(mktemp "${TMPDIR:-/tmp}/tm-du-src.XXXXXX")
+sed '/^main /d' "$TM_EXCLUSIONS" > "$_du_src"
 # shellcheck disable=SC1090
-source <(sed '/^main /d' "$TM_EXCLUSIONS")
+source "$_du_src"
+rm -f "$_du_src"
 # Used inside the sourced script (du_total_kb), invisible to ShellCheck here.
 # shellcheck disable=SC2034
 DU_PATHS=""
