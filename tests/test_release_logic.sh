@@ -205,7 +205,7 @@ _out2="$(
     cd "${WORK}/repo"
     (test -f Formula/absent-formula.rb || { echo "ERROR: Formula/absent-formula.rb missing in this repo"; exit 1; }) 2>&1 || true
 )"
-if echo "$_out2" | grep -q "ERROR:"; then
+if grep -q "ERROR:" <<<"$_out2"; then
     TESTS_PASSED=$((TESTS_PASSED + 1))
     printf "%b  PASS%b Formula existence check prints ERROR message when file is absent\n" "$GREEN" "$NC"
 else
@@ -441,9 +441,9 @@ else
 fi
 
 TESTS_RUN=$((TESTS_RUN + 1))
-if echo "$_out" | grep -q "::error::" &&
-   echo "$_out" | grep -q "HOMEBREW_TOKEN" &&
-   echo "$_out" | grep -q "the tap was NOT updated for v9.9.9"; then
+if grep -q "::error::" <<<"$_out" &&
+   grep -q "HOMEBREW_TOKEN" <<<"$_out" &&
+   grep -q "the tap was NOT updated for v9.9.9" <<<"$_out"; then
     TESTS_PASSED=$((TESTS_PASSED + 1))
     printf "%b  PASS%b Missing token emits an ::error:: annotation naming the tag\n" "$GREEN" "$NC"
 else
@@ -459,7 +459,7 @@ WORKFLOW="${SCRIPT_DIR}/.github/workflows/release.yml"
 # The sed pattern matches the literal shell text in the workflow, hence single quotes.
 # shellcheck disable=SC2016
 _guard="$(sed -n '/if \[ -z "\${HOMEBREW_TOKEN:-}" \]; then/,/^ *fi$/p' "$WORKFLOW" | grep -v '^[[:space:]]*#')"
-if [[ -n "$_guard" ]] && echo "$_guard" | grep -q "exit 1" && ! echo "$_guard" | grep -q "exit 0"; then
+if [[ -n "$_guard" ]] && grep -q "exit 1" <<<"$_guard" && ! grep -q "exit 0" <<<"$_guard"; then
     TESTS_PASSED=$((TESTS_PASSED + 1))
     printf "%b  PASS%b release.yml token guard exits non-zero, never 0\n" "$GREEN" "$NC"
 else
@@ -478,7 +478,7 @@ _out2="$(bash -c '
     fi
     echo "token present"
 ' 2>&1)" || _rc2=$?
-if echo "$_out2" | grep -q "token present" && [[ "$_rc2" -eq 0 ]]; then
+if grep -q "token present" <<<"$_out2" && [[ "$_rc2" -eq 0 ]]; then
     TESTS_PASSED=$((TESTS_PASSED + 1))
     printf "%b  PASS%b Non-empty HOMEBREW_TOKEN proceeds to the tap bump\n" "$GREEN" "$NC"
 else
@@ -604,7 +604,7 @@ _out="$(bash -c '
     VERSION="${TAG#v}"
     echo "tag=$TAG version=$VERSION"
 ')"
-if echo "$_out" | grep -q "tag=v0.9.0" && echo "$_out" | grep -q "version=0.9.0"; then
+if grep -q "tag=v0.9.0" <<<"$_out" && grep -q "version=0.9.0" <<<"$_out"; then
     TESTS_PASSED=$((TESTS_PASSED + 1))
     printf "%b  PASS%b workflow_dispatch INPUT_TAG overrides branch ref entirely\n" "$GREEN" "$NC"
 else
@@ -626,7 +626,7 @@ _out2="$(bash -c "
     cat \"\$GITHUB_OUTPUT\"
 " 2>&1)"
 rm -f "$_tmpout"
-if echo "$_out2" | grep -q "tag=v1.5.0" && echo "$_out2" | grep -q "version=1.5.0"; then
+if grep -q "tag=v1.5.0" <<<"$_out2" && grep -q "version=1.5.0" <<<"$_out2"; then
     TESTS_PASSED=$((TESTS_PASSED + 1))
     printf "%b  PASS%b tag and version are both written to GITHUB_OUTPUT correctly\n" "$GREEN" "$NC"
 else

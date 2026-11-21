@@ -1217,7 +1217,7 @@ EXTRA_WARN_STDERR="$(env HOME="${EXTRA_HOME}" \
     TM_EXCLUSIONS_EXTRA_CONF="${MISSING_CONF}" \
     bash "$TM_EXCLUSIONS" --verbose --dry-run 2>&1 1>/dev/null || true)"
 TESTS_RUN=$((TESTS_RUN + 1))
-if printf '%s\n' "${EXTRA_WARN_STDERR}" | grep -q "Warning:.*TM_EXCLUSIONS_EXTRA_CONF"; then
+if grep -q "Warning:.*TM_EXCLUSIONS_EXTRA_CONF" <<<"${EXTRA_WARN_STDERR}"; then
     TESTS_PASSED=$((TESTS_PASSED + 1))
     printf '%b  PASS%b TM_EXCLUSIONS_EXTRA_CONF missing file prints warning to stderr\n' "$GREEN" "$NC"
 else
@@ -1247,7 +1247,7 @@ DIR_WARN_STDERR="$(env HOME="${EXTRA_HOME}" \
     TM_EXCLUSIONS_EXTRA_CONF="${DIR_AS_CONF}" \
     bash "$TM_EXCLUSIONS" --verbose --dry-run 2>&1 1>/dev/null || true)"
 TESTS_RUN=$((TESTS_RUN + 1))
-if printf '%s\n' "${DIR_WARN_STDERR}" | grep -q "Warning:.*TM_EXCLUSIONS_EXTRA_CONF"; then
+if grep -q "Warning:.*TM_EXCLUSIONS_EXTRA_CONF" <<<"${DIR_WARN_STDERR}"; then
     TESTS_PASSED=$((TESTS_PASSED + 1))
     printf '%b  PASS%b TM_EXCLUSIONS_EXTRA_CONF directory path prints warning to stderr\n' "$GREEN" "$NC"
 else
@@ -1576,7 +1576,7 @@ if [[ "${EUID}" -eq 0 ]]; then
         TESTS_FAILED=$((TESTS_FAILED + 1))
         printf '%b  FAIL%b ignored override as root should be silent (got: %s)\n' "$RED" "$NC" "${LOCALE_MISSING_STDERR}"
     fi
-elif printf '%s\n' "${LOCALE_MISSING_STDERR}" | grep -q "locale files not found"; then
+elif grep -q "locale files not found" <<<"${LOCALE_MISSING_STDERR}"; then
     TESTS_PASSED=$((TESTS_PASSED + 1))
     printf '%b  PASS%b missing locales dir prints clear error to stderr\n' "$GREEN" "$NC"
 else
@@ -1742,7 +1742,7 @@ assert_output_contains "${GLOB_HOME}/Library/Application Support/FakeIDE/v2/plug
     bash "$TM_EXCLUSIONS" --verbose --dry-run
 
 TESTS_RUN=$((TESTS_RUN + 1))
-if printf '%s\n' "${GLOB_OUT}" | grep -Fq "WOULD ${GLOB_HOME}/Library/Application Support/FakeIDE/*/plugins"; then
+if grep -Fq "WOULD ${GLOB_HOME}/Library/Application Support/FakeIDE/*/plugins" <<<"${GLOB_OUT}"; then
     TESTS_FAILED=$((TESTS_FAILED + 1))
     printf '%b  FAIL%b unmatched/literal path glob leaked to output\n' "$RED" "$NC"
 else
@@ -1751,7 +1751,7 @@ else
 fi
 
 TESTS_RUN=$((TESTS_RUN + 1))
-if printf '%s\n' "${GLOB_OUT}" | grep -Fq "WOULD ${GLOB_HOME}/Library/Application Support/FakeIDE/v1/options ["; then
+if grep -Fq "WOULD ${GLOB_HOME}/Library/Application Support/FakeIDE/v1/options [" <<<"${GLOB_OUT}"; then
     TESTS_FAILED=$((TESTS_FAILED + 1))
     printf '%b  FAIL%b glob must not exclude sibling options/ (user settings)\n' "$RED" "$NC"
 else
