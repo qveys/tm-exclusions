@@ -1,4 +1,4 @@
-.PHONY: setup check-hooks help test lint install uninstall check release tag version auto-patch
+.PHONY: setup check-hooks help test lint check-conf install uninstall check release tag version auto-patch
 
 SCRIPT = tm_exclusions.sh
 # Homebrew bin if writable (typical Apple Silicon), else /usr/local/bin.
@@ -94,6 +94,11 @@ test: ## Run smoke tests
 	@bash tests/test_safety.sh
 	@echo "Running release logic tests..."
 	@bash tests/test_release_logic.sh
+	@echo "Running config validator tests..."
+	@bash tests/test_check_conf.sh
+
+check-conf: ## Validate the syntax of the repository config/*.conf files
+	@bash scripts/check-conf.sh
 
 lint: ## Run ShellCheck on all shell scripts and syntax-check locale tables
 	@if ! command -v shellcheck >/dev/null 2>&1; then \
@@ -115,6 +120,8 @@ lint: ## Run ShellCheck on all shell scripts and syntax-check locale tables
 	@shellcheck -x -s sh .githooks/post-merge-fallback
 	@shellcheck -x -s sh .githooks/prune-gone-branches.sh
 	@shellcheck -x -s bash scripts/check-auto-patch.sh
+	@shellcheck -x -s bash scripts/check-conf.sh
+	@shellcheck -x -s bash tests/test_check_conf.sh
 	@echo "ShellCheck passed."
 
 install: setup ## Install tm-exclusions to PREFIX (Homebrew bin if writable, else /usr/local/bin)
@@ -158,7 +165,7 @@ uninstall: ## Remove tm-exclusions from PREFIX
 	  echo "Removed."; \
 	fi
 
-check: lint test ## Run all checks (lint + test)
+check: lint check-conf test ## Run all checks (lint + config validation + test)
 
 release: ## Cut a release PR — make release VERSION=x.y.z  (run make tag after merge)
 	@test -n "$(VERSION)" || { echo "Usage: make release VERSION=x.y.z" >&2; exit 1; }

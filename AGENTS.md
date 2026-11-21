@@ -23,6 +23,9 @@ This file provides guidance to AI agentic LLM CLI tools when working with code i
   - `make check`
 - Lint shell scripts:
   - `make lint`
+- Validate config file syntax (`type|target|reason`, `$HOME` usage, path traversal):
+  - `make check-conf`
+  - `bash scripts/check-conf.sh [file ...]` (defaults to `config/*.conf`; exit 1 on syntax errors)
 - Run smoke tests:
   - `make test`
 - Run the smoke test script directly:
