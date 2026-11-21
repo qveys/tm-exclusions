@@ -125,6 +125,9 @@ check_line() {
 
   case "$type" in
     path|prune|keep)
+      if [[ "$type" == keep && "$target" == *$'\t'* ]]; then
+        report "$file" "$num" "tab character not allowed in keep target"
+      fi
       local msg
       if ! msg="$(check_path_target "$target")"; then
         report "$file" "$num" "$msg"

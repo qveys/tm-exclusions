@@ -94,6 +94,12 @@ assert_exit_code 1 "invalid boolean setting value rejected" bash "$CHECK" "$f"
 f="$(conf_file set3.conf 'setting|report_path|\n')"
 assert_exit_code 1 "empty report_path rejected" bash "$CHECK" "$f"
 
+f="$(conf_file keeptab.conf "keep|/tmp/a\tb|protect\n")"
+assert_exit_code 1 "keep target containing a tab rejected" bash "$CHECK" "$f"
+assert_output_contains "tab character not allowed in keep target" "keep tab error message" bash "$CHECK" "$f"
+f="$(conf_file pathtab.conf "path|/tmp/a\tb|reason\n")"
+assert_exit_code 0 "tab in path target still accepted (parser only rejects keep)" bash "$CHECK" "$f"
+
 f="$(conf_file crlf.conf "path|${H}/x|reason\r\n")"
 assert_exit_code 1 "CRLF line endings rejected" bash "$CHECK" "$f"
 
