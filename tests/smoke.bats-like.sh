@@ -1045,7 +1045,12 @@ chmod +x "${SZ_TM_BIN}/tmutil"
 SZ_ALPHA="${SZ_HOME}/caches/alpha"
 SZ_BETA="${SZ_HOME}/caches/beta"
 mkdir -p "${SZ_ALPHA}" "${SZ_BETA}"
-TM_EXCLUSIONS_LOCALES_DIR="$ROOT/locales" load_i18n en
+# Load the English locale directly: TM_EXCLUSIONS_LOCALES_DIR is ignored under
+# root and the sourced script's BASH_SOURCE is /dev/fd/NN, so load_i18n could
+# exit 1 there (#77 run-3 review).
+# shellcheck source=locales/en.sh
+source "$ROOT/locales/en.sh"
+declare_i18n_en
 # Globals consumed by the sourced script — invisible to ShellCheck here.
 # shellcheck disable=SC2034
 MODE="apply"
