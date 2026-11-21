@@ -48,6 +48,7 @@ declare_i18n_en() {
     MSG_REPORT_ERRORS="Errors:"
     MSG_REPORT_BLOCKED="Blocked (privileges):"
     MSG_REPORT_NOT_FOUND="Missing paths:"
+    MSG_REPORT_SIZE_TOTAL="Disk usage total:"
     MSG_REPORT_RULE_SUMMARY="Summary by rule"
     MSG_REPORT_RULE_SUMMARY_EMPTY="No rule actions recorded."
     MSG_REPORT_TMLIST_FAILED="tmutil listexclusions failed."

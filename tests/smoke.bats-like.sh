@@ -900,6 +900,218 @@ assert_output_contains "Total (sum of du -sk, KiB): 42" \
 
 rm -rf "${FAKE_DU_BIN}" "${FAKE_DU_HOME}"
 
+# ---- Per-path disk size column (#45) ----
+# Stub du with deterministic per-path sizes; every invocation is logged so the
+# test can prove each existing path is walked exactly once (the per-path column
+# and the end-of-run report share the same measurement).
+echo ""
+echo "--- Per-path disk size column (#45) ---"
+
+SZ_BIN="$(mktemp -d "${TEST_HOME}/sz-du.XXXXXX")"
+SZ_CALLS="${TEST_HOME}/sz-du-calls.log"
+: > "${SZ_CALLS}"
+SZ_HOME="$(mktemp -d "${TEST_HOME}/sz-home.XXXXXX")"
+mkdir -p "${SZ_HOME}/caches/big" "${SZ_HOME}/caches/small" "${SZ_HOME}/caches/locked" "${SZ_HOME}/caches/vanish"
+cat > "${SZ_BIN}/du" << EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> "${SZ_CALLS}"
+case "\$*" in
+    *big*)    printf '1048576\t%s\n' "\$*"; exit 0 ;;
+    *small*)  printf '42\t%s\n' "\$*"; exit 0 ;;
+    *locked*) exit 1 ;;
+    # vanish simulates a cache deleted between its measurement and the report.
+    *vanish*) printf '1048576\t%s\n' "\$*"; rm -rf "${SZ_HOME}/caches/vanish"; exit 0 ;;
+esac
+printf '4\t%s\n' "\$*"; exit 0
+EOF
+chmod +x "${SZ_BIN}/du"
+
+SZ_CONF="${SZ_HOME}/sz.conf"
+cat > "${SZ_CONF}" << EOF
+path|${SZ_HOME}/caches/big|big cache
+path|${SZ_HOME}/caches/big|big cache again (duplicate rule on purpose)
+path|${SZ_HOME}/caches/small|small cache
+path|${SZ_HOME}/caches/locked|locked cache
+path|${SZ_HOME}/caches/vanish|vanishing cache
+path|${SZ_HOME}/gone|missing path
+EOF
+
+SZ_ENV=(env HOME="${SZ_HOME}" PATH="${SZ_BIN}:${PATH}" TM_EXCLUSIONS_DEFAULT_CONF="${SZ_CONF}")
+SZ_OUT="${TEST_HOME}/sz-out.txt"
+SZ_RC=0
+"${SZ_ENV[@]}" bash "$TM_EXCLUSIONS" --dry-run > "${SZ_OUT}" 2>&1 || SZ_RC=$?
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${SZ_RC}" -eq 0 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b dry-run with size column exits 0 (#45)\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b dry-run with size column exited %d (#45)\n' "$RED" "$NC" "$SZ_RC"
+    tail -n 40 "${SZ_OUT}" >&2
+fi
+
+# Size displayed next to each path, right-aligned in a fixed 8-cell column.
+assert_file_contains "${SZ_OUT}" \
+    "$(printf '  [DRY-RUN] Applying exclusion: %8s  %s' '1.0G' "${SZ_HOME}/caches/big")" \
+    "size 1.0G is shown next to the big path, aligned in 8 cells (#45)"
+assert_file_contains "${SZ_OUT}" \
+    "$(printf '  [DRY-RUN] Applying exclusion: %8s  %s' '42K' "${SZ_HOME}/caches/small")" \
+    "size 42K is shown next to the small path, aligned in 8 cells (#45)"
+
+# Placeholders: unreadable path (du fails) and missing path both show "-".
+assert_file_contains "${SZ_OUT}" \
+    "$(printf '  [DRY-RUN] Applying exclusion: %8s  %s' '-' "${SZ_HOME}/caches/locked")" \
+    "unreadable path shows the - placeholder without failing (#45)"
+assert_file_contains "${SZ_OUT}" \
+    "$(printf '  Path not found, skipping: %8s  %s' '-' "${SZ_HOME}/gone")" \
+    "missing path shows the - placeholder (#45)"
+
+# The vanishing cache is measured (and displayed) before disappearing.
+assert_file_contains "${SZ_OUT}" \
+    "$(printf '  [DRY-RUN] Applying exclusion: %8s  %s' '1.0G' "${SZ_HOME}/caches/vanish")" \
+    "vanishing path still shows its measured size at process time (#45)"
+
+# Cumulative global counter at end of run (KiB line kept, formatted total added).
+# The vanishing path was deleted after its measurement, so the total must count
+# only big + small (1048618 KiB) — never 2097194 — i.e. summary and report share
+# the same source (du_total_kb) (#45, #77 review).
+assert_file_contains "${SZ_OUT}" \
+    "Total (sum of du -sk, KiB): 1048618" \
+    "cumulative KiB total sums the surviving per-path sizes (#45)"
+assert_file_lacks_regex "${SZ_OUT}" \
+    '2097194' \
+    "deleted-mid-run path is excluded from the cumulative total (#77 review)"
+assert_file_contains "${SZ_OUT}" \
+    "Disk usage total: 1.0G" \
+    "cumulative formatted total is reported at end of run (#45)"
+
+# Cost: one du invocation per distinct existing path — the duplicate big rule
+# and the missing path must not add any walk (#45 review, bloquant).
+SZ_DU_CALLS="$(wc -l < "${SZ_CALLS}" | tr -d '[:space:]')"
+assert_eq 4 "${SZ_DU_CALLS}" \
+    "repeated rule reuses the cached size: one du per distinct path (#45)"
+
+# Quiet mode: no per-path size lines at all.
+assert_output_not_contains "Applying exclusion:" \
+    "quiet run prints no per-path application lines (#45)" \
+    "${SZ_ENV[@]}" bash "$TM_EXCLUSIONS" -q --dry-run
+assert_output_not_contains "Path not found, skipping:" \
+    "quiet run prints no per-path not-found lines (#45)" \
+    "${SZ_ENV[@]}" bash "$TM_EXCLUSIONS" -q --dry-run
+
+# TM_EXCLUSIONS_SKIP_DU=1 keeps the plain line (no size column at all).
+SZ_SD_OUT="${TEST_HOME}/sz-skipdu.txt"
+"${SZ_ENV[@]}" env TM_EXCLUSIONS_SKIP_DU=1 bash "$TM_EXCLUSIONS" --dry-run > "${SZ_SD_OUT}" 2>&1 || true
+assert_file_contains "${SZ_SD_OUT}" \
+    "Applying exclusion: ${SZ_HOME}/caches/big" \
+    "SKIP_DU=1 keeps the plain per-path line (#45)"
+assert_file_lacks_regex "${SZ_SD_OUT}" \
+    'exclusion: +([0-9.]+[KMGT]?|-)  ' \
+    "SKIP_DU=1 shows no size column (#45)"
+
+# Unit check (#77 review): du_total_kb is the single source of the cumulative
+# total — a path deleted after its measurement must be skipped, exactly like
+# the report's per-path lines, so summary and report can never diverge.
+# Temp file instead of process substitution: `source <(...)` does not load
+# functions under Bash 3.2 (macOS default).
+_du_src=$(mktemp "${TMPDIR:-/tmp}/tm-du-src.XXXXXX")
+sed '/^main /d' "$TM_EXCLUSIONS" > "$_du_src"
+# shellcheck disable=SC1090
+source "$_du_src"
+rm -f "$_du_src"
+# Used inside the sourced script (du_total_kb), invisible to ShellCheck here.
+# shellcheck disable=SC2034
+DU_PATHS=""
+# shellcheck disable=SC2034
+DU_SIZES=""
+SZ_VICTIM="${SZ_HOME}/caches/vanish2"
+SZ_SURVIVOR="${SZ_HOME}/caches/survivor"
+mkdir -p "${SZ_VICTIM}" "${SZ_SURVIVOR}"
+du_size_record "${SZ_VICTIM}" "1048576"
+du_size_record "${SZ_SURVIVOR}" "42"
+# shellcheck disable=SC2034
+DU_PATHS="${SZ_VICTIM}
+${SZ_SURVIVOR}"
+rm -rf "${SZ_VICTIM}"
+assert_eq 42 "$(du_total_kb)" \
+    "du_total_kb skips a path deleted after measurement — same source as the report (#77 review)"
+
+# Run-3 review: the cumulative total must be computed ONCE and handed to the
+# summary. A tmutil stub deletes the beta cache during `listexclusions` — i.e.
+# between the report total and the interactive summary — and report must equal
+# summary (red on d251be7e where ui_summary recomputed du_total_kb).
+SZ_TM_BIN="$(mktemp -d "${TEST_HOME}/sz-tm.XXXXXX")"
+cat > "${SZ_TM_BIN}/tmutil" << EOF
+#!/bin/sh
+if [ "\$1" = listexclusions ]; then rm -rf "${SZ_HOME}/caches/beta"; fi
+exit 0
+EOF
+chmod +x "${SZ_TM_BIN}/tmutil"
+SZ_ALPHA="${SZ_HOME}/caches/alpha"
+SZ_BETA="${SZ_HOME}/caches/beta"
+mkdir -p "${SZ_ALPHA}" "${SZ_BETA}"
+# Load the English locale directly: TM_EXCLUSIONS_LOCALES_DIR is ignored under
+# root and the sourced script's BASH_SOURCE is /dev/fd/NN, so load_i18n could
+# exit 1 there (#77 run-3 review).
+# shellcheck source=locales/en.sh
+source "$ROOT/locales/en.sh"
+declare_i18n_en
+# Globals consumed by the sourced script — invisible to ShellCheck here.
+# shellcheck disable=SC2034
+MODE="apply"
+# shellcheck disable=SC2034
+DRY_RUN=1
+# shellcheck disable=SC2034
+QUIET=0
+# shellcheck disable=SC2034
+UI=1
+# shellcheck disable=SC2034
+HAS_TMUTIL=1
+# shellcheck disable=SC2034
+TOTAL_CHECKED=2
+# shellcheck disable=SC2034
+TOTAL_EXCLUDED=2
+# shellcheck disable=SC2034
+TOTAL_ALREADY=0
+# shellcheck disable=SC2034
+TOTAL_SKIPPED=0
+# shellcheck disable=SC2034
+TOTAL_ERRORS=0
+# shellcheck disable=SC2034
+TOTAL_BLOCKED=0
+# shellcheck disable=SC2034
+TOTAL_NOT_FOUND=0
+# shellcheck disable=SC2034
+TOTAL_REMOVED=0
+# shellcheck disable=SC2034
+REPORT_LINES=""
+# shellcheck disable=SC2034
+RULE_SUMMARY=""
+# shellcheck disable=SC2034
+RULE_CONTEXT=""
+# shellcheck disable=SC2034
+DU_PATHS="${SZ_ALPHA}
+${SZ_BETA}"
+# shellcheck disable=SC2034
+DU_SIZES="$(printf '%s\t100\n%s\t50' "${SZ_ALPHA}" "${SZ_BETA}")"
+SZ_REPORT="${TEST_HOME}/sz-report.txt"
+SZ_SUMMARY="${TEST_HOME}/sz-summary.txt"
+SZ_OLD_PATH="${PATH}"
+PATH="${SZ_TM_BIN}:${PATH}"
+TM_EXCLUSIONS_REPORT="${SZ_REPORT}" generate_report > "${SZ_SUMMARY}" 2>&1 || true
+PATH="${SZ_OLD_PATH}"
+assert_file_contains "${SZ_REPORT}" "Total (sum of du -sk, KiB): 150" \
+    "report total is computed before tmutil listexclusions (#77 run-3)"
+assert_file_contains "${SZ_REPORT}" "Disk usage total: 150K" \
+    "report carries the formatted cumulative total (#45)"
+assert_file_contains "${SZ_SUMMARY}" "Disk usage total: 150K" \
+    "interactive summary reuses the precomputed total — report == summary (#77 run-3)"
+assert_file_lacks_regex "${SZ_SUMMARY}" 'Disk usage total: 100K' \
+    "summary never recomputes the total after listexclusions (#77 run-3)"
+rm -rf "${SZ_TM_BIN}"
+
+rm -rf "${SZ_BIN}" "${SZ_HOME}"
+
 # ---- site-packages filter (#26) ----
 # Test A: ~/.faketool/lib/python3.14/site-packages IS excluded (valid Python tool install)
 # Test B: ~/random/site-packages is NOT excluded (bare site-packages, no python-versioned parent)

@@ -9,6 +9,10 @@ All notable changes to this project will be documented in this file.
 - **`Formula/tm-exclusions.rb`**: `url`, `sha256` and `version` refreshed to the v1.3.0 tarball. The previous `sha256` did not match the v1.2.0 tarball it pointed at (`93d9f89e…` instead of `956ac268…`), so `brew install --formula ./Formula/tm-exclusions.rb` failed on a checksum mismatch.
 - **`.github/workflows/release.yml`**: a missing `HOMEBREW_TOKEN` now fails the release run instead of `exit 0`. The v1.3.0 run was green while the tap was never updated, so `brew install tm-exclusions` kept serving v1.2.0.
 
+### CLI
+
+- **Per-path disk size during exclusion application** ([#45](https://github.com/qveys/tm-exclusions/issues/45)): non-quiet runs now prefix each processed path with its formatted `du -sk` size, right-aligned in a fixed 8-cell column (e.g. `Applying exclusion:     1.0G  ~/Library/Caches`). Missing or unreadable paths show `-` and never fail the run. A cumulative formatted total (`Disk usage total:` / `Usage disque total :`) is added to the end-of-run summary and report counters. Each path is measured once and the report's disk-usage section reuses that measurement (`DU_SIZES`), so trees are never walked twice. `-q`/`--quiet` prints no per-path lines, and `TM_EXCLUSIONS_SKIP_DU=1` disables both the column and the report section.
+
 ## v1.3.0
 
 ### Build

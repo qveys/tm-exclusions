@@ -130,13 +130,24 @@ Interactive runs print a compact localized summary instead of duplicating the
 full report. The complete report is still saved unchanged. Plain output (including
 `--quiet`) preserves the full report, and debug FD 5 receives undecorated messages.
 
+Non-quiet runs prefix every per-path status line with a formatted disk size
+(#45): `process_path()` calls `path_size_column()`, which runs one `du -sk` per
+existing path, records the KiB value in `DU_SIZES`, and returns a string that
+`path_suffix()` right-aligns in a fixed 8-cell column before the path. Missing
+or unreadable paths (including `du` failures) display `-` and never fail the
+run. The measurement is reused by the report, so a tree is never walked twice.
+`--quiet` keeps `log_info()` silent, so no per-path line (size included) is
+printed; `TM_EXCLUSIONS_SKIP_DU=1` disables the column entirely. The interactive
+summary (`ui_summary()`) and the report counters gain a cumulative
+`MSG_REPORT_SIZE_TOTAL` line formatted by `format_size_kb()` over `du_total_kb()`.
+
 ## Report Generation
 
 After processing all paths, a human-readable report is printed and saved. The default file is `~/.config/tm_exclusions/last_report.txt`. The report includes:
 - Hostname, user, program version, timestamp, and mode
 - Counts: checked, newly excluded, already excluded, skipped, errors
 - **Inventory** (optional): `/Applications` item count, Homebrew formula/cask counts when `brew` exists, PATH directory stats. Set **`TM_EXCLUSIONS_SKIP_INVENTORY=1`** to skip this block (faster smoke/CI; `brew list` can be slow).
-- **Disk usage**: `du -sk` per path touched in the run (existing paths only), formatted for display, and an approximate total in KiB. `du_track_path()` removes nested entries when a parent is present, regardless of insertion order. Hard links and APFS clones can still affect estimates. `du_size_kb()` captures `du` independently of any pipeline so a non-zero exit from unreadable children (e.g. `/private/var/folders`) cannot trip `set -euo pipefail`.
+- **Disk usage**: `du -sk` per path touched in the run (existing paths only), formatted for display, and an approximate total in KiB. Sizes are measured once per path while it is processed (`path_size_column()` → `DU_SIZES`) and looked up again here (`du_size_lookup()`), so the report does not re-walk trees; only an unrecorded path falls back to a fresh `du`. `du_track_path()` removes nested entries when a parent is present, regardless of insertion order. Hard links and APFS clones can still affect estimates. `du_size_kb()` captures `du` independently of any pipeline so a non-zero exit from unreadable children (e.g. `/private/var/folders`) cannot trip `set -euo pipefail`. A cumulative formatted total (`MSG_REPORT_SIZE_TOTAL`, via `du_total_kb()`) is added to the counters block (#45).
 - Per-path detail lines with source file/line, rule target and reason (including expanded path globs), or discovery origin
 - A compact summary grouped by rule context, plus separate counts for missing paths and paths blocked by unavailable privileges
 - When `tmutil` is available: an excerpt of **`tmutil listexclusions`** (first 500 lines)
