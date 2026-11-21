@@ -236,9 +236,12 @@ ui_summary() {
     printf '  %s%s %s%s\n' "$UI_DIM" "$MSG_REPORT_SKIPPED" "$TOTAL_SKIPPED" "$UI_RESET"
     printf '  %s %s\n' "$MSG_REPORT_ERRORS" "$TOTAL_ERRORS"
     printf '  %s %s\n' "$MSG_REPORT_BLOCKED" "$TOTAL_BLOCKED"
-    # Cumulative disk usage of the paths touched in this run (#45).
-    if du_enabled && [[ -n "${DU_PATHS}" ]]; then
-        printf '  %s %s\n' "$MSG_REPORT_SIZE_TOTAL" "$(format_size_kb "$(du_total_kb)")"
+    # Cumulative disk usage of the paths touched in this run (#45). The total is
+    # computed once by generate_report and passed in as $2 — never recomputed
+    # here — so the summary always matches the report even if a path disappears
+    # while tmutil listexclusions runs between the two.
+    if [[ -n "${2:-}" ]]; then
+        printf '  %s %s\n' "$MSG_REPORT_SIZE_TOTAL" "$2"
     fi
     if [[ "${MODE}" = "uninstall" ]]; then
         printf '  %s %s\n' "$MSG_REPORT_REMOVED" "$TOTAL_REMOVED"
@@ -1641,7 +1644,7 @@ generate_report() {
     local report=""
     local dry_run_note=""
     local excluded_label="${MSG_REPORT_EXCLUDED}"
-    local inv du_sec size_total_line tm_list out_path path_total path_dirs p szk sh total_k desk_copy raw_list tm_list_rc
+    local inv du_sec size_total_line size_total_disp tm_list out_path path_total path_dirs p szk sh total_k desk_copy raw_list tm_list_rc
 
     if [ "${DRY_RUN}" -eq 1 ]; then
         dry_run_note=" (dry-run)"
@@ -1680,6 +1683,7 @@ PATH: ${path_dirs} existing directories (of ${path_total} colon-separated entrie
 
     du_sec=""
     size_total_line=""
+    size_total_disp=""
     if [[ "${TM_EXCLUSIONS_SKIP_DU:-}" = "1" ]]; then
         du_sec="
 === Disk usage (paths touched in this run, present on disk) ===
@@ -1706,17 +1710,20 @@ ${sh}	${p}"
         done <<EOF
 ${DU_PATHS}
 EOF
-        # Single source for the total: du_total_kb skips paths deleted since
-        # their measurement, exactly like the per-path lines above, so the
-        # report and the interactive summary can never disagree (#45, #77 review).
+        # The total is computed ONCE here (du_total_kb skips paths deleted
+        # since their measurement, exactly like the per-path lines above) and
+        # passed to ui_summary as $2 — it is never recomputed afterwards, so
+        # the report and the interactive summary always agree, even if a path
+        # disappears while tmutil listexclusions runs in between (#45, #77 review).
         total_k="$(du_total_kb)"
+        size_total_disp="$(format_size_kb "${total_k}")"
         du_sec="${du_sec}
 Total (sum of du -sk, KiB): ${total_k}
 "
-        # Cumulative formatted counter for end-of-run reporting (#45); same
+        # Cumulative formatted counter for the report counters (#45); same
         # total_k as the KiB line above.
         size_total_line="
-${MSG_REPORT_SIZE_TOTAL} $(format_size_kb "${total_k}")"
+${MSG_REPORT_SIZE_TOTAL} ${size_total_disp}"
     fi
 
     report="${MSG_REPORT_TITLE}
@@ -1792,7 +1799,7 @@ ${MSG_REPORT_RULE_SUMMARY_EMPTY}"
     fi
 
     if [[ "${UI}" -eq 1 ]]; then
-        ui_summary "$excluded_label"
+        ui_summary "$excluded_label" "$size_total_disp"
     else
         printf '\n%s\n' "$report"
     fi

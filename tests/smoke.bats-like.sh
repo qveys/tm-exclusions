@@ -1031,6 +1031,75 @@ rm -rf "${SZ_VICTIM}"
 assert_eq 42 "$(du_total_kb)" \
     "du_total_kb skips a path deleted after measurement — same source as the report (#77 review)"
 
+# Run-3 review: the cumulative total must be computed ONCE and handed to the
+# summary. A tmutil stub deletes the beta cache during `listexclusions` — i.e.
+# between the report total and the interactive summary — and report must equal
+# summary (red on d251be7e where ui_summary recomputed du_total_kb).
+SZ_TM_BIN="$(mktemp -d "${TEST_HOME}/sz-tm.XXXXXX")"
+cat > "${SZ_TM_BIN}/tmutil" << EOF
+#!/bin/sh
+if [ "\$1" = listexclusions ]; then rm -rf "${SZ_HOME}/caches/beta"; fi
+exit 0
+EOF
+chmod +x "${SZ_TM_BIN}/tmutil"
+SZ_ALPHA="${SZ_HOME}/caches/alpha"
+SZ_BETA="${SZ_HOME}/caches/beta"
+mkdir -p "${SZ_ALPHA}" "${SZ_BETA}"
+TM_EXCLUSIONS_LOCALES_DIR="$ROOT/locales" load_i18n en
+# Globals consumed by the sourced script — invisible to ShellCheck here.
+# shellcheck disable=SC2034
+MODE="apply"
+# shellcheck disable=SC2034
+DRY_RUN=1
+# shellcheck disable=SC2034
+QUIET=0
+# shellcheck disable=SC2034
+UI=1
+# shellcheck disable=SC2034
+HAS_TMUTIL=1
+# shellcheck disable=SC2034
+TOTAL_CHECKED=2
+# shellcheck disable=SC2034
+TOTAL_EXCLUDED=2
+# shellcheck disable=SC2034
+TOTAL_ALREADY=0
+# shellcheck disable=SC2034
+TOTAL_SKIPPED=0
+# shellcheck disable=SC2034
+TOTAL_ERRORS=0
+# shellcheck disable=SC2034
+TOTAL_BLOCKED=0
+# shellcheck disable=SC2034
+TOTAL_NOT_FOUND=0
+# shellcheck disable=SC2034
+TOTAL_REMOVED=0
+# shellcheck disable=SC2034
+REPORT_LINES=""
+# shellcheck disable=SC2034
+RULE_SUMMARY=""
+# shellcheck disable=SC2034
+RULE_CONTEXT=""
+# shellcheck disable=SC2034
+DU_PATHS="${SZ_ALPHA}
+${SZ_BETA}"
+# shellcheck disable=SC2034
+DU_SIZES="$(printf '%s\t100\n%s\t50' "${SZ_ALPHA}" "${SZ_BETA}")"
+SZ_REPORT="${TEST_HOME}/sz-report.txt"
+SZ_SUMMARY="${TEST_HOME}/sz-summary.txt"
+SZ_OLD_PATH="${PATH}"
+PATH="${SZ_TM_BIN}:${PATH}"
+TM_EXCLUSIONS_REPORT="${SZ_REPORT}" generate_report > "${SZ_SUMMARY}" 2>&1 || true
+PATH="${SZ_OLD_PATH}"
+assert_file_contains "${SZ_REPORT}" "Total (sum of du -sk, KiB): 150" \
+    "report total is computed before tmutil listexclusions (#77 run-3)"
+assert_file_contains "${SZ_REPORT}" "Disk usage total: 150K" \
+    "report carries the formatted cumulative total (#45)"
+assert_file_contains "${SZ_SUMMARY}" "Disk usage total: 150K" \
+    "interactive summary reuses the precomputed total — report == summary (#77 run-3)"
+assert_file_lacks_regex "${SZ_SUMMARY}" 'Disk usage total: 100K' \
+    "summary never recomputes the total after listexclusions (#77 run-3)"
+rm -rf "${SZ_TM_BIN}"
+
 rm -rf "${SZ_BIN}" "${SZ_HOME}"
 
 # ---- site-packages filter (#26) ----
