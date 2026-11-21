@@ -46,8 +46,11 @@ Preview the selected exclusions with `tm-exclusions --dry-run` before applying t
 ## 🎨 Terminal display
 
 Interactive terminals get cyan section headings, status colors, emojis, progress
-bars and a compact final summary. Each processed path is prefixed with its
-formatted on-disk size (`du -sk`, right-aligned in a fixed column; `-` when the
+bars and a compact final summary. By default, exclusions and prune matches
+are grouped by natural root (a `Git/<repo>`, a hidden `~/.tool`, or the matched
+directory’s parent). Missing paths and already-excluded paths use counters.
+Errors and system-path privilege skips remain individually visible. Use
+`-v` / `--verbose` for every path and its formatted on-disk size (`du -sk`, right-aligned in a fixed column; `-` when the
 path is missing or unreadable), and the summary ends with a cumulative
 `Usage disque total :` line. During cache and disk-image discovery, the
 current directory updates (when `setting|scan_images|true` is enabled) on a single line (long paths show their tail).
@@ -60,8 +63,8 @@ per-path details remain in the saved report, whose location is printed at the en
 
   📁  Application des règles d’exclusion statiques...
 
-  ✓ Application de l'exclusion :     2.0G  ~/Library/Caches
-  ✓ Application de l'exclusion :      42K  ~/.npm/_cacache
+  ~/Git/project → Seraient exclus : 12
+  Chemins absents : 5 (chemins : -v)
   ━━━━━━━━━━━━━━━━━━━━ 100%  42/42
 
   📊  Bilan
@@ -75,8 +78,11 @@ per-path details remain in the saved report, whose location is printed at the en
 ```
 
 Try `bash tm_exclusions.sh --dry-run --lang fr` in your terminal.
-Pipes, redirected output, `TERM=dumb`, `NO_COLOR=1` and `--quiet` keep the
-plain full report without decorations or progress updates. Saved reports and
+Pipes, redirected output, `TERM=dumb` and `NO_COLOR=1` use the same compact
+output without decorations or progress updates; `--verbose` restores the full
+plain report in these runs. `--quiet` keeps its existing behavior: no status
+lines, but the full report on stdout. Saved reports retain every exclusion,
+prune decision and missing path, regardless of verbosity. Saved reports and
 debug logs always remain plain text. No extra dependencies are required.
 
 ## ✨ Features
@@ -88,7 +94,7 @@ debug logs always remain plain text. No extra dependencies are required.
 | 🔒 | **Dual tmutil strategy** | User paths via `tmutil addexclusion`; system paths via `sudo tmutil ... -p` |
 | 🌍 | **Multilingual** | French / English (auto-detected from `$LANG`) |
 | 📊 | **Rich report** | Saved report with counters/details (+ optional inventory and desktop copy) |
-| 📏 | **Per-path sizes** | Formatted `du -sk` size next to each path in non-quiet runs (`-` if missing/unreadable), plus a cumulative total |
+| 📏 | **Per-path sizes** | Formatted `du -sk` size next to each path with `--verbose` (`-` if missing/unreadable), plus a cumulative total |
 | 🔄 | **Idempotent** | Safe to re-run — skips already-excluded paths |
 | 🐚 | **Bash 3.2** | Works with macOS stock shell — no dependencies |
 
@@ -184,6 +190,7 @@ Uninstall (idempotent — missing xattrs/paths silently skipped):
   --uninstall --dry-run Preview what would be removed
 
 Other:
+  --verbose, -v    Show each path instead of grouped summaries
   --quiet, -q      Quiet mode (no banner, no colors, no spinners)
   --desktop-report Write a report copy to ~/Desktop (default: off; avoids clutter on cron/launchd runs)
   --version        Show version
@@ -430,12 +437,12 @@ launchctl load ~/Library/LaunchAgents/com.tm-exclusions.weekly.plist
 
 - In non-interactive runs without cached/passwordless sudo (`sudo -n`), system paths are not silently skipped: each one is recorded as a privilege-blocked entry in the report and counted, so the run exits non-zero (see [Results and exit codes](#results-and-exit-codes)). No blocking prompt is ever shown. Privileged exclusions such as `/private/var/folders` use `sudo tmutil addexclusion -p` when credentials are available.
 - Report disk-usage uses `du -sk` and ignores permission-denied children, so partially-readable trees like `/private/var/folders` cannot abort a run under `set -euo pipefail`.
-- Non-quiet runs show a right-aligned, human-readable size (e.g. `1.0G`) next to each processed path; missing or unreadable paths show `-` without failing, and the summary/report gain a cumulative `Disk usage total:` line. Each path is measured once (`du -sk`) and the report reuses that measurement, so trees are never walked twice. `--quiet` adds no per-path lines; `TM_EXCLUSIONS_SKIP_DU=1` disables the size column as well.
+- Verbose runs show a right-aligned, human-readable size (e.g. `1.0G`) next to each processed path; missing or unreadable paths show `-` without failing, and the summary/report gain a cumulative `Disk usage total:` line. Each path is measured once (`du -sk`) and the report reuses that measurement, so trees are never walked twice. `--quiet` adds no per-path lines; `TM_EXCLUSIONS_SKIP_DU=1` disables the size column as well.
 - Reports include a rule summary, separate missing-path and privilege-blocked counts, and an explicit `tmutil listexclusions` status (`ok`, `empty`, `failed`, or `unavailable`).
 - `--uninstall` removes exclusions matching current configured static rules, dynamic matches, and discovered extra paths. It also drops retired catalog paths that are still excluded (today: the former `$HOME/Library/Developer/CoreSimulator` parent).
 - Apply and `--dry-run` drop that same retired parent exclusion when `tmutil` still has it, then add the granular CoreSimulator subdirs. Manual equivalent: `tmutil removeexclusion "$HOME/Library/Developer/CoreSimulator"`.
 - Dynamic scan depth is intentionally capped to `find -maxdepth 6`.
-- Report output always prints to stdout, including with `--quiet`.
+- Default stdout shows grouped results and counters. `--verbose` adds per-path status lines; in plain output it also prints the full report. `--quiet` continues to print the full report without status lines and takes precedence over `--verbose`. The full report is always saved.
 - On non-macOS or without `tmutil`, behavior is simulated (useful for tests).
 
 ---

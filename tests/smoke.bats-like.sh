@@ -151,11 +151,11 @@ echo "--- Dry-run mode ---"
 
 assert_exit_code 0 \
     "--dry-run exits 0" \
-    bash "$TM_EXCLUSIONS" --dry-run
+    bash "$TM_EXCLUSIONS" --verbose --dry-run
 
 assert_output_contains "dry-run" \
     "--dry-run output mentions dry-run in report" \
-    bash "$TM_EXCLUSIONS" --dry-run
+    bash "$TM_EXCLUSIONS" --verbose --dry-run
 
 # ---- Report-only mode ----
 echo ""
@@ -163,23 +163,23 @@ echo "--- Report-only mode ---"
 
 assert_exit_code 0 \
     "--report-only exits 0" \
-    bash "$TM_EXCLUSIONS" --report-only
+    bash "$TM_EXCLUSIONS" --verbose --report-only
 
 assert_output_contains "Report" \
     "--report-only generates a report" \
-    bash "$TM_EXCLUSIONS" --report-only
+    bash "$TM_EXCLUSIONS" --verbose --report-only
 
 assert_output_contains "Host:" \
     "--report-only report includes host header" \
-    bash "$TM_EXCLUSIONS" --report-only
+    bash "$TM_EXCLUSIONS" --verbose --report-only
 
 assert_output_contains "Inventory" \
     "--report-only report includes inventory section" \
-    bash "$TM_EXCLUSIONS" --report-only
+    bash "$TM_EXCLUSIONS" --verbose --report-only
 
 assert_output_contains "Paths not yet excluded" \
     "--report-only summary labels NEED paths correctly" \
-    bash "$TM_EXCLUSIONS" --report-only
+    bash "$TM_EXCLUSIONS" --verbose --report-only
 
 # ---- Report env (TM_EXCLUSIONS_REPORT*) ----
 echo ""
@@ -189,7 +189,7 @@ REPORT_OUT="${TEST_HOME}/tm_exclusions_ci_report.txt"
 rm -f "${REPORT_OUT}"
 assert_exit_code 0 \
     "TM_EXCLUSIONS_REPORT dry-run writes file" \
-    env TM_EXCLUSIONS_REPORT="${REPORT_OUT}" bash "$TM_EXCLUSIONS" --dry-run
+    env TM_EXCLUSIONS_REPORT="${REPORT_OUT}" bash "$TM_EXCLUSIONS" --verbose --dry-run
 
 if [[ ! -f "${REPORT_OUT}" ]]; then
     TESTS_RUN=$((TESTS_RUN + 1))
@@ -207,14 +207,14 @@ assert_output_contains "Host:" \
 
 assert_output_contains "TM_EXCLUSIONS_SKIP_DU=1" \
     "TM_EXCLUSIONS_SKIP_DU=1 skips du section in report output" \
-    env TM_EXCLUSIONS_SKIP_DU=1 bash "$TM_EXCLUSIONS" --dry-run
+    env TM_EXCLUSIONS_SKIP_DU=1 bash "$TM_EXCLUSIONS" --verbose --dry-run
 
 mkdir -p "${TEST_HOME}/Desktop"
 DESK_COPY="${TEST_HOME}/Desktop/tm-exclusions_last_report.txt"
 rm -f "${DESK_COPY}"
 assert_exit_code 0 \
     "TM_EXCLUSIONS_REPORT_DESKTOP=1 writes Desktop copy" \
-    env TM_EXCLUSIONS_REPORT_DESKTOP=1 bash "$TM_EXCLUSIONS" --dry-run
+    env TM_EXCLUSIONS_REPORT_DESKTOP=1 bash "$TM_EXCLUSIONS" --verbose --dry-run
 
 if [[ ! -f "${DESK_COPY}" ]]; then
     TESTS_RUN=$((TESTS_RUN + 1))
@@ -246,7 +246,7 @@ fi
 rm -f "${DESK_COPY}"
 assert_exit_code 0 \
     "default run (no flag, no env var) exits 0" \
-    bash "$TM_EXCLUSIONS" --dry-run
+    bash "$TM_EXCLUSIONS" --verbose --dry-run
 
 if [[ -f "${DESK_COPY}" ]]; then
     TESTS_RUN=$((TESTS_RUN + 1))
@@ -347,7 +347,7 @@ echo "--- Uninstall dry-run ---"
 
 assert_exit_code 0 \
     "--uninstall --dry-run exits 0" \
-    bash "$TM_EXCLUSIONS" --uninstall --dry-run
+    bash "$TM_EXCLUSIONS" --verbose --uninstall --dry-run
 
 # ---- Config parsing ----
 echo ""
@@ -364,7 +364,7 @@ EOF
 
 assert_exit_code 0 \
     "dry-run with custom config exits 0" \
-    bash "$TM_EXCLUSIONS" --dry-run
+    bash "$TM_EXCLUSIONS" --verbose --dry-run
 
 # ---- Short flags ----
 echo ""
@@ -394,11 +394,11 @@ EOF
 
 assert_exit_code 0 \
     "TM_EXCLUSIONS_DEFAULT_CONF dry-run exits 0" \
-    env TM_EXCLUSIONS_DEFAULT_CONF="${MINIMAL_CONF}" bash "$TM_EXCLUSIONS" --dry-run
+    env TM_EXCLUSIONS_DEFAULT_CONF="${MINIMAL_CONF}" bash "$TM_EXCLUSIONS" --verbose --dry-run
 
 assert_output_contains "/tmp/tm_exclusions_smoke_path" \
     "TM_EXCLUSIONS_DEFAULT_CONF dry-run uses override file" \
-    env TM_EXCLUSIONS_DEFAULT_CONF="${MINIMAL_CONF}" bash "$TM_EXCLUSIONS" --dry-run
+    env TM_EXCLUSIONS_DEFAULT_CONF="${MINIMAL_CONF}" bash "$TM_EXCLUSIONS" --verbose --dry-run
 
 # ---- Parity harness (#34) ----
 echo ""
@@ -421,7 +421,7 @@ EOF
 
 assert_exit_code 0 \
     "dry-run without prior --init creates custom.conf" \
-    env TM_EXCLUSIONS_DEFAULT_CONF="${MINIMAL_CONF}" bash "$TM_EXCLUSIONS" --dry-run
+    env TM_EXCLUSIONS_DEFAULT_CONF="${MINIMAL_CONF}" bash "$TM_EXCLUSIONS" --verbose --dry-run
 
 if [[ ! -f "${AUTO_HOME}/.config/tm_exclusions/custom.conf" ]]; then
     TESTS_RUN=$((TESTS_RUN + 1))
@@ -585,7 +585,7 @@ mkdir -p "${BAK_HOME}/Git/proj/node_modules"
 
 BAK_OUT="$(env HOME="${BAK_HOME}" \
                 TM_EXCLUSIONS_DEFAULT_CONF="${CONF}" \
-                bash "$TM_EXCLUSIONS" --dry-run 2>&1 || true)"
+                bash "$TM_EXCLUSIONS" --verbose --dry-run 2>&1 || true)"
 
 # Nested node_modules under .bun.bak must be pruned, not applied as an exclusion.
 BAK_BUN_APPLY=$(printf '%s\n' "${BAK_OUT}" | grep -cE "(Applying exclusion:|Already excluded:).*\.bun\.bak/" || true)
@@ -728,7 +728,7 @@ MIG_CONF="${MIG_HOME}/empty.conf"
 MIG_OUT="$(env HOME="${MIG_HOME}" PATH="${MIG_BIN}:${PATH}" \
                 TMUTIL_STUB_EXCLUDE_PARENT=1 \
                 TM_EXCLUSIONS_DEFAULT_CONF="${MIG_CONF}" \
-                bash "$TM_EXCLUSIONS" --dry-run 2>&1 || true)"
+                bash "$TM_EXCLUSIONS" --verbose --dry-run 2>&1 || true)"
 MIG_HITS=$(printf '%s\n' "${MIG_OUT}" | grep -cF "WOULD_REMOVE ${MIG_HOME}/Library/Developer/CoreSimulator" || true)
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ "${MIG_HITS}" -eq 1 ]]; then
@@ -742,7 +742,7 @@ fi
 MIG_CTRL="$(env HOME="${MIG_HOME}" PATH="${MIG_BIN}:${PATH}" \
                  TMUTIL_STUB_EXCLUDE_PARENT=0 \
                  TM_EXCLUSIONS_DEFAULT_CONF="${MIG_CONF}" \
-                 bash "$TM_EXCLUSIONS" --dry-run 2>&1 || true)"
+                 bash "$TM_EXCLUSIONS" --verbose --dry-run 2>&1 || true)"
 MIG_CTRL_HITS=$(printf '%s\n' "${MIG_CTRL}" | grep -cF "WOULD_REMOVE ${MIG_HOME}/Library/Developer/CoreSimulator" || true)
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ "${MIG_CTRL_HITS}" -eq 0 ]]; then
@@ -768,7 +768,7 @@ EOF
 
 PRUNE_OUT="$(env HOME="${PRUNE_HOME}" \
                 TM_EXCLUSIONS_DEFAULT_CONF="${PRUNE_CONF}" \
-                bash "$TM_EXCLUSIONS" --dry-run 2>&1 || true)"
+                bash "$TM_EXCLUSIONS" --verbose --dry-run 2>&1 || true)"
 
 # Parent must be processed exactly once (Applying ... OR Already excluded ...),
 # not 3 times — once for /node_modules plus twice for .pnpm/{foo,bar}/node_modules
@@ -815,7 +815,7 @@ EOF
 
 GLOB_OUT="$(env HOME="${GLOB_HOME}" \
                 TM_EXCLUSIONS_DEFAULT_CONF="${GLOB_CONF}" \
-                bash "$TM_EXCLUSIONS" --dry-run 2>&1 || true)"
+                bash "$TM_EXCLUSIONS" --verbose --dry-run 2>&1 || true)"
 
 # Both literal-bracket and adjacent siblings must each be processed exactly
 # once. If `[a]` were treated as a glob class, `proj[a]/node_modules` would
@@ -849,12 +849,12 @@ EOF
 assert_exit_code 0 \
     "--dry-run exits 0 with partially-unreadable path in config" \
     env HOME="${DU_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${DU_CONF}" \
-        bash "$TM_EXCLUSIONS" --dry-run
+        bash "$TM_EXCLUSIONS" --verbose --dry-run
 
 assert_exit_code 0 \
     "--report-only exits 0 with partially-unreadable path in config" \
     env HOME="${DU_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${DU_CONF}" \
-        bash "$TM_EXCLUSIONS" --report-only
+        bash "$TM_EXCLUSIONS" --verbose --report-only
 
 chmod 700 "${DU_HOME}/restrictedparent/unreadable_subdir"
 rm -rf "${DU_HOME}"
@@ -884,19 +884,19 @@ assert_exit_code 0 \
     "--dry-run exits 0 when du -sk returns non-zero (#55)" \
     env HOME="${FAKE_DU_HOME}" PATH="${FAKE_DU_BIN}:${PATH}" \
         TM_EXCLUSIONS_DEFAULT_CONF="${FAKE_DU_CONF}" \
-        bash "$TM_EXCLUSIONS" --dry-run
+        bash "$TM_EXCLUSIONS" --verbose --dry-run
 
 assert_output_contains "42K" \
     "report keeps partial du size when du exits 1 (#55)" \
     env HOME="${FAKE_DU_HOME}" PATH="${FAKE_DU_BIN}:${PATH}" \
         TM_EXCLUSIONS_DEFAULT_CONF="${FAKE_DU_CONF}" \
-        bash "$TM_EXCLUSIONS" --dry-run
+        bash "$TM_EXCLUSIONS" --verbose --dry-run
 
 assert_output_contains "Total (sum of du -sk, KiB): 42" \
     "du total sums the partial KiB when du exits 1 (#55)" \
     env HOME="${FAKE_DU_HOME}" PATH="${FAKE_DU_BIN}:${PATH}" \
         TM_EXCLUSIONS_DEFAULT_CONF="${FAKE_DU_CONF}" \
-        bash "$TM_EXCLUSIONS" --dry-run
+        bash "$TM_EXCLUSIONS" --verbose --dry-run
 
 rm -rf "${FAKE_DU_BIN}" "${FAKE_DU_HOME}"
 
@@ -939,7 +939,7 @@ EOF
 SZ_ENV=(env HOME="${SZ_HOME}" PATH="${SZ_BIN}:${PATH}" TM_EXCLUSIONS_DEFAULT_CONF="${SZ_CONF}")
 SZ_OUT="${TEST_HOME}/sz-out.txt"
 SZ_RC=0
-"${SZ_ENV[@]}" bash "$TM_EXCLUSIONS" --dry-run > "${SZ_OUT}" 2>&1 || SZ_RC=$?
+"${SZ_ENV[@]}" bash "$TM_EXCLUSIONS" --verbose --dry-run > "${SZ_OUT}" 2>&1 || SZ_RC=$?
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ "${SZ_RC}" -eq 0 ]]; then
     TESTS_PASSED=$((TESTS_PASSED + 1))
@@ -1001,7 +1001,7 @@ assert_output_not_contains "Path not found, skipping:" \
 
 # TM_EXCLUSIONS_SKIP_DU=1 keeps the plain line (no size column at all).
 SZ_SD_OUT="${TEST_HOME}/sz-skipdu.txt"
-"${SZ_ENV[@]}" env TM_EXCLUSIONS_SKIP_DU=1 bash "$TM_EXCLUSIONS" --dry-run > "${SZ_SD_OUT}" 2>&1 || true
+"${SZ_ENV[@]}" env TM_EXCLUSIONS_SKIP_DU=1 bash "$TM_EXCLUSIONS" --verbose --dry-run > "${SZ_SD_OUT}" 2>&1 || true
 assert_file_contains "${SZ_SD_OUT}" \
     "Applying exclusion: ${SZ_HOME}/caches/big" \
     "SKIP_DU=1 keeps the plain per-path line (#45)"
@@ -1130,7 +1130,7 @@ EOF
 
 SP_OUT="$(env HOME="${SP_HOME}" \
               TM_EXCLUSIONS_DEFAULT_CONF="${SP_CONF}" \
-              bash "$TM_EXCLUSIONS" --dry-run 2>&1 || true)"
+              bash "$TM_EXCLUSIONS" --verbose --dry-run 2>&1 || true)"
 
 # Test A: valid lib/python3.14/site-packages must appear
 SP_VALID_HITS=$(printf '%s\n' "${SP_OUT}" | grep -cE "(Applying exclusion:|Already excluded:).*\.faketool/lib/python3\.14/site-packages$" || true)
@@ -1193,14 +1193,14 @@ assert_exit_code 0 \
     env HOME="${EXTRA_HOME}" \
         TM_EXCLUSIONS_DEFAULT_CONF="${EXTRA_DEFAULT}" \
         TM_EXCLUSIONS_EXTRA_CONF="${EXTRA_CONF}" \
-        bash "$TM_EXCLUSIONS" --dry-run
+        bash "$TM_EXCLUSIONS" --verbose --dry-run
 
 assert_output_contains "Pruning" \
     "TM_EXCLUSIONS_EXTRA_CONF prune rule is applied (prune message emitted)" \
     env HOME="${EXTRA_HOME}" \
         TM_EXCLUSIONS_DEFAULT_CONF="${EXTRA_DEFAULT}" \
         TM_EXCLUSIONS_EXTRA_CONF="${EXTRA_CONF}" \
-        bash "$TM_EXCLUSIONS" --dry-run
+        bash "$TM_EXCLUSIONS" --verbose --dry-run
 
 # Test: missing file → script does NOT abort, warns on stderr
 MISSING_CONF="${EXTRA_HOME}/does-not-exist.conf"
@@ -1210,12 +1210,12 @@ assert_exit_code 0 \
     env HOME="${EXTRA_HOME}" \
         TM_EXCLUSIONS_DEFAULT_CONF="${EXTRA_DEFAULT}" \
         TM_EXCLUSIONS_EXTRA_CONF="${MISSING_CONF}" \
-        bash "$TM_EXCLUSIONS" --dry-run
+        bash "$TM_EXCLUSIONS" --verbose --dry-run
 
 EXTRA_WARN_STDERR="$(env HOME="${EXTRA_HOME}" \
     TM_EXCLUSIONS_DEFAULT_CONF="${EXTRA_DEFAULT}" \
     TM_EXCLUSIONS_EXTRA_CONF="${MISSING_CONF}" \
-    bash "$TM_EXCLUSIONS" --dry-run 2>&1 1>/dev/null || true)"
+    bash "$TM_EXCLUSIONS" --verbose --dry-run 2>&1 1>/dev/null || true)"
 TESTS_RUN=$((TESTS_RUN + 1))
 if printf '%s\n' "${EXTRA_WARN_STDERR}" | grep -q "Warning:.*TM_EXCLUSIONS_EXTRA_CONF"; then
     TESTS_PASSED=$((TESTS_PASSED + 1))
@@ -1229,7 +1229,7 @@ assert_output_not_contains "TM_EXCLUSIONS_EXTRA_CONF" \
     "no warning when extra conf not set" \
     env -u TM_EXCLUSIONS_EXTRA_CONF HOME="${EXTRA_HOME}" \
         TM_EXCLUSIONS_DEFAULT_CONF="${EXTRA_DEFAULT}" \
-        bash "$TM_EXCLUSIONS" --dry-run
+        bash "$TM_EXCLUSIONS" --verbose --dry-run
 
 # Test: directory path → -r passes but -f fails → must warn (not silently no-op)
 DIR_AS_CONF="${EXTRA_HOME}/some-dir"
@@ -1240,12 +1240,12 @@ assert_exit_code 0 \
     env HOME="${EXTRA_HOME}" \
         TM_EXCLUSIONS_DEFAULT_CONF="${EXTRA_DEFAULT}" \
         TM_EXCLUSIONS_EXTRA_CONF="${DIR_AS_CONF}" \
-        bash "$TM_EXCLUSIONS" --dry-run
+        bash "$TM_EXCLUSIONS" --verbose --dry-run
 
 DIR_WARN_STDERR="$(env HOME="${EXTRA_HOME}" \
     TM_EXCLUSIONS_DEFAULT_CONF="${EXTRA_DEFAULT}" \
     TM_EXCLUSIONS_EXTRA_CONF="${DIR_AS_CONF}" \
-    bash "$TM_EXCLUSIONS" --dry-run 2>&1 1>/dev/null || true)"
+    bash "$TM_EXCLUSIONS" --verbose --dry-run 2>&1 1>/dev/null || true)"
 TESTS_RUN=$((TESTS_RUN + 1))
 if printf '%s\n' "${DIR_WARN_STDERR}" | grep -q "Warning:.*TM_EXCLUSIONS_EXTRA_CONF"; then
     TESTS_PASSED=$((TESTS_PASSED + 1))
@@ -1277,7 +1277,7 @@ assert_exit_code 0 \
     "setting|report_path dry-run exits 0" \
     env -u TM_EXCLUSIONS_REPORT -u TM_EXCLUSIONS_EXTRA_CONF \
         HOME="${REPSET_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
-        bash "$TM_EXCLUSIONS" --dry-run
+        bash "$TM_EXCLUSIONS" --verbose --dry-run
 
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ -f "${REPSET_HOME}/Documents/from-config.txt" ]]; then
@@ -1305,7 +1305,7 @@ assert_exit_code 0 \
     "setting|report_path with \$HOME token exits 0" \
     env -u TM_EXCLUSIONS_REPORT -u TM_EXCLUSIONS_EXTRA_CONF \
         HOME="${REPSET_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
-        bash "$TM_EXCLUSIONS" --dry-run
+        bash "$TM_EXCLUSIONS" --verbose --dry-run
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ -f "${REPSET_HOME}/Documents/from-home-token.txt" ]]; then
     TESTS_PASSED=$((TESTS_PASSED + 1))
@@ -1325,7 +1325,7 @@ assert_exit_code 0 \
     "TM_EXCLUSIONS_REPORT overrides setting|report_path" \
     env HOME="${REPSET_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
         TM_EXCLUSIONS_REPORT="${ENV_REPORT}" \
-        bash "$TM_EXCLUSIONS" --dry-run
+        bash "$TM_EXCLUSIONS" --verbose --dry-run
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ -f "${ENV_REPORT}" && ! -f "${REPSET_HOME}/Documents/from-config.txt" ]]; then
     TESTS_PASSED=$((TESTS_PASSED + 1))
@@ -1348,7 +1348,7 @@ assert_exit_code 0 \
     env -u TM_EXCLUSIONS_REPORT -u TM_EXCLUSIONS_EXTRA_CONF -u TM_EXCLUSIONS_REPORT_DESKTOP \
         HOME="${REPSET_HOME}" \
         TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
-        bash "$TM_EXCLUSIONS" --dry-run
+        bash "$TM_EXCLUSIONS" --verbose --dry-run
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ -f "${DESK_COPY}" ]]; then
     TESTS_PASSED=$((TESTS_PASSED + 1))
@@ -1364,7 +1364,7 @@ assert_exit_code 0 \
     "TM_EXCLUSIONS_REPORT_DESKTOP=0 overrides setting|desktop_report|true" \
     env HOME="${REPSET_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
         TM_EXCLUSIONS_REPORT_DESKTOP=0 \
-        bash "$TM_EXCLUSIONS" --dry-run
+        bash "$TM_EXCLUSIONS" --verbose --dry-run
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ -f "${DESK_COPY}" ]]; then
     TESTS_FAILED=$((TESTS_FAILED + 1))
@@ -1408,7 +1408,7 @@ assert_exit_code 0 \
     env -u TM_EXCLUSIONS_REPORT -u TM_EXCLUSIONS_REPORT_DESKTOP HOME="${REPSET_HOME}" \
         TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
         TM_EXCLUSIONS_EXTRA_CONF="${EXTRA_SET}" \
-        bash "$TM_EXCLUSIONS" --dry-run
+        bash "$TM_EXCLUSIONS" --verbose --dry-run
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ -f "${DESK_COPY}" ]]; then
     TESTS_FAILED=$((TESTS_FAILED + 1))
@@ -1428,7 +1428,7 @@ WRITE_FAIL_ERR="${REPSET_HOME}/write-fail.err"
 TESTS_RUN=$((TESTS_RUN + 1))
 if ! env -u TM_EXCLUSIONS_REPORT -u TM_EXCLUSIONS_EXTRA_CONF HOME="${REPSET_HOME}" \
     TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
-    bash "$TM_EXCLUSIONS" --dry-run > "${WRITE_FAIL_OUT}" 2> "${WRITE_FAIL_ERR}"; then
+    bash "$TM_EXCLUSIONS" --verbose --dry-run > "${WRITE_FAIL_OUT}" 2> "${WRITE_FAIL_ERR}"; then
     TESTS_PASSED=$((TESTS_PASSED + 1))
     printf '%b  PASS%b setting|report_path write failure exits non-zero\n' "$GREEN" "$NC"
 else
@@ -1455,10 +1455,10 @@ assert_exit_code 0 \
     "setting|report_path without value exits 0" \
     env -u TM_EXCLUSIONS_REPORT -u TM_EXCLUSIONS_EXTRA_CONF \
         HOME="${REPSET_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
-        bash "$TM_EXCLUSIONS" --dry-run
+        bash "$TM_EXCLUSIONS" --verbose --dry-run
 env -u TM_EXCLUSIONS_REPORT -u TM_EXCLUSIONS_EXTRA_CONF \
     HOME="${REPSET_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
-    bash "$TM_EXCLUSIONS" --dry-run >/dev/null 2>"${MISSING_FIELD_ERR}" || true
+    bash "$TM_EXCLUSIONS" --verbose --dry-run >/dev/null 2>"${MISSING_FIELD_ERR}" || true
 TESTS_RUN=$((TESTS_RUN + 1))
 if grep -q "Empty report_path setting" "${MISSING_FIELD_ERR}" \
     && [[ -f "${REPSET_HOME}/.config/tm_exclusions/last_report.txt" ]] \
@@ -1478,7 +1478,7 @@ assert_output_contains "Empty report_path setting" \
     "setting|report_path| empty value warns" \
     env -u TM_EXCLUSIONS_REPORT -u TM_EXCLUSIONS_EXTRA_CONF \
         HOME="${REPSET_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
-        bash "$TM_EXCLUSIONS" --dry-run
+        bash "$TM_EXCLUSIONS" --verbose --dry-run
 
 # Invalid desktop_report value is ignored
 rm -f "${DESK_COPY}"
@@ -1489,7 +1489,7 @@ assert_output_contains "Invalid desktop_report value" \
     "setting|desktop_report|maybe warns" \
     env -u TM_EXCLUSIONS_REPORT -u TM_EXCLUSIONS_EXTRA_CONF -u TM_EXCLUSIONS_REPORT_DESKTOP \
         HOME="${REPSET_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
-        bash "$TM_EXCLUSIONS" --dry-run
+        bash "$TM_EXCLUSIONS" --verbose --dry-run
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ -f "${DESK_COPY}" ]]; then
     TESTS_FAILED=$((TESTS_FAILED + 1))
@@ -1506,11 +1506,11 @@ EOF
 assert_exit_code 0 \
     "unknown setting key exits 0" \
     env HOME="${REPSET_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
-        bash "$TM_EXCLUSIONS" --dry-run
+        bash "$TM_EXCLUSIONS" --verbose --dry-run
 assert_output_contains "Unknown setting" \
     "unknown setting key warns" \
     env HOME="${REPSET_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${REPSET_DEFAULT}" \
-        bash "$TM_EXCLUSIONS" --dry-run
+        bash "$TM_EXCLUSIONS" --verbose --dry-run
 
 assert_output_contains "setting (report_path, desktop_report, scan_images)" \
     "--help mentions setting config type" \
@@ -1610,7 +1610,7 @@ TMP_HOLD="${CLEANUP_DIR}/tmp"
 mkdir -p "${TMP_HOLD}"
 
 # Normal run leaves no temp files in TMPDIR
-env TMPDIR="${TMP_HOLD}" bash "$TM_EXCLUSIONS" --dry-run >/dev/null 2>&1
+env TMPDIR="${TMP_HOLD}" bash "$TM_EXCLUSIONS" --verbose --dry-run >/dev/null 2>&1
 REMAINING_TMP=$(find "${TMP_HOLD}" -name 'tm_exc_*' 2>/dev/null | wc -l | tr -d ' ')
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ "${REMAINING_TMP}" -eq 0 ]]; then
@@ -1677,7 +1677,7 @@ EOF
 
 BAK_OUT="$(env HOME="${BAK_HOME}" \
                TM_EXCLUSIONS_DEFAULT_CONF="${BAK_CONF}" \
-               bash "$TM_EXCLUSIONS" --dry-run 2>&1 || true)"
+               bash "$TM_EXCLUSIONS" --verbose --dry-run 2>&1 || true)"
 
 # Test A (positive): .faketool itself must be processed as a static path
 BAK_STATIC_HITS=$(printf '%s\n' "${BAK_OUT}" | grep -cE "(Applying exclusion:|Already excluded:|DRY-RUN.*Applying exclusion:|\[DRY-RUN\]).*\.faketool$" || true)
@@ -1729,17 +1729,17 @@ path|$HOME/Library/Application Support/FakeIDE/*/plugins|glob expansion smoke
 EOF
 GLOB_OUT="$(env HOME="${GLOB_HOME}" \
     TM_EXCLUSIONS_DEFAULT_CONF="${GLOB_CONF}" \
-    bash "$TM_EXCLUSIONS" --dry-run 2>&1)" || true
+    bash "$TM_EXCLUSIONS" --verbose --dry-run 2>&1)" || true
 
 assert_output_contains "${GLOB_HOME}/Library/Application Support/FakeIDE/v1/plugins" \
     "path glob expands JetBrains-style */plugins (v1)" \
     env HOME="${GLOB_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${GLOB_CONF}" \
-    bash "$TM_EXCLUSIONS" --dry-run
+    bash "$TM_EXCLUSIONS" --verbose --dry-run
 
 assert_output_contains "${GLOB_HOME}/Library/Application Support/FakeIDE/v2/plugins" \
     "path glob expands JetBrains-style */plugins (v2)" \
     env HOME="${GLOB_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${GLOB_CONF}" \
-    bash "$TM_EXCLUSIONS" --dry-run
+    bash "$TM_EXCLUSIONS" --verbose --dry-run
 
 TESTS_RUN=$((TESTS_RUN + 1))
 if printf '%s\n' "${GLOB_OUT}" | grep -Fq "WOULD ${GLOB_HOME}/Library/Application Support/FakeIDE/*/plugins"; then
@@ -1777,7 +1777,7 @@ mkdir -p "${AS_HOME}/Library/Application Support/Antigravity/User"
 printf '%s\n' '{}' > "${AS_HOME}/Library/Application Support/Antigravity/User/settings.json"
 mkdir -p "${AS_HOME}/Library/Application Support/Antigravity IDE/Code Cache"
 mkdir -p "${AS_HOME}/Library/Application Support/Antigravity IDE/GPUCache"
-AS_OUT="$(env HOME="${AS_HOME}" bash "$TM_EXCLUSIONS" --dry-run 2>&1)" || true
+AS_OUT="$(env HOME="${AS_HOME}" bash "$TM_EXCLUSIONS" --verbose --dry-run 2>&1)" || true
 
 for as_path in \
     "${AS_HOME}/Library/Application Support/Cursor/Cache" \
@@ -1901,6 +1901,165 @@ collect_post_scan_paths > "$3/plain-discovery"
 [[ "$(printf "%s\n" "$EXTRA_PATHS" | wc -l | tr -d " ")" = 51 ]]
 [[ ! -s "$3/plain-discovery" ]]
 ' _ "$TM_EXCLUSIONS" "$SCRIPT_DIR" "$TEST_HOME"
+
+# ---- Grouped console output (#24) ----
+echo ""
+echo "--- Grouped console output (#24) ---"
+BATCH_HOME="$TEST_HOME/batch-home"
+BATCH_BIN="$TEST_HOME/batch-bin"
+mkdir -p "$BATCH_HOME/.config/tm_exclusions" "$BATCH_BIN" \
+    "$BATCH_HOME/Git/repo one/packages/a/node_modules" \
+    "$BATCH_HOME/Git/repo one/packages/b/node_modules" \
+    "$BATCH_HOME/Git/repo-extra/node_modules" \
+    "$BATCH_HOME/.tool/a/dist" "$BATCH_HOME/.tool/b/dist" \
+    "$BATCH_HOME/.tool/pruned/a/dist" "$BATCH_HOME/.tool/pruned/b/dist" \
+    "$BATCH_HOME/already/cache"
+: > "$BATCH_HOME/.config/tm_exclusions/custom.conf"
+cat > "$BATCH_HOME/rules" <<'CONF'
+path|$HOME/missing-one|missing cache one
+path|$HOME/missing-two|missing cache two
+path|$HOME/already/cache|existing exclusion
+pattern|node_modules|dependencies
+pattern|dist|build output
+prune|$HOME/.tool/pruned|skip archived build output
+CONF
+cat > "$BATCH_BIN/tmutil" <<'STUB'
+#!/bin/sh
+case "$1" in
+    isexcluded)
+        [ "${BATCH_STATUS_FAIL:-0}" != 1 ] || exit 1
+        case "$2" in
+            */already/cache) printf '[Excluded] %s\n' "$2" ;;
+            *) printf '[Included] %s\n' "$2" ;;
+        esac ;;
+esac
+exit 0
+STUB
+cat > "$BATCH_BIN/sudo" <<'STUB'
+#!/bin/sh
+exit 1
+STUB
+chmod +x "$BATCH_BIN/"*
+BATCH_ENV=(env HOME="$BATCH_HOME" PATH="$BATCH_BIN:$PATH"
+    TM_EXCLUSIONS_DEFAULT_CONF="$BATCH_HOME/rules"
+    TM_EXCLUSIONS_REPORT="$BATCH_HOME/report" TM_EXCLUSIONS_SKIP_DU=1)
+
+batch_run() {
+    local rc=0 out="$1"
+    shift
+    "${BATCH_ENV[@]}" bash "$TM_EXCLUSIONS" "$@" > "$out" 2>&1 || rc=$?
+    assert_eq 0 "$rc" "batch CLI exits 0: $*"
+}
+
+batch_run "$BATCH_HOME/default" --dry-run
+assert_file_contains "$BATCH_HOME/default" \
+    "$BATCH_HOME/Git/repo one → [DRY-RUN] Would exclude: 2" \
+    "workspace matches collapse into one natural-root summary"
+assert_file_contains "$BATCH_HOME/default" \
+    "$BATCH_HOME/Git/repo-extra → [DRY-RUN] Would exclude: 1" \
+    "similarly named repositories remain separate groups"
+assert_file_contains "$BATCH_HOME/default" \
+    "$BATCH_HOME/.tool → [DRY-RUN] Would exclude: 2" \
+    "hidden-tool matches collapse into one root summary"
+assert_file_contains "$BATCH_HOME/default" "$BATCH_HOME/.tool → Pruned: 2" \
+    "prune matches collapse into one counter per root"
+assert_file_contains "$BATCH_HOME/default" 'Missing paths: 2 (paths: -v)' \
+    "missing static paths collapse into one counter"
+assert_file_contains "$BATCH_HOME/default" 'Already excluded: 1 (paths: -v)' \
+    "already-excluded paths are counted without per-path noise"
+assert_file_lacks_regex "$BATCH_HOME/default" \
+    'packages/[ab]/node_modules|missing-(one|two)|already/cache|pruned/[ab]/dist|^Details:' \
+    "default stdout does not leak detailed paths through the report"
+assert_eq 1 "$(grep -Fc "$BATCH_HOME/Git/repo one →" "$BATCH_HOME/default")" \
+    "one line represents all matches for a repository"
+assert_file_contains "$BATCH_HOME/report" \
+    "WOULD $BATCH_HOME/Git/repo one/packages/a/node_modules" \
+    "saved report retains individual exclusions"
+assert_file_contains "$BATCH_HOME/report" "SKIP  $BATCH_HOME/missing-one (not found)" \
+    "saved report retains missing static paths"
+assert_file_contains "$BATCH_HOME/report" "SKIP  $BATCH_HOME/.tool/pruned/a/dist" \
+    "saved report retains individual prune decisions"
+assert_file_contains "$BATCH_HOME/report" "OK    $BATCH_HOME/already/cache" \
+    "saved report retains already-excluded paths"
+sed '/^Date:/d' "$BATCH_HOME/report" > "$BATCH_HOME/report-reference"
+
+for BATCH_FLAG in -v --verbose; do
+    batch_run "$BATCH_HOME/verbose" "$BATCH_FLAG" --dry-run
+    assert_file_contains "$BATCH_HOME/verbose" \
+        "[DRY-RUN] Applying exclusion: $BATCH_HOME/Git/repo one/packages/a/node_modules" \
+        "$BATCH_FLAG restores individual application lines"
+    assert_file_contains "$BATCH_HOME/verbose" "Path not found, skipping: $BATCH_HOME/missing-one" \
+        "$BATCH_FLAG restores missing-path lines"
+    assert_file_contains "$BATCH_HOME/verbose" "Already excluded: $BATCH_HOME/already/cache" \
+        "$BATCH_FLAG restores already-excluded lines"
+    assert_file_contains "$BATCH_HOME/verbose" "Pruning (skipping scan of): $BATCH_HOME/.tool/pruned/a/dist" \
+        "$BATCH_FLAG restores individual prune lines"
+    assert_file_lacks_regex "$BATCH_HOME/verbose" ' → ' "$BATCH_FLAG emits no grouped lines"
+    sed '/^Date:/d' "$BATCH_HOME/report" > "$BATCH_HOME/report-current"
+    assert_true "$BATCH_FLAG leaves saved report identical" \
+        cmp -s "$BATCH_HOME/report-reference" "$BATCH_HOME/report-current"
+done
+
+batch_run "$BATCH_HOME/quiet" --quiet --dry-run
+assert_file_lacks_regex "$BATCH_HOME/quiet" \
+    '^  (Applying exclusion:|Path not found, skipping:|Pruning \(skipping scan of\):)| → ' \
+    "quiet output suppresses both progress details and grouped lines"
+sed '/^Date:/d' "$BATCH_HOME/report" > "$BATCH_HOME/report-current"
+assert_true "quiet keeps the same full saved report" \
+    cmp -s "$BATCH_HOME/report-reference" "$BATCH_HOME/report-current"
+assert_file_contains "$BATCH_HOME/quiet" \
+    "WOULD $BATCH_HOME/Git/repo one/packages/a/node_modules" \
+    "quiet stdout still includes the full report"
+batch_run "$BATCH_HOME/quiet-verbose" --verbose --quiet --dry-run
+assert_file_lacks_regex "$BATCH_HOME/quiet-verbose" 'Applying exclusion:| → ' \
+    "quiet takes precedence over verbose"
+
+batch_run "$BATCH_HOME/french" --lang fr --dry-run
+assert_file_contains "$BATCH_HOME/french" \
+    "$BATCH_HOME/Git/repo one → [SIMULATION] Seraient exclus : 2" \
+    "root summaries are localized in French"
+assert_file_contains "$BATCH_HOME/french" 'Chemins absents : 2 (chemins : -v)' \
+    "missing-path summary is localized in French"
+batch_run "$BATCH_HOME/audit" --report-only
+assert_file_contains "$BATCH_HOME/audit" \
+    "$BATCH_HOME/Git/repo one → Paths not yet excluded (action needed): 2" \
+    "report-only summarizes needed exclusions without simulation labels"
+batch_run "$BATCH_HOME/apply"
+assert_file_contains "$BATCH_HOME/apply" \
+    "$BATCH_HOME/Git/repo one → Newly excluded: 2" \
+    "apply mode summarizes successfully applied exclusions"
+
+# A failed report save must not strand details behind an unusable file path.
+touch "$BATCH_HOME/blocked"
+BATCH_RC=0
+"${BATCH_ENV[@]}" TM_EXCLUSIONS_REPORT="$BATCH_HOME/blocked/report" \
+    bash "$TM_EXCLUSIONS" --dry-run > "$BATCH_HOME/write-fail-out" \
+    2> "$BATCH_HOME/write-fail-err" || BATCH_RC=$?
+assert_eq 1 "$BATCH_RC" "failed report save still exits nonzero"
+assert_file_contains "$BATCH_HOME/write-fail-out" \
+    "WOULD $BATCH_HOME/Git/repo one/packages/a/node_modules" \
+    "failed report save falls back to full details on stdout"
+assert_file_contains "$BATCH_HOME/write-fail-err" 'Could not save report to:' \
+    "failed report save remains individually visible"
+
+# Actionable errors stay on stderr even while ordinary output is grouped.
+BATCH_RC=0
+"${BATCH_ENV[@]}" BATCH_STATUS_FAIL=1 bash "$TM_EXCLUSIONS" --dry-run \
+    > "$BATCH_HOME/errors-out" 2> "$BATCH_HOME/errors-err" || BATCH_RC=$?
+assert_eq 1 "$BATCH_RC" "grouped status failures still exit nonzero"
+assert_file_contains "$BATCH_HOME/errors-err" \
+    "Unable to determine Time Machine exclusion status: $BATCH_HOME/already/cache" \
+    "grouping keeps actionable errors on stderr"
+if [[ -d /Applications ]]; then
+    printf '%s\n' 'path|/Applications|system applications' >> "$BATCH_HOME/rules"
+    BATCH_RC=0
+    "${BATCH_ENV[@]}" bash "$TM_EXCLUSIONS" --dry-run \
+        < /dev/null > "$BATCH_HOME/system-out" 2> "$BATCH_HOME/system-err" || BATCH_RC=$?
+    assert_eq 1 "$BATCH_RC" "system privilege skips still exit nonzero"
+    assert_file_contains "$BATCH_HOME/system-err" \
+        'Skipping (non-interactive / no sudo cache) for system path: /Applications' \
+        "grouping keeps system-path skips individually visible"
+fi
 
 # ---- Summary ----
 test_summary

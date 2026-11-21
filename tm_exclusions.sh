@@ -25,6 +25,8 @@ readonly CUSTOM_CONF_DIR="${HOME}/.config/tm_exclusions"
 # ---------------------------------------------------------------------------
 MODE="apply"          # apply | dry-run | report-only | uninstall
 QUIET=0
+VERBOSE=0
+BATCH_EVENTS=""
 FORCE=0
 LANG_OVERRIDE=""
 CURRENT_LANG="en"
@@ -269,6 +271,83 @@ log_info() {
     fi
 }
 
+# Presentation only: decisions, counters and report details stay in process_path.
+# Natural roots keep workspace packages together without merging separate repos.
+batch_root() {
+    local relative first rest
+    BATCH_ROOT="${1%/*}"
+    case "$1" in
+        "$HOME/"*)
+            relative="${1#"$HOME/"}"
+            first="${relative%%/*}"
+            case "$first" in
+                .*) BATCH_ROOT="$HOME/$first" ;;
+                Git)
+                    if [[ "$relative" = Git ]]; then
+                        BATCH_ROOT="$HOME/Git"
+                    else
+                        rest="${relative#*/}"
+                        BATCH_ROOT="$HOME/Git/${rest%%/*}"
+                    fi
+                    ;;
+            esac
+            ;;
+    esac
+    [[ -n "$BATCH_ROOT" ]] || BATCH_ROOT="/"
+}
+
+log_path_result() {
+    local action="$1" path="$2" detail="${3:-}"
+    [[ "$QUIET" -eq 0 ]] || return 0
+    if [[ "$VERBOSE" -eq 1 ]]; then
+        [[ -z "$detail" ]] || log_info "$detail"
+        return 0
+    fi
+    BATCH_ROOT=""
+    case "$action" in
+        missing|already) ;;
+        *) batch_root "$path" ;;
+    esac
+    BATCH_EVENTS="${BATCH_EVENTS}${action}"$'\t'"${BATCH_ROOT}"$'\n'
+}
+
+flush_path_results() {
+    [[ -n "$BATCH_EVENTS" ]] || return 0
+    local action count root label
+    while IFS=$'\t' read -r action count root; do
+        case "$action" in
+            missing) label="$MSG_REPORT_NOT_FOUND" ;;
+            already) label="$MSG_REPORT_ALREADY" ;;
+            prune) label="$MSG_BATCH_PRUNED" ;;
+            remove)
+                label="$MSG_REPORT_REMOVED"
+                if [[ "$DRY_RUN" -eq 1 ]]; then
+                    label="$MSG_DRY_RUN_PREFIX $label"
+                fi
+                ;;
+            need) label="$MSG_REPORT_NEED_EXCLUSION" ;;
+            apply)
+                label="$MSG_REPORT_EXCLUDED"
+                if [[ "$DRY_RUN" -eq 1 ]]; then label="$MSG_DRY_RUN_PREFIX $MSG_REPORT_WOULD_EXCLUDE"; fi
+                ;;
+            *) continue ;;
+        esac
+        if [[ -n "$root" ]]; then
+            log_info "  $root → $label $count"
+        else
+            log_info "  $label $count ($MSG_BATCH_DETAILS)"
+        fi
+    done < <(printf '%s' "$BATCH_EVENTS" | awk -F '\t' '
+        NF { if (!counts[$0]++) keys[++n] = $0 }
+        END {
+            for (i = 1; i <= n; i++) {
+                split(keys[i], fields, "\t")
+                printf "%s\t%d\t%s\n", fields[1], counts[keys[i]], fields[2]
+            }
+        }')
+    BATCH_EVENTS=""
+}
+
 log_error() {
     clear_progress
     if [[ -t 2 && "${TERM:-dumb}" != "dumb" && -z "${NO_COLOR:-}" ]]; then
@@ -283,7 +362,6 @@ add_report_line() {
     case "$detail" in
         SKIP\ *\(not\ found\))
             TOTAL_NOT_FOUND=$((TOTAL_NOT_FOUND + 1))
-            return 0
             ;;
     esac
     update_rule_summary "$detail"
@@ -1211,7 +1289,7 @@ process_path() {
         TOTAL_SKIPPED=$((TOTAL_SKIPPED + 1))
         # Absent path: placeholder "-" in the size column, never a failure (#45).
         if du_enabled; then size_col="-"; fi
-        log_info "  ${MSG_PATH_NOT_FOUND} $(path_suffix "$size_col" "$path")"
+        log_path_result missing "$path" "  ${MSG_PATH_NOT_FOUND} $(path_suffix "$size_col" "$path")"
         add_report_line "SKIP  ${path} (not found)"
         return 0
     fi
@@ -1246,28 +1324,30 @@ process_path() {
             add_report_line "SKIP  $path (not excluded)"
         elif [[ "$DRY_RUN" -eq 1 ]]; then
             TOTAL_REMOVED=$((TOTAL_REMOVED + 1))
+            log_path_result remove "$path" "  $MSG_DRY_RUN_PREFIX $MSG_REMOVING $(path_suffix "$size_col" "$path")"
             add_report_line "WOULD_REMOVE $path"
         elif tm_remove_exclusion "$path"; then
             TOTAL_REMOVED=$((TOTAL_REMOVED + 1))
-            log_info "  $MSG_REMOVING $(path_suffix "$size_col" "$path")"
+            log_path_result remove "$path" "  $MSG_REMOVING $(path_suffix "$size_col" "$path")"
             add_report_line "REMOVE $path"
         else
             record_error "$MSG_REMOVE_FAILED $path"
         fi
     elif [[ "$status" -eq 0 ]]; then
         TOTAL_ALREADY=$((TOTAL_ALREADY + 1))
-        log_info "  $MSG_ALREADY $(path_suffix "$size_col" "$path")"
+        log_path_result already "$path" "  $MSG_ALREADY $(path_suffix "$size_col" "$path")"
         add_report_line "OK    $path (already excluded)"
     elif [[ "$MODE" = report-only ]]; then
         TOTAL_EXCLUDED=$((TOTAL_EXCLUDED + 1))
+        log_path_result need "$path" "  $MSG_REPORT_NEED_EXCLUSION $(path_suffix "$size_col" "$path")"
         add_report_line "NEED  $path (not excluded)"
     elif [[ "$DRY_RUN" -eq 1 ]]; then
         TOTAL_EXCLUDED=$((TOTAL_EXCLUDED + 1))
-        log_info "  $MSG_DRY_RUN_PREFIX $MSG_APPLYING $(path_suffix "$size_col" "$path")"
+        log_path_result apply "$path" "  $MSG_DRY_RUN_PREFIX $MSG_APPLYING $(path_suffix "$size_col" "$path")"
         add_report_line "WOULD $path"
     elif tm_add_exclusion "$path"; then
         TOTAL_EXCLUDED=$((TOTAL_EXCLUDED + 1))
-        log_info "  $MSG_APPLYING $(path_suffix "$size_col" "$path")"
+        log_path_result apply "$path" "  $MSG_APPLYING $(path_suffix "$size_col" "$path")"
         add_report_line "ADD   $path"
     else
         record_error "$MSG_ADD_FAILED $path"
@@ -1416,7 +1496,7 @@ EOF
 
         # Skip if a config-level prune zone covers this path.
         if is_pruned "$found_dir"; then
-            log_info "  ${MSG_PRUNE_SKIP} ${found_dir}"
+            log_path_result prune "$found_dir" "  ${MSG_PRUNE_SKIP} ${found_dir}"
             add_report_line "SKIP  $found_dir ($MSG_PRUNE_SKIP)"
             continue
         fi
@@ -1445,6 +1525,7 @@ EOF
         process_path "$found_dir"
     done < "$sorted_results"
 
+    flush_path_results
     rm -f "$sorted_results" "$kept_file"
     unregister_tmp_file "$sorted_results"
     unregister_tmp_file "$kept_file"
@@ -1468,6 +1549,7 @@ apply_static_paths() {
     done <<EOF
 ${CONF_PATHS}
 EOF
+    flush_path_results
 }
 
 # Paths previously shipped as path| rules that the catalog no longer excludes.
@@ -1598,6 +1680,7 @@ apply_extra_paths() {
     done <<EOF
 ${EXTRA_PATHS}
 EOF
+    flush_path_results
 }
 
 # ---------------------------------------------------------------------------
@@ -1641,7 +1724,7 @@ desktop_report_enabled() {
 generate_report() {
     RULE_CONTEXT=""
     if [[ "${UI}" -eq 1 ]]; then ui_section "📝" "$MSG_UI_REPORT"; fi
-    local report=""
+    local report="" console_report=""
     local dry_run_note=""
     local excluded_label="${MSG_REPORT_EXCLUDED}"
     local inv du_sec size_total_line size_total_disp tm_list out_path path_total path_dirs p szk sh total_k desk_copy raw_list tm_list_rc
@@ -1746,6 +1829,8 @@ ${MSG_REPORT_NOT_FOUND} ${TOTAL_NOT_FOUND}${size_total_line}"
 ${MSG_REPORT_REMOVED} ${TOTAL_REMOVED}"
     fi
 
+    console_report="$report"
+
     report="${report}
 ${inv}"
 
@@ -1800,8 +1885,10 @@ ${MSG_REPORT_RULE_SUMMARY_EMPTY}"
 
     if [[ "${UI}" -eq 1 ]]; then
         ui_summary "$excluded_label" "$size_total_disp"
-    else
+    elif [[ "$VERBOSE" -eq 1 || "$QUIET" -eq 1 ]]; then
         printf '\n%s\n' "$report"
+    else
+        printf '\n%s\n' "$console_report"
     fi
 
     out_path="$(resolve_report_out_path)"
@@ -1812,7 +1899,7 @@ ${MSG_REPORT_RULE_SUMMARY_EMPTY}"
     else
         record_error "${MSG_ERROR_REPORT_WRITE} ${out_path}"
         # Keep the detailed results accessible if the compact view cannot link a file.
-        if [[ "${UI}" -eq 1 ]]; then printf '\n%s\n' "$report"; fi
+        if [[ "${UI}" -eq 1 || ( "$VERBOSE" -eq 0 && "$QUIET" -eq 0 ) ]]; then printf '\n%s\n' "$report"; fi
     fi
 
     if desktop_report_enabled; then
@@ -1840,6 +1927,7 @@ show_help() {
     echo ""
     echo "${MSG_HELP_OPTIONS}"
     echo "${MSG_HELP_QUIET}"
+    echo "${MSG_HELP_VERBOSE}"
     echo "${MSG_HELP_FORCE}"
     echo "${MSG_HELP_DESKTOP_REPORT}"
     echo "${MSG_HELP_LANG}"
@@ -1888,6 +1976,9 @@ parse_args() {
                 ;;
             --desktop-report)
                 DESKTOP_REPORT=1
+                ;;
+            --verbose|-v)
+                VERBOSE=1
                 ;;
             --quiet|-q)
                 QUIET=1
