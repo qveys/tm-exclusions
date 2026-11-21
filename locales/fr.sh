@@ -21,6 +21,7 @@ declare_i18n_fr() {
     MSG_HELP_VERBOSE="  -v, --verbose      Afficher chaque chemin au lieu des résumés groupés"
     MSG_BATCH_PRUNED="Élagués :"
     MSG_BATCH_DETAILS="chemins : -v"
+    MSG_CATEGORY_DEFAULT="Sans catégorie"
     MSG_HELP_FORCE="  --force            Avec --uninstall, supprimer aussi les chemins correspondants absents"
     MSG_HELP_DESKTOP_REPORT="  --desktop-report   Écrire une copie du rapport sur le Bureau (défaut : désactivé)"
     MSG_HELP_LANG="  --lang <en|fr>     Langue de sortie"
