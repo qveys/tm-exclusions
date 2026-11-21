@@ -126,11 +126,21 @@ candidates count toward the 50-result cap; a 51st candidate produces a `LIMIT` r
 iCloud subtrees remain pruned. Report preparation keeps a heading because its
 total work is not known in advance.
 
-Interactive runs print a compact localized summary instead of duplicating the
-full report. The complete report is still saved unchanged. Plain output (including
-`--quiet`) preserves the full report, and debug FD 5 receives undecorated messages.
+`log_path_result()` buffers presentation events separately from exclusion decisions
+and report details. At each phase boundary, `flush_path_results()` emits counts
+by action and natural root: `Git/<repo>`, a hidden `~/.tool`, or the matched
+directory’s direct parent. Missing and already-excluded paths use counters without
+path lists. Prune results are counted by root. Errors and privilege skips bypass
+this buffer and remain individually visible on stderr.
 
-Non-quiet runs prefix every per-path status line with a formatted disk size
+Default output shows these groups and final counters, including when redirected.
+`-v` / `--verbose` restores individual status lines and the plain full report.
+Interactive runs retain their compact final summary. `--quiet` takes precedence:
+no status lines, and the full report on stdout, as before. All modes save the same
+complete report; if writing fails, compact output falls back to the full report.
+Debug FD 5 receives undecorated console messages.
+
+Verbose runs prefix every per-path status line with a formatted disk size
 (#45): `process_path()` calls `path_size_column()`, which runs one `du -sk` per
 existing path, records the KiB value in `DU_SIZES`, and returns a string that
 `path_suffix()` right-aligns in a fixed 8-cell column before the path. Missing
@@ -143,7 +153,7 @@ summary (`ui_summary()`) and the report counters gain a cumulative
 
 ## Report Generation
 
-After processing all paths, a human-readable report is printed and saved. The default file is `~/.config/tm_exclusions/last_report.txt`. The report includes:
+After processing all paths, a human-readable report is saved; stdout receives a compact summary by default or the full plain report with `--verbose` / `--quiet`. The default file is `~/.config/tm_exclusions/last_report.txt`. The report includes:
 - Hostname, user, program version, timestamp, and mode
 - Counts: checked, newly excluded, already excluded, skipped, errors
 - **Inventory** (optional): `/Applications` item count, Homebrew formula/cask counts when `brew` exists, PATH directory stats. Set **`TM_EXCLUSIONS_SKIP_INVENTORY=1`** to skip this block (faster smoke/CI; `brew list` can be slow).
@@ -154,8 +164,8 @@ After processing all paths, a human-readable report is printed and saved. The de
 
 The `tmutil listexclusions` section always reports its status: `ok`, `empty`,
 `failed (exit N)`, or `unavailable`. An empty result is therefore distinguishable
-from a command failure. Missing configured paths are counted but omitted from the
-long detail list; the rule summary remains available for them.
+from a command failure. Missing configured paths are counted and retained in the
+saved detail list with their rule context; default stdout only shows their count.
 
 **Report path overrides** (precedence: CLI > environment > config `setting` > built-in default)
 
