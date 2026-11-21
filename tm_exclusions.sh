@@ -408,11 +408,14 @@ EOF
 }
 
 # Cumulative disk usage (KiB) over the deduped DU_PATHS set, reusing recorded
-# sizes; only unrecorded paths fall back to a fresh du (#45).
+# sizes; only unrecorded paths fall back to a fresh du (#45). This is the single
+# source for both the report total and the interactive summary: paths that no
+# longer exist at total time are skipped, exactly like the report's per-path
+# lines, so the two can never diverge (CodeRabbit review on #77).
 du_total_kb() {
     local p kb total=0
     while IFS= read -r p; do
-        [[ -z "$p" ]] && continue
+        [[ -z "$p" || ! -e "$p" ]] && continue
         if ! kb="$(du_size_lookup "$p")"; then
             kb="$(du_size_kb "$p")"
         fi
@@ -438,8 +441,12 @@ path_size_column() {
     local p="$1" np="" szk=""
     if [[ -n "$p" && -e "$p" ]]; then
         if ! np="$(normalize_path "$p")"; then np="$p"; fi
-        szk="$(du_size_kb "$np")"
-        du_size_record "$np" "$szk"
+        # Consult the cache before measuring: a repeated rule (same path twice)
+        # must not walk the same tree again (#45).
+        if ! szk="$(du_size_lookup "$np")"; then
+            szk="$(du_size_kb "$np")"
+            du_size_record "$np" "$szk"
+        fi
         case "$szk" in
             ''|*[!0-9]*) PATH_SIZE_COL="-" ;;
             *) PATH_SIZE_COL="$(format_size_kb "$szk")" ;;
@@ -1680,29 +1687,34 @@ PATH: ${path_dirs} existing directories (of ${path_total} colon-separated entrie
     elif [[ -n "${DU_PATHS}" ]]; then
         du_sec="
 === Disk usage (paths touched in this run, present on disk) ==="
-        total_k=0
         while IFS= read -r p; do
             [[ -z "$p" || ! -e "$p" ]] && continue
             # Reuse the size recorded while the path was processed (#45); only an
-            # unrecorded path falls back to a fresh du. `--` is applied inside
-            # du_size_kb; unreadable children must not abort.
+            # unrecorded path falls back to a fresh du, recorded so du_total_kb
+            # does not walk it again. `--` is applied inside du_size_kb;
+            # unreadable children must not abort.
             if ! szk="$(du_size_lookup "$p")"; then
                 szk="$(du_size_kb "$p")"
+                du_size_record "$p" "$szk"
             fi
             case "$szk" in
                 ''|*[!0-9]*) continue ;;
             esac
-            total_k=$((total_k + szk))
             sh="$(format_size_kb "$szk")"
             du_sec="${du_sec}
 ${sh}	${p}"
         done <<EOF
 ${DU_PATHS}
 EOF
+        # Single source for the total: du_total_kb skips paths deleted since
+        # their measurement, exactly like the per-path lines above, so the
+        # report and the interactive summary can never disagree (#45, #77 review).
+        total_k="$(du_total_kb)"
         du_sec="${du_sec}
 Total (sum of du -sk, KiB): ${total_k}
 "
-        # Cumulative formatted counter for end-of-run reporting (#45).
+        # Cumulative formatted counter for end-of-run reporting (#45); same
+        # total_k as the KiB line above.
         size_total_line="
 ${MSG_REPORT_SIZE_TOTAL} $(format_size_kb "${total_k}")"
     fi

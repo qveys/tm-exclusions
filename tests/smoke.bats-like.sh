@@ -910,6 +910,8 @@ echo "--- Per-path disk size column (#45) ---"
 SZ_BIN="$(mktemp -d "${TEST_HOME}/sz-du.XXXXXX")"
 SZ_CALLS="${TEST_HOME}/sz-du-calls.log"
 : > "${SZ_CALLS}"
+SZ_HOME="$(mktemp -d "${TEST_HOME}/sz-home.XXXXXX")"
+mkdir -p "${SZ_HOME}/caches/big" "${SZ_HOME}/caches/small" "${SZ_HOME}/caches/locked" "${SZ_HOME}/caches/vanish"
 cat > "${SZ_BIN}/du" << EOF
 #!/bin/sh
 printf '%s\n' "\$*" >> "${SZ_CALLS}"
@@ -917,18 +919,20 @@ case "\$*" in
     *big*)    printf '1048576\t%s\n' "\$*"; exit 0 ;;
     *small*)  printf '42\t%s\n' "\$*"; exit 0 ;;
     *locked*) exit 1 ;;
+    # vanish simulates a cache deleted between its measurement and the report.
+    *vanish*) printf '1048576\t%s\n' "\$*"; rm -rf "${SZ_HOME}/caches/vanish"; exit 0 ;;
 esac
 printf '4\t%s\n' "\$*"; exit 0
 EOF
 chmod +x "${SZ_BIN}/du"
 
-SZ_HOME="$(mktemp -d "${TEST_HOME}/sz-home.XXXXXX")"
-mkdir -p "${SZ_HOME}/caches/big" "${SZ_HOME}/caches/small" "${SZ_HOME}/caches/locked"
 SZ_CONF="${SZ_HOME}/sz.conf"
 cat > "${SZ_CONF}" << EOF
 path|${SZ_HOME}/caches/big|big cache
+path|${SZ_HOME}/caches/big|big cache again (duplicate rule on purpose)
 path|${SZ_HOME}/caches/small|small cache
 path|${SZ_HOME}/caches/locked|locked cache
+path|${SZ_HOME}/caches/vanish|vanishing cache
 path|${SZ_HOME}/gone|missing path
 EOF
 
@@ -962,18 +966,30 @@ assert_file_contains "${SZ_OUT}" \
     "$(printf '  Path not found, skipping: %8s  %s' '-' "${SZ_HOME}/gone")" \
     "missing path shows the - placeholder (#45)"
 
+# The vanishing cache is measured (and displayed) before disappearing.
+assert_file_contains "${SZ_OUT}" \
+    "$(printf '  [DRY-RUN] Applying exclusion: %8s  %s' '1.0G' "${SZ_HOME}/caches/vanish")" \
+    "vanishing path still shows its measured size at process time (#45)"
+
 # Cumulative global counter at end of run (KiB line kept, formatted total added).
+# The vanishing path was deleted after its measurement, so the total must count
+# only big + small (1048618 KiB) — never 2097194 — i.e. summary and report share
+# the same source (du_total_kb) (#45, #77 review).
 assert_file_contains "${SZ_OUT}" \
     "Total (sum of du -sk, KiB): 1048618" \
-    "cumulative KiB total sums the per-path sizes (#45)"
+    "cumulative KiB total sums the surviving per-path sizes (#45)"
+assert_file_lacks_regex "${SZ_OUT}" \
+    '2097194' \
+    "deleted-mid-run path is excluded from the cumulative total (#77 review)"
 assert_file_contains "${SZ_OUT}" \
     "Disk usage total: 1.0G" \
     "cumulative formatted total is reported at end of run (#45)"
 
-# Cost: one du invocation per existing path (missing path is never walked).
+# Cost: one du invocation per distinct existing path — the duplicate big rule
+# and the missing path must not add any walk (#45 review, bloquant).
 SZ_DU_CALLS="$(wc -l < "${SZ_CALLS}" | tr -d '[:space:]')"
-assert_eq 3 "${SZ_DU_CALLS}" \
-    "each existing path is du-walked exactly once, report included (#45)"
+assert_eq 4 "${SZ_DU_CALLS}" \
+    "repeated rule reuses the cached size: one du per distinct path (#45)"
 
 # Quiet mode: no per-path size lines at all.
 assert_output_not_contains "Applying exclusion:" \
@@ -992,6 +1008,28 @@ assert_file_contains "${SZ_SD_OUT}" \
 assert_file_lacks_regex "${SZ_SD_OUT}" \
     'exclusion: +([0-9.]+[KMGT]?|-)  ' \
     "SKIP_DU=1 shows no size column (#45)"
+
+# Unit check (#77 review): du_total_kb is the single source of the cumulative
+# total — a path deleted after its measurement must be skipped, exactly like
+# the report's per-path lines, so summary and report can never diverge.
+# shellcheck disable=SC1090
+source <(sed '/^main /d' "$TM_EXCLUSIONS")
+# Used inside the sourced script (du_total_kb), invisible to ShellCheck here.
+# shellcheck disable=SC2034
+DU_PATHS=""
+# shellcheck disable=SC2034
+DU_SIZES=""
+SZ_VICTIM="${SZ_HOME}/caches/vanish2"
+SZ_SURVIVOR="${SZ_HOME}/caches/survivor"
+mkdir -p "${SZ_VICTIM}" "${SZ_SURVIVOR}"
+du_size_record "${SZ_VICTIM}" "1048576"
+du_size_record "${SZ_SURVIVOR}" "42"
+# shellcheck disable=SC2034
+DU_PATHS="${SZ_VICTIM}
+${SZ_SURVIVOR}"
+rm -rf "${SZ_VICTIM}"
+assert_eq 42 "$(du_total_kb)" \
+    "du_total_kb skips a path deleted after measurement — same source as the report (#77 review)"
 
 rm -rf "${SZ_BIN}" "${SZ_HOME}"
 
