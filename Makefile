@@ -1,4 +1,4 @@
-.PHONY: setup check-hooks help test lint check-conf install uninstall check release tag version auto-patch
+.PHONY: setup check-hooks help test lint check-conf check-i18n install uninstall check release tag version auto-patch
 
 SCRIPT = tm_exclusions.sh
 # Homebrew bin if writable (typical Apple Silicon), else /usr/local/bin.
@@ -96,9 +96,14 @@ test: ## Run smoke tests
 	@bash tests/test_release_logic.sh
 	@echo "Running config validator tests..."
 	@bash tests/test_check_conf.sh
+	@echo "Running locale parity checker tests..."
+	@bash tests/test_check_i18n.sh
 
 check-conf: ## Validate the syntax of the repository config/*.conf files
 	@bash scripts/check-conf.sh
+
+check-i18n: ## Verify locales/en.sh and locales/fr.sh define the same MSG_* keys
+	@bash scripts/check-i18n.sh
 
 lint: ## Run ShellCheck on all shell scripts and syntax-check locale tables
 	@if ! command -v shellcheck >/dev/null 2>&1; then \
@@ -122,6 +127,8 @@ lint: ## Run ShellCheck on all shell scripts and syntax-check locale tables
 	@shellcheck -x -s bash scripts/check-auto-patch.sh
 	@shellcheck -x -s bash scripts/check-conf.sh
 	@shellcheck -x -s bash tests/test_check_conf.sh
+	@shellcheck -x -s bash scripts/check-i18n.sh
+	@shellcheck -x -s bash tests/test_check_i18n.sh
 	@echo "ShellCheck passed."
 
 install: setup ## Install tm-exclusions to PREFIX (Homebrew bin if writable, else /usr/local/bin)
@@ -165,7 +172,7 @@ uninstall: ## Remove tm-exclusions from PREFIX
 	  echo "Removed."; \
 	fi
 
-check: lint check-conf test ## Run all checks (lint + config validation + test)
+check: lint check-conf check-i18n test ## Run all checks (lint + config validation + locale parity + test)
 
 release: ## Cut a release PR — make release VERSION=x.y.z  (run make tag after merge)
 	@test -n "$(VERSION)" || { echo "Usage: make release VERSION=x.y.z" >&2; exit 1; }

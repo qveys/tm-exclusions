@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Build
 
+- **`make check-i18n` / `scripts/check-i18n.sh`**: locale parity checker, run as part of `make check`. It compares the `MSG_*` keys of `locales/en.sh` and `locales/fr.sh` and reports, with `file:line`, every key missing from the other locale (exit 1); it exits 0 when the keys are in 1:1 parity. Covered by `tests/test_check_i18n.sh`. ([#56](https://github.com/qveys/tm-exclusions/issues/56))
 - **`make check-conf` / `scripts/check-conf.sh`**: standalone syntax validator for `.conf` files, run as part of `make check`. It reports `file:line` errors (exit 1) for unknown types, missing `|` delimiters, empty target or reason, `..` path traversal, typo'd or unsupported `$HOME`/`~` usage, and invalid `setting` keys/values; with no arguments it checks every `config/*.conf`. Covered by `tests/test_check_conf.sh`. ([#57](https://github.com/qveys/tm-exclusions/issues/57))
 - **`Formula/tm-exclusions.rb`**: `url`, `sha256` and `version` refreshed to the v1.3.0 tarball. The previous `sha256` did not match the v1.2.0 tarball it pointed at (`93d9f89e…` instead of `956ac268…`), so `brew install --formula ./Formula/tm-exclusions.rb` failed on a checksum mismatch.
 - **`.github/workflows/release.yml`**: a missing `HOMEBREW_TOKEN` now fails the release run instead of `exit 0`. The v1.3.0 run was green while the tap was never updated, so `brew install tm-exclusions` kept serving v1.2.0.

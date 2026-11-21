@@ -26,6 +26,9 @@ This file provides guidance to AI agentic LLM CLI tools when working with code i
 - Validate config file syntax (`type|target|reason`, `$HOME` usage, path traversal):
   - `make check-conf`
   - `bash scripts/check-conf.sh [file ...]` (defaults to `config/*.conf`; exit 1 on syntax errors)
+- Verify locale key parity (`MSG_*` in `locales/en.sh` vs `locales/fr.sh`):
+  - `make check-i18n`
+  - `bash scripts/check-i18n.sh [en_file fr_file]` (reports `file:line` of keys missing from the other locale; exit 1 on mismatch)
 - Run smoke tests:
   - `make test`
 - Run the smoke test script directly:
