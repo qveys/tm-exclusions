@@ -48,7 +48,9 @@ Preview the selected exclusions with `tm-exclusions --dry-run` before applying t
 Interactive terminals get cyan section headings, status colors, emojis, progress
 bars and a compact final summary. By default, exclusions and prune matches
 are grouped by natural root (a `Git/<repo>`, a hidden `~/.tool`, or the matched
-directory’s parent). Missing paths and already-excluded paths use counters.
+directory’s parent), under one `══ Category ══` header per `#@Category` section of
+the config (`-v` and `--quiet` follow the same rules as below; `--quiet` prints no
+headers). Missing paths and already-excluded paths use counters.
 Errors and system-path privilege skips remain individually visible. Use
 `-v` / `--verbose` for every path and its formatted on-disk size (`du -sk`, right-aligned in a fixed column; `-` when the
 path is missing or unreadable), and the summary ends with a cumulative
@@ -56,7 +58,8 @@ path is missing or unreadable), and the summary ends with a cumulative
 current directory updates (when `setting|scan_images|true` is enabled) on a single line (long paths show their tail).
 Progress counts completed static rules and
 completed scan patterns, not elapsed time. The full inventory, disk usage and
-per-path details remain in the saved report, whose location is printed at the end.
+per-path details remain in the saved report, whose location is printed at the end,
+with the detail lines grouped under `── Category ──` subheadings.
 
 ```text
   🛡️  tm-exclusions  v1.3.0
@@ -228,6 +231,23 @@ setting|desktop_report|true
 | `prune` | ✂️ Path ignored by scan (no TM exclusion applied) |
 | `keep` | Protect a literal path and its descendants; blocks exclusions of ancestors too |
 | `setting` | ⚙️ Preference (`report_path`, `desktop_report`, `scan_images`); not a Time Machine rule |
+
+### Category sections
+
+A `#@<Category>` line starts a section: the `path`, `pattern` and `keep` rules that
+follow belong to that category until the next marker. Console output and the report
+group their results by category. Rules placed before the first marker of a file (and
+a bare `#@`) use the default category (`Uncategorized` / `Sans catégorie`); each config
+file starts in the default category, so a section of `default.conf` never leaks into
+`custom.conf`. Add your own sections to `~/.config/tm_exclusions/custom.conf`:
+
+```conf
+#@MyCategory
+path|~/MyLargeDataset|Large dataset not needed in backup
+```
+
+Rules added with `--add` are appended at the end of the file and therefore join its
+last section.
 
 ### Protect data and choose broader exclusions
 

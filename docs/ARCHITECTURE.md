@@ -127,8 +127,9 @@ iCloud subtrees remain pruned. Report preparation keeps a heading because its
 total work is not known in advance.
 
 `log_path_result()` buffers presentation events separately from exclusion decisions
-and report details. At each phase boundary, `flush_path_results()` emits counts
-by action and natural root: `Git/<repo>`, a hidden `~/.tool`, or the matched
+and report details. At each phase boundary, `flush_path_results()` emits them under
+one `══ Category ══` header per category (`ui_category()`; categories in order of first
+appearance, none under `--quiet`), then counts by action and natural root: `Git/<repo>`, a hidden `~/.tool`, or the matched
 directory’s direct parent. Missing and already-excluded paths use counters without
 path lists. Prune results are counted by root. Errors and privilege skips bypass
 this buffer and remain individually visible on stderr.
@@ -271,6 +272,23 @@ The existing CoreSimulator parent migration is retained. Newly disabled catalog 
 and old image exclusions are **not automatically removed**: ownership is unknown.
 Users must audit and remove those existing exclusions explicitly. `keep` cannot force
 Time Machine to include a child of an excluded parent.
+
+### Category sections
+
+`parse_config_file()` treats a `#@<Name>` line as a category marker (`parse_category_marker()`
+trims it and neutralizes control characters and `|`); the rules that follow carry that
+category in `CONF_RULES` (`type|target|category|context`). Each config file starts in
+the default category, which is stored as the empty string and rendered with
+`MSG_CATEGORY_DEFAULT`, so default and custom rules never inherit a section from another
+file and `custom.conf` may define its own `#@MyCategory` sections. `set_rule_context()` sets
+`RULE_CATEGORY` next to `RULE_CONTEXT`, and every site that clears one clears the other.
+`add_report_line()` records each detail line twice: once in `REPORT_LINES` (unchanged) and
+once in `REPORT_GROUPED` as `<category>\t<line>`; `group_report_details()` prints the
+saved report's `Details:` block under `── Category ──` subheadings, categories in order of
+first appearance and lines in processing order. Dynamic matches take the category of the
+`pattern` rule that found them, so one scan can touch several categories; the ordering
+of the scan itself (global path sort) is unchanged, only the output is grouped. Discovered
+paths and retired exclusions use the default category.
 
 ### Rule provenance and failures
 
