@@ -62,7 +62,7 @@ assert_output_contains() {
     local output
     output="$("$@" 2>&1)" || true
 
-    if echo "$output" | grep -q -- "$expected"; then
+    if grep -q -- "$expected" <<<"$output"; then
         TESTS_PASSED=$((TESTS_PASSED + 1))
         printf "${GREEN}  PASS${NC} %s\n" "$desc"
     else
@@ -83,7 +83,7 @@ assert_output_not_contains() {
     local output
     output="$("$@" 2>&1)" || true
 
-    if echo "$output" | grep -q -- "$unexpected"; then
+    if grep -q -- "$unexpected" <<<"$output"; then
         TESTS_FAILED=$((TESTS_FAILED + 1))
         printf "${RED}  FAIL${NC} %s (output contained '%s')\n" "$desc" "$unexpected"
     else
