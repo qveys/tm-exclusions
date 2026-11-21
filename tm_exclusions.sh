@@ -236,6 +236,10 @@ ui_summary() {
     printf '  %s%s %s%s\n' "$UI_DIM" "$MSG_REPORT_SKIPPED" "$TOTAL_SKIPPED" "$UI_RESET"
     printf '  %s %s\n' "$MSG_REPORT_ERRORS" "$TOTAL_ERRORS"
     printf '  %s %s\n' "$MSG_REPORT_BLOCKED" "$TOTAL_BLOCKED"
+    # Cumulative disk usage of the paths touched in this run (#45).
+    if du_enabled && [[ -n "${DU_PATHS}" ]]; then
+        printf '  %s %s\n' "$MSG_REPORT_SIZE_TOTAL" "$(format_size_kb "$(du_total_kb)")"
+    fi
     if [[ "${MODE}" = "uninstall" ]]; then
         printf '  %s %s\n' "$MSG_REPORT_REMOVED" "$TOTAL_REMOVED"
     fi
@@ -343,6 +347,118 @@ du_size_kb() {
     awk '{print $1; exit}' <<EOF
 ${raw}
 EOF
+}
+
+# Per-path disk sizes are computed once, while the path is processed, and reused
+# by the end-of-run report so large trees are never walked twice (#45).
+# DU_SIZES is a newline list of "<normalized path>\t<KiB>"; an empty KiB records
+# a path whose size could not be read (placeholder "-"), not a missing entry.
+DU_SIZES=""
+
+# du runs unless TM_EXCLUSIONS_SKIP_DU=1 (report section and size column both off).
+du_enabled() {
+    [[ "${TM_EXCLUSIONS_SKIP_DU:-}" != "1" ]]
+}
+
+# Human-readable size from KiB (42K, 2.0M, 2.0G, 1.5T) — shared by the per-path
+# column and the report so both format identically (#45).
+format_size_kb() {
+    awk -v k="$1" 'BEGIN {
+        if (k < 1024) { printf "%dK", k; exit }
+        x = k / 1024.0
+        if (x < 1024) { printf "%.1fM", x; exit }
+        x = x / 1024.0
+        if (x < 1024) { printf "%.1fG", x; exit }
+        x = x / 1024.0
+        printf "%.1fT", x
+    }'
+}
+
+# Record the KiB size of $1 (empty when unreadable). Overwrites an existing entry.
+du_size_record() {
+    local p="$1" kb="$2" entry ek found=0 retained=""
+    [[ -z "$p" ]] && return 0
+    while IFS=$'\t' read -r entry ek; do
+        [[ -z "$entry" ]] && continue
+        if [[ "$entry" = "$p" ]]; then found=1; ek="$kb"; fi
+        retained="${retained}${entry}"$'\t'"${ek}"$'\n'
+    done <<EOF
+${DU_SIZES}
+EOF
+    if [[ "$found" -eq 0 ]]; then
+        retained="${retained}${p}"$'\t'"${kb}"$'\n'
+    fi
+    DU_SIZES="$retained"
+    return 0
+}
+
+# Echo the recorded KiB of $1; returns 1 when $1 has no recorded entry.
+du_size_lookup() {
+    local p="$1" entry kb
+    while IFS=$'\t' read -r entry kb; do
+        [[ -z "$entry" ]] && continue
+        if [[ "$entry" = "$p" ]]; then
+            printf '%s' "$kb"
+            return 0
+        fi
+    done <<EOF
+${DU_SIZES}
+EOF
+    return 1
+}
+
+# Cumulative disk usage (KiB) over the deduped DU_PATHS set, reusing recorded
+# sizes; only unrecorded paths fall back to a fresh du (#45).
+du_total_kb() {
+    local p kb total=0
+    while IFS= read -r p; do
+        [[ -z "$p" ]] && continue
+        if ! kb="$(du_size_lookup "$p")"; then
+            kb="$(du_size_kb "$p")"
+        fi
+        case "$kb" in
+            ''|*[!0-9]*) continue ;;
+        esac
+        total=$((total + kb))
+    done <<EOF
+${DU_PATHS}
+EOF
+    printf '%s' "$total"
+    return 0
+}
+
+# Sets PATH_SIZE_COL to the formatted size of $1 for the per-path status column:
+# "-" when the path is absent or its size cannot be read (never a failure), ""
+# when du is disabled (#45). Not meant to be captured with $() — it records the
+# KiB size in DU_SIZES as a side effect, which a subshell would discard.
+PATH_SIZE_COL=""
+path_size_column() {
+    PATH_SIZE_COL=""
+    du_enabled || return 0
+    local p="$1" np="" szk=""
+    if [[ -n "$p" && -e "$p" ]]; then
+        if ! np="$(normalize_path "$p")"; then np="$p"; fi
+        szk="$(du_size_kb "$np")"
+        du_size_record "$np" "$szk"
+        case "$szk" in
+            ''|*[!0-9]*) PATH_SIZE_COL="-" ;;
+            *) PATH_SIZE_COL="$(format_size_kb "$szk")" ;;
+        esac
+    else
+        PATH_SIZE_COL="-"
+    fi
+    return 0
+}
+
+# "<size right-aligned in 8 cells>  <path>" when a size column is available,
+# else the plain path — keeps every status line's path column aligned (#45).
+path_suffix() {
+    local col="$1" p="$2"
+    if [[ -n "$col" ]]; then
+        printf '%8s  %s' "$col" "$p"
+    else
+        printf '%s' "$p"
+    fi
 }
 
 # True if path is $HOME or under it (normalized, no trailing slash ambiguity)
@@ -1074,7 +1190,7 @@ EOF
 
 # One decision path for static rules, dynamic matches and discovered paths.
 process_path() {
-    local path="$1" status
+    local path="$1" status size_col=""
     TOTAL_CHECKED=$((TOTAL_CHECKED + 1))
     if keep_blocks "$path"; then
         TOTAL_SKIPPED=$((TOTAL_SKIPPED + 1))
@@ -1083,7 +1199,9 @@ process_path() {
     fi
     if [[ ! -e "$path" && ! ( "$MODE" = uninstall && "$FORCE" -eq 1 ) ]]; then
         TOTAL_SKIPPED=$((TOTAL_SKIPPED + 1))
-        log_info "  ${MSG_PATH_NOT_FOUND} ${path}"
+        # Absent path: placeholder "-" in the size column, never a failure (#45).
+        if du_enabled; then size_col="-"; fi
+        log_info "  ${MSG_PATH_NOT_FOUND} $(path_suffix "$size_col" "$path")"
         add_report_line "SKIP  ${path} (not found)"
         return 0
     fi
@@ -1108,6 +1226,10 @@ process_path() {
         status=0
     fi
     du_track_path "$path"
+    # Size computed once here and reused by the report; hidden when SKIP_DU=1.
+    # path_size_column sets PATH_SIZE_COL (side effect) — never capture it with $().
+    path_size_column "$path"
+    size_col="$PATH_SIZE_COL"
     if [[ "$MODE" = uninstall ]]; then
         if [[ "$status" -eq 1 && "$FORCE" -eq 0 ]]; then
             TOTAL_SKIPPED=$((TOTAL_SKIPPED + 1))
@@ -1117,25 +1239,25 @@ process_path() {
             add_report_line "WOULD_REMOVE $path"
         elif tm_remove_exclusion "$path"; then
             TOTAL_REMOVED=$((TOTAL_REMOVED + 1))
-            log_info "  $MSG_REMOVING $path"
+            log_info "  $MSG_REMOVING $(path_suffix "$size_col" "$path")"
             add_report_line "REMOVE $path"
         else
             record_error "$MSG_REMOVE_FAILED $path"
         fi
     elif [[ "$status" -eq 0 ]]; then
         TOTAL_ALREADY=$((TOTAL_ALREADY + 1))
-        log_info "  $MSG_ALREADY $path"
+        log_info "  $MSG_ALREADY $(path_suffix "$size_col" "$path")"
         add_report_line "OK    $path (already excluded)"
     elif [[ "$MODE" = report-only ]]; then
         TOTAL_EXCLUDED=$((TOTAL_EXCLUDED + 1))
         add_report_line "NEED  $path (not excluded)"
     elif [[ "$DRY_RUN" -eq 1 ]]; then
         TOTAL_EXCLUDED=$((TOTAL_EXCLUDED + 1))
-        log_info "  $MSG_DRY_RUN_PREFIX $MSG_APPLYING $path"
+        log_info "  $MSG_DRY_RUN_PREFIX $MSG_APPLYING $(path_suffix "$size_col" "$path")"
         add_report_line "WOULD $path"
     elif tm_add_exclusion "$path"; then
         TOTAL_EXCLUDED=$((TOTAL_EXCLUDED + 1))
-        log_info "  $MSG_APPLYING $path"
+        log_info "  $MSG_APPLYING $(path_suffix "$size_col" "$path")"
         add_report_line "ADD   $path"
     else
         record_error "$MSG_ADD_FAILED $path"
@@ -1512,7 +1634,7 @@ generate_report() {
     local report=""
     local dry_run_note=""
     local excluded_label="${MSG_REPORT_EXCLUDED}"
-    local inv du_sec tm_list out_path path_total path_dirs p szk sh total_k desk_copy raw_list tm_list_rc
+    local inv du_sec size_total_line tm_list out_path path_total path_dirs p szk sh total_k desk_copy raw_list tm_list_rc
 
     if [ "${DRY_RUN}" -eq 1 ]; then
         dry_run_note=" (dry-run)"
@@ -1550,6 +1672,7 @@ PATH: ${path_dirs} existing directories (of ${path_total} colon-separated entrie
     fi
 
     du_sec=""
+    size_total_line=""
     if [[ "${TM_EXCLUSIONS_SKIP_DU:-}" = "1" ]]; then
         du_sec="
 === Disk usage (paths touched in this run, present on disk) ===
@@ -1560,21 +1683,17 @@ PATH: ${path_dirs} existing directories (of ${path_total} colon-separated entrie
         total_k=0
         while IFS= read -r p; do
             [[ -z "$p" || ! -e "$p" ]] && continue
-            # `--` is applied inside du_size_kb; unreadable children must not abort.
-            szk="$(du_size_kb "$p")"
+            # Reuse the size recorded while the path was processed (#45); only an
+            # unrecorded path falls back to a fresh du. `--` is applied inside
+            # du_size_kb; unreadable children must not abort.
+            if ! szk="$(du_size_lookup "$p")"; then
+                szk="$(du_size_kb "$p")"
+            fi
             case "$szk" in
                 ''|*[!0-9]*) continue ;;
             esac
             total_k=$((total_k + szk))
-            sh="$(awk -v k="$szk" 'BEGIN {
-                if (k < 1024) { printf "%dK", k; exit }
-                x = k / 1024.0
-                if (x < 1024) { printf "%.1fM", x; exit }
-                x = x / 1024.0
-                if (x < 1024) { printf "%.1fG", x; exit }
-                x = x / 1024.0
-                printf "%.1fT", x
-            }')"
+            sh="$(format_size_kb "$szk")"
             du_sec="${du_sec}
 ${sh}	${p}"
         done <<EOF
@@ -1583,6 +1702,9 @@ EOF
         du_sec="${du_sec}
 Total (sum of du -sk, KiB): ${total_k}
 "
+        # Cumulative formatted counter for end-of-run reporting (#45).
+        size_total_line="
+${MSG_REPORT_SIZE_TOTAL} $(format_size_kb "${total_k}")"
     fi
 
     report="${MSG_REPORT_TITLE}
@@ -1598,7 +1720,7 @@ ${MSG_REPORT_ALREADY} ${TOTAL_ALREADY}
 ${MSG_REPORT_SKIPPED} ${TOTAL_SKIPPED}
 ${MSG_REPORT_ERRORS} ${TOTAL_ERRORS}
 ${MSG_REPORT_BLOCKED} ${TOTAL_BLOCKED}
-${MSG_REPORT_NOT_FOUND} ${TOTAL_NOT_FOUND}"
+${MSG_REPORT_NOT_FOUND} ${TOTAL_NOT_FOUND}${size_total_line}"
 
     if [[ "${MODE}" = "uninstall" ]]; then
         report="${report}

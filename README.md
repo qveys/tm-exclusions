@@ -46,7 +46,10 @@ Preview the selected exclusions with `tm-exclusions --dry-run` before applying t
 ## 🎨 Terminal display
 
 Interactive terminals get cyan section headings, status colors, emojis, progress
-bars and a compact final summary. During cache and disk-image discovery, the
+bars and a compact final summary. Each processed path is prefixed with its
+formatted on-disk size (`du -sk`, right-aligned in a fixed column; `-` when the
+path is missing or unreadable), and the summary ends with a cumulative
+`Usage disque total :` line. During cache and disk-image discovery, the
 current directory updates (when `setting|scan_images|true` is enabled) on a single line (long paths show their tail).
 Progress counts completed static rules and
 completed scan patterns, not elapsed time. The full inventory, disk usage and
@@ -57,6 +60,8 @@ per-path details remain in the saved report, whose location is printed at the en
 
   📁  Application des règles d’exclusion statiques...
 
+  ✓ Application de l'exclusion :     2.0G  ~/Library/Caches
+  ✓ Application de l'exclusion :      42K  ~/.npm/_cacache
   ━━━━━━━━━━━━━━━━━━━━ 100%  42/42
 
   📊  Bilan
@@ -66,6 +71,7 @@ per-path details remain in the saved report, whose location is printed at the en
   Déjà exclus : 25
   Ignorés : 5
   Erreurs : 0
+  Usage disque total : 2.0G
 ```
 
 Try `bash tm_exclusions.sh --dry-run --lang fr` in your terminal.
@@ -82,6 +88,7 @@ debug logs always remain plain text. No extra dependencies are required.
 | 🔒 | **Dual tmutil strategy** | User paths via `tmutil addexclusion`; system paths via `sudo tmutil ... -p` |
 | 🌍 | **Multilingual** | French / English (auto-detected from `$LANG`) |
 | 📊 | **Rich report** | Saved report with counters/details (+ optional inventory and desktop copy) |
+| 📏 | **Per-path sizes** | Formatted `du -sk` size next to each path in non-quiet runs (`-` if missing/unreadable), plus a cumulative total |
 | 🔄 | **Idempotent** | Safe to re-run — skips already-excluded paths |
 | 🐚 | **Bash 3.2** | Works with macOS stock shell — no dependencies |
 
@@ -342,6 +349,7 @@ The extra config is loaded **after** `default.conf` and `custom.conf`, so entrie
 Use `--quiet` (or `-q`) for unattended execution:
 
 - No banner, no colors, no spinners, no tmux
+- No per-path status lines and no size column
 - Report is still printed to stdout (summary/report output is not suppressed)
 - Desktop report copy is **off by default** — opt in with `--desktop-report`, `TM_EXCLUSIONS_REPORT_DESKTOP=1`, or `setting|desktop_report|true` in `custom.conf`
 
@@ -413,7 +421,7 @@ launchctl load ~/Library/LaunchAgents/com.tm-exclusions.weekly.plist
 | `TM_EXCLUSIONS_REPORT` | Override report output path (overrides `setting|report_path`) |
 | `TM_EXCLUSIONS_REPORT_DESKTOP=1` | Also write a report copy to `~/Desktop` (opt-in; equivalent to `--desktop-report`; overrides `setting|desktop_report`) |
 | `TM_EXCLUSIONS_SKIP_INVENTORY=1` | Skip inventory block in report |
-| `TM_EXCLUSIONS_SKIP_DU=1` | Skip per-path `du` disk-usage section in report |
+| `TM_EXCLUSIONS_SKIP_DU=1` | Skip the per-path `du` size column and the disk-usage section in the report |
 | `TM_EXCLUSIONS_DEBUG_FIFO` | Mirror `log_info` output to FD 5 |
 
 ---
@@ -422,6 +430,7 @@ launchctl load ~/Library/LaunchAgents/com.tm-exclusions.weekly.plist
 
 - In non-interactive runs without cached/passwordless sudo (`sudo -n`), system paths are not silently skipped: each one is recorded as a privilege-blocked entry in the report and counted, so the run exits non-zero (see [Results and exit codes](#results-and-exit-codes)). No blocking prompt is ever shown. Privileged exclusions such as `/private/var/folders` use `sudo tmutil addexclusion -p` when credentials are available.
 - Report disk-usage uses `du -sk` and ignores permission-denied children, so partially-readable trees like `/private/var/folders` cannot abort a run under `set -euo pipefail`.
+- Non-quiet runs show a right-aligned, human-readable size (e.g. `1.0G`) next to each processed path; missing or unreadable paths show `-` without failing, and the summary/report gain a cumulative `Disk usage total:` line. Each path is measured once (`du -sk`) and the report reuses that measurement, so trees are never walked twice. `--quiet` adds no per-path lines; `TM_EXCLUSIONS_SKIP_DU=1` disables the size column as well.
 - Reports include a rule summary, separate missing-path and privilege-blocked counts, and an explicit `tmutil listexclusions` status (`ok`, `empty`, `failed`, or `unavailable`).
 - `--uninstall` removes exclusions matching current configured static rules, dynamic matches, and discovered extra paths. It also drops retired catalog paths that are still excluded (today: the former `$HOME/Library/Developer/CoreSimulator` parent).
 - Apply and `--dry-run` drop that same retired parent exclusion when `tmutil` still has it, then add the granular CoreSimulator subdirs. Manual equivalent: `tmutil removeexclusion "$HOME/Library/Developer/CoreSimulator"`.

@@ -900,6 +900,101 @@ assert_output_contains "Total (sum of du -sk, KiB): 42" \
 
 rm -rf "${FAKE_DU_BIN}" "${FAKE_DU_HOME}"
 
+# ---- Per-path disk size column (#45) ----
+# Stub du with deterministic per-path sizes; every invocation is logged so the
+# test can prove each existing path is walked exactly once (the per-path column
+# and the end-of-run report share the same measurement).
+echo ""
+echo "--- Per-path disk size column (#45) ---"
+
+SZ_BIN="$(mktemp -d "${TEST_HOME}/sz-du.XXXXXX")"
+SZ_CALLS="${TEST_HOME}/sz-du-calls.log"
+: > "${SZ_CALLS}"
+cat > "${SZ_BIN}/du" << EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> "${SZ_CALLS}"
+case "\$*" in
+    *big*)    printf '1048576\t%s\n' "\$*"; exit 0 ;;
+    *small*)  printf '42\t%s\n' "\$*"; exit 0 ;;
+    *locked*) exit 1 ;;
+esac
+printf '4\t%s\n' "\$*"; exit 0
+EOF
+chmod +x "${SZ_BIN}/du"
+
+SZ_HOME="$(mktemp -d "${TEST_HOME}/sz-home.XXXXXX")"
+mkdir -p "${SZ_HOME}/caches/big" "${SZ_HOME}/caches/small" "${SZ_HOME}/caches/locked"
+SZ_CONF="${SZ_HOME}/sz.conf"
+cat > "${SZ_CONF}" << EOF
+path|${SZ_HOME}/caches/big|big cache
+path|${SZ_HOME}/caches/small|small cache
+path|${SZ_HOME}/caches/locked|locked cache
+path|${SZ_HOME}/gone|missing path
+EOF
+
+SZ_ENV=(env HOME="${SZ_HOME}" PATH="${SZ_BIN}:${PATH}" TM_EXCLUSIONS_DEFAULT_CONF="${SZ_CONF}")
+SZ_OUT="${TEST_HOME}/sz-out.txt"
+SZ_RC=0
+"${SZ_ENV[@]}" bash "$TM_EXCLUSIONS" --dry-run > "${SZ_OUT}" 2>&1 || SZ_RC=$?
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "${SZ_RC}" -eq 0 ]]; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b dry-run with size column exits 0 (#45)\n' "$GREEN" "$NC"
+else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b dry-run with size column exited %d (#45)\n' "$RED" "$NC" "$SZ_RC"
+    tail -n 40 "${SZ_OUT}" >&2
+fi
+
+# Size displayed next to each path, right-aligned in a fixed 8-cell column.
+assert_file_contains "${SZ_OUT}" \
+    "$(printf '  [DRY-RUN] Applying exclusion: %8s  %s' '1.0G' "${SZ_HOME}/caches/big")" \
+    "size 1.0G is shown next to the big path, aligned in 8 cells (#45)"
+assert_file_contains "${SZ_OUT}" \
+    "$(printf '  [DRY-RUN] Applying exclusion: %8s  %s' '42K' "${SZ_HOME}/caches/small")" \
+    "size 42K is shown next to the small path, aligned in 8 cells (#45)"
+
+# Placeholders: unreadable path (du fails) and missing path both show "-".
+assert_file_contains "${SZ_OUT}" \
+    "$(printf '  [DRY-RUN] Applying exclusion: %8s  %s' '-' "${SZ_HOME}/caches/locked")" \
+    "unreadable path shows the - placeholder without failing (#45)"
+assert_file_contains "${SZ_OUT}" \
+    "$(printf '  Path not found, skipping: %8s  %s' '-' "${SZ_HOME}/gone")" \
+    "missing path shows the - placeholder (#45)"
+
+# Cumulative global counter at end of run (KiB line kept, formatted total added).
+assert_file_contains "${SZ_OUT}" \
+    "Total (sum of du -sk, KiB): 1048618" \
+    "cumulative KiB total sums the per-path sizes (#45)"
+assert_file_contains "${SZ_OUT}" \
+    "Disk usage total: 1.0G" \
+    "cumulative formatted total is reported at end of run (#45)"
+
+# Cost: one du invocation per existing path (missing path is never walked).
+SZ_DU_CALLS="$(wc -l < "${SZ_CALLS}" | tr -d '[:space:]')"
+assert_eq 3 "${SZ_DU_CALLS}" \
+    "each existing path is du-walked exactly once, report included (#45)"
+
+# Quiet mode: no per-path size lines at all.
+assert_output_not_contains "Applying exclusion:" \
+    "quiet run prints no per-path application lines (#45)" \
+    "${SZ_ENV[@]}" bash "$TM_EXCLUSIONS" -q --dry-run
+assert_output_not_contains "Path not found, skipping:" \
+    "quiet run prints no per-path not-found lines (#45)" \
+    "${SZ_ENV[@]}" bash "$TM_EXCLUSIONS" -q --dry-run
+
+# TM_EXCLUSIONS_SKIP_DU=1 keeps the plain line (no size column at all).
+SZ_SD_OUT="${TEST_HOME}/sz-skipdu.txt"
+"${SZ_ENV[@]}" env TM_EXCLUSIONS_SKIP_DU=1 bash "$TM_EXCLUSIONS" --dry-run > "${SZ_SD_OUT}" 2>&1 || true
+assert_file_contains "${SZ_SD_OUT}" \
+    "Applying exclusion: ${SZ_HOME}/caches/big" \
+    "SKIP_DU=1 keeps the plain per-path line (#45)"
+assert_file_lacks_regex "${SZ_SD_OUT}" \
+    'exclusion: +([0-9.]+[KMGT]?|-)  ' \
+    "SKIP_DU=1 shows no size column (#45)"
+
+rm -rf "${SZ_BIN}" "${SZ_HOME}"
+
 # ---- site-packages filter (#26) ----
 # Test A: ~/.faketool/lib/python3.14/site-packages IS excluded (valid Python tool install)
 # Test B: ~/random/site-packages is NOT excluded (bare site-packages, no python-versioned parent)

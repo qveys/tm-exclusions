@@ -48,6 +48,7 @@ declare_i18n_fr() {
     MSG_REPORT_ERRORS="Erreurs :"
     MSG_REPORT_BLOCKED="Bloqués (privilèges) :"
     MSG_REPORT_NOT_FOUND="Chemins absents :"
+    MSG_REPORT_SIZE_TOTAL="Usage disque total :"
     MSG_REPORT_RULE_SUMMARY="Synthèse par règle"
     MSG_REPORT_RULE_SUMMARY_EMPTY="Aucune action de règle enregistrée."
     MSG_REPORT_TMLIST_FAILED="Échec de tmutil listexclusions."
