@@ -21,6 +21,7 @@ declare_i18n_en() {
     MSG_HELP_VERBOSE="  -v, --verbose      Show every path instead of grouped summaries"
     MSG_BATCH_PRUNED="Pruned:"
     MSG_BATCH_DETAILS="paths: -v"
+    MSG_CATEGORY_DEFAULT="Uncategorized"
     MSG_HELP_FORCE="  --force            With --uninstall, also remove matched paths that no longer exist"
     MSG_HELP_DESKTOP_REPORT="  --desktop-report   Write a report copy to ~/Desktop (default: off)"
     MSG_HELP_LANG="  --lang <en|fr>     Set output language"

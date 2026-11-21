@@ -55,11 +55,16 @@ CONF_PRUNES=""
 CONF_KEEPS=""
 CONF_RULES=""
 RULE_CONTEXT=""
+# Category (#@<Name> section marker) of the rule being parsed or processed; empty
+# means the default category (rules before any marker, or `#@` with no name).
+RULE_CATEGORY=""
 CONF_SCAN_IMAGES=0
 # Report destination preferences from setting|key|value (last file wins)
 CONF_REPORT_PATH=""
 CONF_DESKTOP_REPORT=0
 REPORT_LINES=""
+# Same detail lines as REPORT_LINES, as "<category>\t<line>" records for grouping.
+REPORT_GROUPED=""
 RULE_SUMMARY=""
 TM_LIST_STATUS="not-run"
 # Paths discovered after config (brew cache, large VM images); newline-separated
@@ -271,6 +276,26 @@ log_info() {
     fi
 }
 
+# Display label of the current rule category; the default category (empty) is
+# localized. Sets CATEGORY_LABEL as a side effect — never capture it with $().
+category_label() {
+    CATEGORY_LABEL="${RULE_CATEGORY:-${MSG_CATEGORY_DEFAULT:-Uncategorized}}"
+}
+
+# Section header printed when output switches to a new category (#46).
+ui_category() {
+    [[ "${QUIET}" -eq 0 ]] || return 0
+    clear_progress
+    if [[ "${UI}" -eq 1 ]]; then
+        printf '\n  %s══ %s ══%s\n' "$UI_CYAN" "$1" "$UI_RESET"
+        if [[ "${DEBUG_LOG_FD}" -eq 1 ]]; then
+            echo "══ $1 ══" >&5 2>/dev/null || true
+        fi
+    else
+        log_info "══ $1 ══"
+    fi
+}
+
 # Presentation only: decisions, counters and report details stay in process_path.
 # Natural roots keep workspace packages together without merging separate repos.
 batch_root() {
@@ -296,11 +321,15 @@ batch_root() {
     [[ -n "$BATCH_ROOT" ]] || BATCH_ROOT="/"
 }
 
+# Buffers one presentation event as "<category>\t<action>\t<root>" (grouped
+# summary) or "<category>\tdetail\t<line>" (--verbose). flush_path_results
+# prints them under one `══ Category ══` header per category (#46).
 log_path_result() {
     local action="$1" path="$2" detail="${3:-}"
     [[ "$QUIET" -eq 0 ]] || return 0
+    category_label
     if [[ "$VERBOSE" -eq 1 ]]; then
-        [[ -z "$detail" ]] || log_info "$detail"
+        [[ -z "$detail" ]] || BATCH_EVENTS="${BATCH_EVENTS}${CATEGORY_LABEL}"$'\tdetail\t'"${detail}"$'\n'
         return 0
     fi
     BATCH_ROOT=""
@@ -308,13 +337,20 @@ log_path_result() {
         missing|already) ;;
         *) batch_root "$path" ;;
     esac
-    BATCH_EVENTS="${BATCH_EVENTS}${action}"$'\t'"${BATCH_ROOT}"$'\n'
+    BATCH_EVENTS="${BATCH_EVENTS}${CATEGORY_LABEL}"$'\t'"${action}"$'\t'"${BATCH_ROOT}"$'\n'
 }
 
 flush_path_results() {
     [[ -n "$BATCH_EVENTS" ]] || return 0
-    local action count root label
-    while IFS=$'\t' read -r action count root; do
+    local line kind rest action count root label
+    while IFS= read -r line; do
+        kind="${line%%$'\t'*}"
+        rest="${line#*$'\t'}"
+        case "$kind" in
+            H) ui_category "$rest"; continue ;;
+            D) log_info "$rest"; continue ;;
+        esac
+        IFS=$'\t' read -r action count root <<< "$rest"
         case "$action" in
             missing) label="$MSG_REPORT_NOT_FOUND" ;;
             already) label="$MSG_REPORT_ALREADY" ;;
@@ -338,11 +374,30 @@ flush_path_results() {
             log_info "  $label $count ($MSG_BATCH_DETAILS)"
         fi
     done < <(printf '%s' "$BATCH_EVENTS" | awk -F '\t' '
-        NF { if (!counts[$0]++) keys[++n] = $0 }
+        NF >= 3 {
+            c = $1
+            if (!(c in known)) { known[c] = 1; cats[++nc] = c }
+            if ($2 == "detail") {
+                p = $0
+                sub(/^[^\t]*\t[^\t]*\t/, "", p)
+                r = ++rows[c]; kind[c, r] = "D"; val[c, r] = p
+            } else {
+                if (!($0 in counts)) { r = ++rows[c]; kind[c, r] = "A"; val[c, r] = $0 }
+                counts[$0]++
+            }
+        }
         END {
-            for (i = 1; i <= n; i++) {
-                split(keys[i], fields, "\t")
-                printf "%s\t%d\t%s\n", fields[1], counts[keys[i]], fields[2]
+            for (i = 1; i <= nc; i++) {
+                c = cats[i]
+                printf "H\t%s\n", c
+                for (r = 1; r <= rows[c]; r++) {
+                    if (kind[c, r] == "D") {
+                        printf "D\t%s\n", val[c, r]
+                    } else {
+                        split(val[c, r], f, "\t")
+                        printf "A\t%s\t%d\t%s\n", f[2], counts[val[c, r]], f[3]
+                    }
+                }
             }
         }')
     BATCH_EVENTS=""
@@ -366,6 +421,8 @@ add_report_line() {
     esac
     update_rule_summary "$detail"
     if [[ -n "$RULE_CONTEXT" ]]; then detail="$detail [$RULE_CONTEXT]"; fi
+    category_label
+    REPORT_GROUPED="${REPORT_GROUPED}${CATEGORY_LABEL}"$'\t'"${detail//$'\n'/ }"$'\n'
     if [[ -z "${REPORT_LINES}" ]]; then
         REPORT_LINES="$detail"
     else
@@ -850,7 +907,7 @@ tm_remove_exclusion() {
 append_conf_path() {
     local p="$1"
     [[ -z "$p" ]] && return 0
-    CONF_RULES="${CONF_RULES}path|${p}|${RULE_CONTEXT}
+    CONF_RULES="${CONF_RULES}path|${p}|${RULE_CATEGORY}|${RULE_CONTEXT}
 "
     if [[ -z "${CONF_PATHS}" ]]; then
         CONF_PATHS="${p}"
@@ -884,17 +941,32 @@ EOF
     esac
 }
 
+# Category name from a `#@<Name>` marker line: surrounding whitespace is trimmed
+# and control characters / `|` (the CONF_RULES delimiter) are neutralized.
+parse_category_marker() {
+    local name="${1#\#@}"
+    name="${name//[[:cntrl:]]/ }"
+    name="${name//|//}"
+    name="${name#"${name%%[![:space:]]*}"}"
+    name="${name%"${name##*[![:space:]]}"}"
+    printf '%s' "$name"
+}
+
 parse_config_file() {
     local file="$1"
     if [[ ! -f "$file" ]]; then
         return 0
     fi
 
+    # Each file starts in the default category: a `#@` section never leaks from
+    # default.conf into custom.conf, so rules there are never mislabeled (#46).
+    RULE_CATEGORY=""
     local line_num=0
     while IFS= read -r line || [[ -n "$line" ]]; do
         line_num=$((line_num + 1))
-        # Skip empty lines and comments
+        # Skip empty lines and comments; `#@<Name>` starts a category section
         case "$line" in
+            "#@"*) RULE_CATEGORY="$(parse_category_marker "$line")"; continue ;;
             ""|\#*) continue ;;
         esac
 
@@ -948,14 +1020,14 @@ parse_config_file() {
                 fi
                 CONF_KEEPS="${CONF_KEEPS}${keep_path}
 "
-                CONF_RULES="${CONF_RULES}keep|${keep_path}|${RULE_CONTEXT}
+                CONF_RULES="${CONF_RULES}keep|${keep_path}|${RULE_CATEGORY}|${RULE_CONTEXT}
 "
                 ;;
             path)
                 append_conf_path_target "$entry_target"
                 ;;
             pattern)
-                CONF_RULES="${CONF_RULES}pattern|${entry_target}|${RULE_CONTEXT}
+                CONF_RULES="${CONF_RULES}pattern|${entry_target}|${RULE_CATEGORY}|${RULE_CONTEXT}
 "
                 if [[ -z "${CONF_PATTERNS}" ]]; then
                     CONF_PATTERNS="${entry_target}"
@@ -1017,6 +1089,7 @@ ${entry_target}"
                 ;;
         esac
     done < "$file"
+    RULE_CATEGORY=""
 }
 
 load_config() {
@@ -1044,6 +1117,7 @@ load_config() {
     fi
 
     RULE_CONTEXT=""
+    RULE_CATEGORY=""
 
     # Derive .bak / .old prune entries from every static path rule so that
     # shadow copies (e.g. ~/.bun.bak from a Bun reinstall) are silently skipped
@@ -1090,6 +1164,11 @@ write_custom_config_if_absent() {
 # Types: path (static path), pattern (directory name for scan), prune (skip during scan)
 #        keep (protect a path and descendants from exclusion)
 #        setting (preferences: report_path, desktop_report, scan_images)
+#
+# Sections: a line starting with "#@" (e.g. "#@MyCategory") groups the rules
+# below it under that name in console output and in the report. Rules before
+# any marker are "Uncategorized"; rules added with --add are appended at the
+# end of the file, so they join the last section.
 #
 # Examples:
 # path|~/MyLargeDataset|Large dataset not needed in backup
@@ -1201,11 +1280,13 @@ record_blocked() {
 }
 
 set_rule_context() {
-    local type target context
+    local type target category context
     RULE_CONTEXT=""
-    while IFS='|' read -r type target context; do
+    RULE_CATEGORY=""
+    while IFS='|' read -r type target category context; do
         if [[ "$type" = "$1" && "$target" = "$2" ]]; then
             RULE_CONTEXT="$context"
+            RULE_CATEGORY="$category"
             return 0
         fi
     done <<EOF
@@ -1274,6 +1355,7 @@ check_keeps() {
 ${CONF_KEEPS}
 EOF
     RULE_CONTEXT=""
+    RULE_CATEGORY=""
 }
 
 # One decision path for static rules, dynamic matches and discovered paths.
@@ -1457,6 +1539,7 @@ EOF
         register_tmp_file "$tmp_pattern"
         if ! find "$scan_root" -maxdepth 6 -type d -name "$pattern_name" > "$tmp_pattern" 2>/dev/null; then
             RULE_CONTEXT=""
+            RULE_CATEGORY=""
             record_error "$MSG_SCAN_FAILED $scan_root ($pattern_name)"
         fi
         # Tag each match with its pattern so pattern_match_allowed can re-check later.
@@ -1575,6 +1658,7 @@ migrate_retired_exclusions() {
             [[ "$FORCE" -eq 0 ]] && continue
         fi
         RULE_CONTEXT="$MSG_RETIRED_EXCLUSION"
+        RULE_CATEGORY=""
         log_info "  ${MSG_RETIRED_EXCLUSION} ${retired_path}"
         remove_exclusion "$retired_path"
     done <<EOF
@@ -1600,6 +1684,7 @@ $x"
 collect_post_scan_paths() {
     EXTRA_PATHS=""
     RULE_CONTEXT=""
+    RULE_CATEGORY=""
     local line tmp
     local SCAN_COLUMNS=80
     if [[ "${UI}" -eq 1 ]]; then
@@ -1675,6 +1760,7 @@ apply_extra_paths() {
         [[ -z "$extra_path" ]] && continue
 
         RULE_CONTEXT="$MSG_DISCOVERED | $extra_path"
+        RULE_CATEGORY=""
         process_path "$extra_path"
         progress_step
     done <<EOF
@@ -1721,8 +1807,34 @@ desktop_report_enabled() {
 # ---------------------------------------------------------------------------
 # Report
 # ---------------------------------------------------------------------------
+# Details lines grouped under `── Category ──` subheadings, categories in order
+# of first appearance and lines in processing order (#46).
+group_report_details() {
+    if [[ -z "${REPORT_GROUPED}" ]]; then
+        printf '%s' "${REPORT_LINES}"
+        return 0
+    fi
+    printf '%s' "${REPORT_GROUPED}" | awk -F '\t' '
+        NF >= 2 {
+            c = $1
+            if (!(c in known)) { known[c] = 1; cats[++nc] = c }
+            l = $0
+            sub(/^[^\t]*\t/, "", l)
+            lines[c, ++rows[c]] = l
+        }
+        END {
+            for (i = 1; i <= nc; i++) {
+                c = cats[i]
+                if (i > 1) print ""
+                print "── " c " ──"
+                for (r = 1; r <= rows[c]; r++) print lines[c, r]
+            }
+        }'
+}
+
 generate_report() {
     RULE_CONTEXT=""
+    RULE_CATEGORY=""
     if [[ "${UI}" -eq 1 ]]; then ui_section "📝" "$MSG_UI_REPORT"; fi
     local report="" console_report=""
     local dry_run_note=""
@@ -1842,7 +1954,7 @@ ${inv}"
         report="${report}
 
 Details:
-${REPORT_LINES}"
+$(group_report_details)"
     fi
 
     tm_list=""
