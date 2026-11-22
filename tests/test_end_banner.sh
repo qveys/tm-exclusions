@@ -55,6 +55,7 @@ printf '%s\n' "\$last" >> "$B_DU_CALLS"
 base="\${last##*/}"
 case "\$base" in
     *unk*) exit 1 ;;
+    lnk0*) printf '0\\t%s\\n' "\$last" ;;
     *part*) kb="\${base#sz}"; kb="\${kb%%[!0-9]*}"; printf '%s\\t%s\\n' "\$kb" "\$last"; exit 1 ;;
     sz*) kb="\${base#sz}"; kb="\${kb%%[!0-9]*}"; printf '%s\t%s\n' "\$kb" "\$last" ;;
     *) printf '8\t%s\n' "\$last" ;;
@@ -295,6 +296,10 @@ assert_eq 1 "$(grep -Fxc "$B_PHYS/c/sz1024" "$B_DU_CALLS")" "the other path was 
 
 echo ""
 echo "--- Audit mode (--report-only) and French locale ---"
+banner_run "$TEST_HOME/out-audit-dry" report-only 1 0 en c/sz1024
+assert_file_contains "$TEST_HOME/out-audit-dry" "Space that would be excluded (simulated): 1.0M" \
+    "--report-only with --dry-run: the simulated label wins over 'needing exclusion'"
+assert_file_lacks_regex "$TEST_HOME/out-audit-dry" 'Space needing exclusion' "--report-only with --dry-run: no 'needing exclusion' label"
 banner_run "$TEST_HOME/out-audit" report-only 0 0 en c/sz1024
 assert_file_contains "$TEST_HOME/out-audit" "Space needing exclusion: 1.0M" "audit labels the space as needing exclusion"
 assert_file_lacks_regex "$TEST_HOME/out-audit" 'Simulated run' "audit is not a simulated run"
@@ -553,24 +558,37 @@ ln -sfn "$B_HOME/c/protect"$'\n' "$B_HOME/c/kalias"
 KEEP_RULES="$B_HOME/keep-rules"
 # shellcheck disable=SC2016
 printf 'keep|$HOME/c/kalias/saved|protected\npath|$HOME/c/kalias/saved|same target\n' > "$KEEP_RULES"
+# One report file per invocation (removed first) and a checked exit status: an
+# early abort can then neither be masked nor leave a previous scenario's report
+# or an already-empty mutation log to pass the assertions.
+KEEP_RC=0
 keep_cli() {
     local out="$1"
     shift
     : > "$B_CALLS"
+    rm -f "${out}.report"
+    KEEP_RC=0
     # shellcheck disable=SC2031
     env HOME="$B_HOME" PATH="$B_BIN:$PATH" TM_EXCLUSIONS_DEFAULT_CONF="$KEEP_RULES" \
-        TM_EXCLUSIONS_REPORT="$B_HOME/keep-report.txt" TM_EXCLUSIONS_SKIP_DU=1 \
-        bash "$TM_EXCLUSIONS" "$@" > "$out" 2>/dev/null || true
+        TM_EXCLUSIONS_REPORT="${out}.report" TM_EXCLUSIONS_SKIP_DU=1 \
+        bash "$TM_EXCLUSIONS" "$@" > "$out" 2>/dev/null || KEEP_RC=$?
 }
 keep_cli "$TEST_HOME/keep-apply" --dry-run
+assert_eq 0 "$KEEP_RC" "keep via alias: --dry-run exits 0"
+assert_true "keep via alias: --dry-run wrote its own report" test -s "$TEST_HOME/keep-apply.report"
 assert_eq 0 "$(wc -l < "$B_CALLS" | tr -d ' ')" "keep via alias: no mutation call"
-assert_file_lacks_regex "$B_HOME/keep-report.txt" '^(WOULD|ADD|NEED) .*c/(kalias|protect)' "keep via alias: the protected path is never planned for exclusion"
-assert_file_contains "$B_HOME/keep-report.txt" "KEEP  " "keep via alias: the protected path is reported as kept"
+assert_file_lacks_regex "$TEST_HOME/keep-apply.report" '^(WOULD|ADD|NEED) .*c/(kalias|protect)' "keep via alias: the protected path is never planned for exclusion"
+assert_file_contains "$TEST_HOME/keep-apply.report" "KEEP  " "keep via alias: the protected path is reported as kept"
 keep_cli "$TEST_HOME/keep-apply-real"
+assert_eq 0 "$KEEP_RC" "keep via alias: apply mode exits 0"
+assert_true "keep via alias: apply mode wrote its own report" test -s "$TEST_HOME/keep-apply-real.report"
+assert_file_contains "$TEST_HOME/keep-apply-real.report" "KEEP  " "keep via alias: apply mode reports the path as kept"
 assert_eq 0 "$(grep -c '^addexclusion' "$B_CALLS" || true)" "keep via alias: apply mode never calls addexclusion"
 keep_cli "$TEST_HOME/keep-uninstall" --uninstall --force --dry-run
-assert_file_lacks_regex "$B_HOME/keep-report.txt" '^(WOULD_REMOVE|REMOVE) .*c/(kalias|protect)' "keep via alias: forced simulated uninstall removes nothing under the protected path"
-assert_file_contains "$B_HOME/keep-report.txt" "KEEP  " "keep via alias: uninstall still reports the path as kept"
+assert_eq 0 "$KEEP_RC" "keep via alias: forced simulated uninstall exits 0"
+assert_true "keep via alias: uninstall wrote its own report" test -s "$TEST_HOME/keep-uninstall.report"
+assert_file_lacks_regex "$TEST_HOME/keep-uninstall.report" '^(WOULD_REMOVE|REMOVE) .*c/(kalias|protect)' "keep via alias: forced simulated uninstall removes nothing under the protected path"
+assert_file_contains "$TEST_HOME/keep-uninstall.report" "KEEP  " "keep via alias: uninstall still reports the path as kept"
 assert_eq 0 "$(wc -l < "$B_CALLS" | tr -d ' ')" "keep via alias: uninstall makes no mutation call"
 
 echo ""
@@ -628,6 +646,21 @@ banner_run "$TEST_HOME/out-id-two" apply 1 0 en c/sz100id c/sz1024
 assert_file_contains "$TEST_HOME/out-id-two" "Space that would be excluded (simulated): 1.1M" "control: two unrelated directories still add up (100K + 1024K)"
 banner_run "$TEST_HOME/out-id-gone" apply 1 0 en c/sz100id c/does-not-exist
 assert_file_contains "$TEST_HOME/out-id-gone" "Space that would be excluded (simulated): 100K" "a missing path is ignored (no crash, no size)"
+# A symlink to a FILE is a distinct measurement: du -sk measures the link itself
+# (0K), not the 8M target. -ef would call them "the same object" and keep only the
+# link's 0K.
+: > "$B_HOME/c/sz8192file"
+ln -sfn sz8192file "$B_HOME/c/lnk0"
+banner_run "$TEST_HOME/out-fl-fwd" apply 1 0 en c/lnk0 c/sz8192file
+assert_file_contains "$TEST_HOME/out-fl-fwd" "Space that would be excluded (simulated): 8.0M" "file link then its 8M target file: 8.0M (link 0K + file 8M)"
+banner_run "$TEST_HOME/out-fl-rev" apply 1 0 en c/sz8192file c/lnk0
+assert_file_contains "$TEST_HOME/out-fl-rev" "Space that would be excluded (simulated): 8.0M" "target file then its link: 8.0M"
+assert_eq 1 "$(grep -c 'lnk0' "$B_DU_CALLS")" "both spellings were measured (the link is not dropped as 'the same object')"
+# Link to a DIRECTORY (du follows nothing, but normalize_path resolves it): unchanged, counted once.
+banner_run "$TEST_HOME/out-dl-fwd" apply 1 0 en c/Link100 c/sz100id
+assert_file_contains "$TEST_HOME/out-dl-fwd" "Space that would be excluded (simulated): 100K" "directory link then its directory: counted once (100K)"
+banner_run "$TEST_HOME/out-dl-rev" apply 1 0 en c/sz100id c/Link100
+assert_file_contains "$TEST_HOME/out-dl-rev" "Space that would be excluded (simulated): 100K" "directory then its link: counted once (100K)"
 # (2) Case-insensitive file systems (default APFS on macOS): "sz100CS" and "sz100cs" are one directory.
 mkdir -p "$B_HOME/c/CaseProbe"
 if [[ -d "$B_HOME/c/caseprobe" ]]; then
@@ -652,8 +685,10 @@ COST_ROOT="$B_PHYS/cost"
 mkdir -p "$COST_ROOT"
 for i in $(seq 1 25); do mkdir -p "$COST_ROOT/proj$i/node_modules/cache"; done
 cost_paths() { for i in $(seq 1 25); do printf '%s\n' "$COST_ROOT/proj$i/node_modules/cache"; done; }
+# Each helper writes its count to a file and returns the pipeline's status (never
+# masked by wc): a run that processed nothing cannot satisfy the bound.
 cd_calls_master() {
-    local cnt="$TEST_HOME/cd.master"
+    local cnt="$TEST_HOME/cd.master" rc=0
     : > "$cnt"
     cost_paths | CD_LOG="$cnt" bash -c '
         source "$1"; source "$2"; DU_PATHS=""
@@ -661,23 +696,33 @@ cd_calls_master() {
         while IFS= read -r p; do
             ref_du_track_path "$p"
             np="$(ref_normalize_path "$p")"
-        done' _ "$B_FUNCS" "$B_REF"
-    wc -l < "$cnt" | tr -d ' '
+        done' _ "$B_FUNCS" "$B_REF" || rc=$?
+    return "$rc"
 }
 cd_calls_pr() {
-    local cnt="$TEST_HOME/cd.pr"
+    local cnt="$TEST_HOME/cd.pr" rc=0
     : > "$cnt"
+    : > "$B_DU_CALLS"
     # shellcheck disable=SC2031
     cost_paths | HOME="$B_PHYS" PATH="$B_BIN:$PATH" CD_LOG="$cnt" bash -c '
         source "$1"; source "$2/locales/en.sh"; declare_i18n_en
         cd() { echo x >> "$CD_LOG"; builtin cd "$@"; }
         MODE=apply; DRY_RUN=1; QUIET=1; UI=0; HAS_TMUTIL=1
-        while IFS= read -r p; do process_path "$p"; done' _ "$B_FUNCS" "$ROOT" >/dev/null 2>&1
-    wc -l < "$cnt" | tr -d ' '
+        while IFS= read -r p; do process_path "$p"; done' _ "$B_FUNCS" "$ROOT" >/dev/null 2>&1 || rc=$?
+    return "$rc"
 }
-COST_MASTER="$(cd_calls_master)"
-COST_PR="$(cd_calls_pr)"
+MASTER_RC=0
+PR_RC=0
+cd_calls_master || MASTER_RC=$?
+cd_calls_pr || PR_RC=$?
+COST_MASTER="$(wc -l < "$TEST_HOME/cd.master" | tr -d ' ')"
+COST_PR="$(wc -l < "$TEST_HOME/cd.pr" | tr -d ' ')"
+assert_eq 0 "$MASTER_RC" "cost: the frozen master bookkeeping run succeeded"
+assert_eq 0 "$PR_RC" "cost: the real process_path run over the 25 paths succeeded"
+# process_path must really have measured every path (fresh du log, 25 distinct entries).
+assert_eq 25 "$(sort -u "$B_DU_CALLS" | wc -l | tr -d ' ')" "cost: du was fed by 25 distinct processed paths"
 assert_true "baseline sanity: the frozen master bookkeeping resolves prefixes ($COST_MASTER cd calls)" test "$COST_MASTER" -gt 100
+assert_true "the PR run resolved prefixes too ($COST_PR cd calls > 0), so the bound below is not vacuous" test "$COST_PR" -gt 0
 assert_true "dry-run cd -P calls on 25 ordinary paths: PR ($COST_PR) <= master ($COST_MASTER) + 10" \
     test "$COST_PR" -le $((COST_MASTER + 10))
 

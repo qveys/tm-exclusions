@@ -604,14 +604,20 @@ EXCL_FIRST_PATH=""
 TIP_PATH=""
 
 # True when $2 or one of its ancestors is the SAME FILE as $1 (same device and
-# inode, `-ef`: builtin, no subshell, follows links). Used only to nest the
-# excluded-paths list of the space figure: string comparison (path_under) is
-# case-sensitive, so on case-insensitive APFS "Cache" and "cache/Child" would
-# be counted twice (#44 review). Missing paths are never `-ef` anything.
+# inode, `-ef`: builtin, no subshell). Used only to nest the excluded-paths list
+# of the space figure: string comparison (path_under) is case-sensitive, so on
+# case-insensitive APFS "Cache" and "cache/Child" would be counted twice (#44
+# review). Missing paths are never `-ef` anything.
+#
+# `-ef` follows links, but `du -sk` measures a symlink itself, not its target: a
+# link and its target file are two distinct measurements. So identity is never
+# used when $1 or the candidate path is itself a symlink (last component); they
+# are then compared as strings only. Directory ancestors keep the identity test.
 path_id_covers() {
     local anc="$2"
+    [[ -L "$1" ]] && return 1
     while :; do
-        if [[ "$anc" -ef "$1" ]]; then return 0; fi
+        if [[ ! -L "$anc" && "$anc" -ef "$1" ]]; then return 0; fi
         case "$anc" in
             ''|/) return 1 ;;
             */*) ;;
