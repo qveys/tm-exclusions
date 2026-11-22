@@ -589,9 +589,8 @@ EOF
 }
 
 # Paths newly excluded (or that would be, in dry-run/audit) by this run, for the
-# "space excluded" figure of the end-of-run summary and the report (#44).
-# Newline-separated, deduped like DU_PATHS; sizes come from DU_SIZES.
-EXCL_PATHS=""
+# "space excluded" figure of the end-of-run summary and the report (#44); they
+# are recorded in the EXCL_FILE temporary file (see excl_track_path).
 EXCL_TOTAL_KB=0
 EXCL_MEASURED=0
 EXCL_UNKNOWN=0
@@ -603,155 +602,127 @@ EXCL_UNTRACKED=0
 EXCL_FIRST_PATH=""
 TIP_PATH=""
 
-# True when $2 or one of its ancestors is the SAME FILE as $1 (same device and
-# inode, `-ef`: builtin, no subshell). Used only to nest the excluded-paths list
-# of the space figure: string comparison (path_under) is case-sensitive, so on
-# case-insensitive APFS "Cache" and "cache/Child" would be counted twice (#44
-# review). Missing paths are never `-ef` anything.
-#
-# `-ef` follows links, but `du -sk` measures a symlink itself, not its target: a
-# link and its target file are two distinct measurements. So identity is never
-# used when $1 or the candidate path is itself a symlink (last component); they
-# are then compared as strings only. Directory ancestors keep the identity test.
-path_id_covers() {
-    local anc="$2"
-    [[ -L "$1" ]] && return 1
-    while :; do
-        if [[ ! -L "$anc" && "$anc" -ef "$1" ]]; then return 0; fi
-        case "$anc" in
-            ''|/) return 1 ;;
-            */*) ;;
-            *) return 1 ;;
-        esac
-        anc="${anc%/*}"
-        if [[ -z "$anc" ]]; then anc="/"; fi
-    done
-}
-
-# Records $1 (already measured by path_size_column) for the space figure as one
-# "<normalized path><TAB><complete KiB or empty>" line (split at the last tab, so
-# tabs in names are safe): no cd, no stat, no cache lookup, no nesting decision
-# here. Every candidate is kept, so a measurable descendant can still stand in
-# for an unmeasured ancestor (excl_space_compute). A path whose name is unsafe to
-# measure (size_path_unsafe) or without a normalized form is counted as
-# unmeasured instead. The same path twice is deduplicated at aggregation.
+# Records $1 (already measured by path_size_column) for the space figure: one
+# "<normalized path><TAB><complete KiB or empty>" line appended to a temporary
+# file (split at the last tab, so tabs in names are safe). Nothing is
+# concatenated in a shell variable (that is quadratic in Bash 3.2) and no cd,
+# stat or cache lookup happens here; nesting is decided later, in one awk pass
+# (excl_space_compute). A path whose name is unsafe to measure (size_path_unsafe:
+# newline), without a normalized form, or holding the byte 0x01 (unsupported:
+# it is the awk/sort field separator) is counted as unmeasured instead.
+EXCL_FILE=""
+EXCL_FILE_FAILED=0
+EXCL_TRACKED=0
 excl_track_path() {
-    local p="$1"
+    local p="$1" f=""
     [[ -z "$p" || ! -e "$p" ]] && return 0
     if [[ -z "$EXCL_FIRST_PATH" ]]; then EXCL_FIRST_PATH="$p"; fi
     du_enabled || return 0
-    if [[ "$SIZE_UNSAFE_NOW" -eq 1 || -z "$PATH_SIZE_NP" ]]; then
+    case "$PATH_SIZE_NP" in
+        *$'\001'*) EXCL_UNTRACKED=$((EXCL_UNTRACKED + 1)); return 0 ;;
+    esac
+    if [[ "$SIZE_UNSAFE_NOW" -eq 1 || -z "$PATH_SIZE_NP" || "$EXCL_FILE_FAILED" -eq 1 ]]; then
         EXCL_UNTRACKED=$((EXCL_UNTRACKED + 1))
         return 0
     fi
-    EXCL_PATHS="${EXCL_PATHS}${PATH_SIZE_NP}"$'\t'"${PATH_SIZE_KB}"$'\n'
+    if [[ -z "$EXCL_FILE" ]]; then
+        if f="$(mktemp "${TMPDIR:-/tmp}/tm_exc_space.XXXXXX" 2>/dev/null)"; then
+            EXCL_FILE="$f"
+            register_tmp_file "$EXCL_FILE"
+        else
+            EXCL_FILE_FAILED=1
+            EXCL_UNTRACKED=$((EXCL_UNTRACKED + 1))
+            return 0
+        fi
+    fi
+    if printf '%s\t%s\n' "$PATH_SIZE_NP" "$PATH_SIZE_KB" >> "$EXCL_FILE" 2>/dev/null; then
+        EXCL_TRACKED=$((EXCL_TRACKED + 1))
+    else
+        EXCL_UNTRACKED=$((EXCL_UNTRACKED + 1))
+    fi
 }
 
-# True when entry $1 is the same directory as, or lies under, entry $2 (indexes
-# into ep/fp, the paths and their ASCII-lowercased forms, of excl_space_compute).
-# Exact string nesting first; then, only for candidates nested up to ASCII case,
-# file identity (path_id_covers), so "Cache" / "cache/Child" on case-insensitive
-# APFS nest but no stat is spent on unrelated pairs.
-excl_is_under() {
-    local b="${ep[$1]}" a="${ep[$2]}"
-    if path_under "$b" "$a"; then return 0; fi
-    path_under "${fp[$1]}" "${fp[$2]}" || return 1
-    path_id_covers "$a" "$b"
-}
-
-# Sets EXCL_TOTAL_KB / EXCL_MEASURED / EXCL_UNKNOWN from EXCL_PATHS using the
-# sizes already measured while each path was processed — never a fresh du (it can
-# take tens of seconds per tree). Paths gone since their measurement are skipped
-# like du_total_kb does. An entry is MEASURED when its recorded size is a
-# complete one; an unreadable or partial size (du exited non-zero, GNU and BSD
-# alike) makes it UNMEASURED, counted in EXCL_UNKNOWN and never added.
+# Sets EXCL_TOTAL_KB / EXCL_MEASURED / EXCL_UNKNOWN from the EXCL_FILE records —
+# sizes already measured while each path was processed, never a fresh du (it can
+# take tens of seconds per tree). An entry is MEASURED when its size is complete,
+# UNMEASURED when du failed or was partial (non-zero exit, GNU and BSD alike);
+# unmeasured entries are counted in EXCL_UNKNOWN and never added.
 #
-# Nesting only prevents double counting, it never discards a usable
-# measurement: an entry is ignored when it lies under a MEASURED entry (that
-# ancestor's size already contains it), or — if it is itself unmeasured — under
-# any unmeasured ancestor (already counted there). A measured descendant of an
-# unmeasured ancestor is kept as a lower-bound contribution. The same directory
-# spelled twice counts once (the earlier entry). Not meant for $() — it sets
-# globals.
+# Semantics (display value only; no decision reads it):
+# - Entries nest by path PREFIX, with ASCII case folded (case-insensitive APFS:
+#   "Cache" / "cache/Child"); non-ASCII case is not folded. An ancestor boundary
+#   is a "/" ("foo" is not an ancestor of "foo-bar" or "foo bar").
+# - An entry is ignored when it lies under a MEASURED entry (that size already
+#   contains it), or — if itself unmeasured — under any unmeasured ancestor
+#   (already counted there). A measured descendant of an unmeasured ancestor is
+#   kept as a lower-bound contribution. Entries with the same folded path count
+#   once (measured if any of them is, with the larger size).
+# - Aliases / hard links between DIFFERENT paths are not detected: they are
+#   summed as separate paths. In apply mode a path inheriting an exclusion
+#   already set on its parent is not "newly excluded", so the order of
+#   application can change the figure.
 #
-# Ancestors are found in O(n log n): the ASCII-lowercased "<path>/" keys are
-# sorted once and walked with a stack of open ancestors, so there is no pairwise
-# scan of the whole list and no stat except to confirm a case-only match.
+# One pass: awk builds "<folded path>/<0x01><KiB>" keys, `LC_ALL=C sort` orders
+# them (an ancestor sorts right before its descendants), and a second awk walks
+# the sorted list with a stack of open ancestors. O(n log n), no shell loop.
+# Not meant for $() — it sets globals.
 excl_space_compute() {
-    local -a ep fp ek stk
-    local n=0 sp=0 i j k p kb line key top plist="" flist="" keys="" sorted="" covered
+    local res="" total="" measured="" unknown=""
     EXCL_TOTAL_KB=0
     EXCL_MEASURED=0
     EXCL_UNKNOWN="$EXCL_UNTRACKED"
-    while IFS= read -r line; do
-        [[ -n "$line" ]] || continue
-        p="${line%$'\t'*}"
-        kb="${line##*$'\t'}"
-        [[ -z "$p" || ! -e "$p" ]] && continue
-        case "$kb" in
-            ''|*[!0-9]*) kb="" ;;
+    [[ -n "$EXCL_FILE" && "$EXCL_TRACKED" -gt 0 ]] || return 0
+    if res="$(LC_ALL=C awk '
+            {
+                line = $0
+                j = length(line)
+                while (j > 0 && substr(line, j, 1) != "\t") j--
+                if (j == 0) next
+                k = tolower(substr(line, 1, j - 1))
+                if (substr(k, length(k), 1) != "/") k = k "/"
+                printf "%s\001%s\n", k, substr(line, j + 1)
+            }' "$EXCL_FILE" | LC_ALL=C sort | LC_ALL=C awk '
+            function flush(   mc, uc) {
+                if (!have) return
+                while (sp > 0 && index(ckey, sk[sp]) != 1) sp--
+                mc = 0; uc = 0
+                if (sp > 0) { mc = smc[sp]; uc = suc[sp] }
+                if (mc > 0) { }
+                else if (cm) { total += ckb; meas++ }
+                else if (uc == 0) { unk++ }
+                sp++
+                sk[sp] = ckey
+                smc[sp] = mc + (cm ? 1 : 0)
+                suc[sp] = uc + (cm ? 0 : 1)
+            }
+            {
+                i = index($0, "\001")
+                key = substr($0, 1, i - 1)
+                kb = substr($0, i + 1)
+                m = (kb ~ /^[0-9]+$/)
+                if (have && key == ckey) {
+                    if (m) { if (!cm || kb + 0 > ckb + 0) ckb = kb + 0; cm = 1 }
+                    next
+                }
+                flush()
+                ckey = key; cm = m; ckb = m ? kb + 0 : 0; have = 1
+            }
+            END { flush(); printf "%.0f %d %d\n", total, meas, unk }')"; then
+        read -r total measured unknown <<< "$res"
+        case "${total}${measured}${unknown}" in
+            ''|*[!0-9]*) res="" ;;
         esac
-        ep[n]="$p"
-        ek[n]="$kb"
-        plist="${plist}${p}"$'\n'
-        n=$((n + 1))
-    done <<EOF
-${EXCL_PATHS}
-EOF
-    [[ "$n" -gt 0 ]] || return 0
-    # One fork for the whole list (not per path); ASCII case folding only.
-    flist="$(printf '%s' "$plist" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
-    i=0
-    while IFS= read -r line; do
-        fp[i]="$line"
-        i=$((i + 1))
-    done <<EOF
-${flist}
-EOF
-    if [[ "$i" -ne "$n" ]]; then
-        for ((i = 0; i < n; i++)); do fp[i]="${ep[i]}"; done
+    else
+        res=""
     fi
-    for ((i = 0; i < n; i++)); do
-        key="${fp[i]}"
-        [[ "$key" == */ ]] || key="${key}/"
-        keys="${keys}${key}"$'\001'"${i}"$'\n'
-    done
-    sorted="$(printf '%s' "$keys" | LC_ALL=C sort)"
-    while IFS= read -r line; do
-        [[ -n "$line" ]] || continue
-        i="${line##*$'\001'}"
-        key="${line%$'\001'*}"
-        # Open ancestors: keep only the stack entries whose key prefixes this one.
-        while [[ "$sp" -gt 0 ]]; do
-            top="${stk[sp-1]}"
-            case "$key" in
-                "${top%%$'\001'*}"*) break ;;
-            esac
-            sp=$((sp - 1))
-        done
-        covered=0
-        for ((k = 0; k < sp; k++)); do
-            j="${stk[k]##*$'\001'}"
-            excl_is_under "$i" "$j" || continue
-            if excl_is_under "$j" "$i"; then
-                # Same directory through two spellings: the earlier entry stands for it.
-                if [[ "$j" -lt "$i" ]]; then covered=1; break; fi
-                continue
-            fi
-            if [[ -n "${ek[j]}" || -z "${ek[i]}" ]]; then covered=1; break; fi
-        done
-        stk[sp]="${key}"$'\001'"${i}"
-        sp=$((sp + 1))
-        [[ "$covered" -eq 0 ]] || continue
-        if [[ -n "${ek[i]}" ]]; then
-            EXCL_TOTAL_KB=$((EXCL_TOTAL_KB + ek[i]))
-            EXCL_MEASURED=$((EXCL_MEASURED + 1))
-        else
-            EXCL_UNKNOWN=$((EXCL_UNKNOWN + 1))
-        fi
-    done <<EOF
-${sorted}
-EOF
+    if [[ -z "$res" ]]; then
+        # Aggregation failed: stay cautious, nothing measured.
+        EXCL_UNKNOWN=$((EXCL_UNTRACKED + EXCL_TRACKED))
+        return 0
+    fi
+    EXCL_TOTAL_KB="$total"
+    EXCL_MEASURED="$measured"
+    EXCL_UNKNOWN=$((EXCL_UNTRACKED + unknown))
     return 0
 }
 

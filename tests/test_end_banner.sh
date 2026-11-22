@@ -713,6 +713,185 @@ assert_file_contains "$TEST_HOME/out-pa-case" "Space that would be excluded (sim
     "independent measured paths add to the descendant lower bound (1024K + 100K + 8192K = 9316K, truncated to 9.0M)"
 
 echo ""
+echo "--- Aggregator vs a naive O(n^2) reference (all orders, up to 14 entries) ---"
+cat > "$TEST_HOME/cmp.sh" <<'CMPEOF'
+#!/bin/bash
+# Comparator: the real aggregator (excl_space_compute) against a naive O(n^2)
+# reference, on deterministic sets, in every order for small sets.
+# usage: cmp.sh <functions.sh> <workdir>
+source "$1"
+set +e
+WORK="$2"
+EXCL_FILE="$WORK/excl.cmp"
+POOL=("/r/Foo" "/r/foo/a" "/r/FOO/A/b" "/r/foobar" "/r/foo bar" "/r/foo-bar" "/r/foo/c" \
+      "/r/x1" "/r/x2" "/r/x3" "/r/x4" "/r/x5" "/r/x6" "/r/x7" "/r/x8" "/r/x9" "/r/x10" "/r/X10/z" \
+      "/r/y" "/r/Y/q" "/r/foo/a/b2" "/r/Foo")
+KBS=("" "8" "100" "1024" "5" "")
+NP=${#POOL[@]}
+FOLD=()
+for ((i = 0; i < NP; i++)); do FOLD[i]="$(printf '%s' "${POOL[i]}" | tr '[:upper:]' '[:lower:]')"; done
+SEED=12345
+rnd() { SEED=$(( (SEED * 1103515245 + 12345) % 2147483648 )); RND=$(( SEED / 65536 )); }
+CASES=0
+BAD=0
+n=0; E_I=(); E_K=()
+
+ref() {
+    local -a mk mv
+    local m=0 i j key kb found ig
+    R_TOTAL=0; R_MEAS=0; R_UNK=0
+    for ((i = 0; i < n; i++)); do
+        key="${FOLD[${E_I[i]}]}"; kb="${E_K[i]}"; found=-1
+        for ((j = 0; j < m; j++)); do
+            if [[ "${mk[j]}" == "$key" ]]; then found=$j; break; fi
+        done
+        if [[ "$found" -ge 0 ]]; then
+            if [[ -n "$kb" ]] && { [[ -z "${mv[found]}" ]] || [[ "$kb" -gt "${mv[found]}" ]]; }; then mv[found]="$kb"; fi
+        else
+            mk[m]="$key"; mv[m]="$kb"; m=$((m + 1))
+        fi
+    done
+    for ((i = 0; i < m; i++)); do
+        ig=0
+        for ((j = 0; j < m; j++)); do
+            [[ "$i" -ne "$j" ]] || continue
+            if [[ "${mk[i]}/" == "${mk[j]}/"* ]]; then
+                if [[ -n "${mv[j]}" || -z "${mv[i]}" ]]; then ig=1; break; fi
+            fi
+        done
+        [[ "$ig" -eq 0 ]] || continue
+        if [[ -n "${mv[i]}" ]]; then R_TOTAL=$((R_TOTAL + mv[i])); R_MEAS=$((R_MEAS + 1)); else R_UNK=$((R_UNK + 1)); fi
+    done
+}
+
+real() {
+    local i
+    : > "$EXCL_FILE"
+    for ((i = 0; i < n; i++)); do printf '%s\t%s\n' "${POOL[${E_I[i]}]}" "${E_K[i]}" >> "$EXCL_FILE"; done
+    EXCL_TRACKED=$n; EXCL_UNTRACKED=0
+    excl_space_compute
+}
+
+check() {
+    local want="$R_TOTAL $R_MEAS $R_UNK" got
+    real
+    got="$EXCL_TOTAL_KB $EXCL_MEASURED $EXCL_UNKNOWN"
+    CASES=$((CASES + 1))
+    if [[ "$got" != "$want" ]]; then
+        BAD=$((BAD + 1))
+        if [[ "$BAD" -le 3 ]]; then
+            local d="" i
+            for ((i = 0; i < n; i++)); do d="$d [${POOL[${E_I[i]}]}=${E_K[i]}]"; done
+            echo "MISMATCH want=($want) got=($got):$d"
+        fi
+    fi
+}
+
+SAVE_I=(); SAVE_K=()
+permute() {   # $1 = chosen indices so far, $2 = remaining indices (space separated)
+    local x rest
+    if [[ -z "$2" ]]; then
+        n=0; E_I=(); E_K=()
+        for x in $1; do E_I[n]="${SAVE_I[x]}"; E_K[n]="${SAVE_K[x]}"; n=$((n + 1)); done
+        check
+        return
+    fi
+    for x in $2; do
+        rest=" $2 "; rest="${rest/ $x / }"; rest="${rest# }"; rest="${rest% }"
+        permute "$1 $x" "$rest"
+    done
+}
+
+gen_set() {   # $1 = size
+    local i
+    SAVE_I=(); SAVE_K=()
+    for ((i = 0; i < $1; i++)); do
+        rnd; SAVE_I[i]=$(( RND % NP ))
+        rnd; SAVE_K[i]="${KBS[$(( RND % ${#KBS[@]} ))]}"
+    done
+    n=0; E_I=(); E_K=()
+    for ((i = 0; i < $1; i++)); do E_I[i]="${SAVE_I[i]}"; E_K[i]="${SAVE_K[i]}"; done
+    n=$1
+    ref
+}
+
+# Small sets: every order must give the reference result.
+for size in 1 2 3 4; do
+    reps=8; [[ "$size" -ge 4 ]] && reps=6
+    for ((r = 0; r < reps; r++)); do
+        gen_set "$size"
+        idx=""; for ((i = 0; i < size; i++)); do idx="$idx $i"; done
+        permute "" "${idx# }"
+    done
+done
+# Larger sets (up to 14 entries, >= 10 to cover the index-in-sort-key bug): shuffles.
+for size in 10 11 12 14; do
+    for ((r = 0; r < 4; r++)); do
+        gen_set "$size"
+        for ((s = 0; s < 6; s++)); do
+            n=0; E_I=(); E_K=()
+            order=""
+            for ((i = 0; i < size; i++)); do order="$order $i"; done
+            for ((i = size - 1; i > 0; i--)); do
+                rnd; k=$(( RND % (i + 1) ))
+                set -- $order; a=("$@"); t="${a[i]}"; a[i]="${a[k]}"; a[k]="$t"; order="${a[*]}"
+            done
+            for x in $order; do E_I[n]="${SAVE_I[x]}"; E_K[n]="${SAVE_K[x]}"; n=$((n + 1)); done
+            check
+        done
+    done
+done
+# Targeted: nine independent entries, then a directory and its second spelling (x10 sorts before x9).
+SAVE_I=(7 8 9 10 11 12 13 14 15 16 1); SAVE_K=(1 1 1 1 1 1 1 1 1 8 8)
+n=11; E_I=("${SAVE_I[@]}"); E_K=("${SAVE_K[@]}"); ref; check
+echo "CASES=$CASES BAD=$BAD"
+CMPEOF
+CMP_OUT="$(bash "$TEST_HOME/cmp.sh" "$B_FUNCS" "$TEST_HOME" 2>&1)" || true
+assert_eq 0 "$(printf '%s\n' "$CMP_OUT" | sed -n 's/^CASES=[0-9]* BAD=//p')" "aggregator == reference on every generated set and order ($(printf '%s\n' "$CMP_OUT" | tail -n 1))"
+assert_true "the comparator ran at least 300 cases" test "$(printf '%s\n' "$CMP_OUT" | sed -n 's/^CASES=\([0-9]*\) BAD=.*/\1/p')" -ge 300
+printf '%s\n' "$CMP_OUT" | grep '^MISMATCH' || true
+
+echo ""
+echo "--- Nine independent paths, then a directory and its alias (index 10 vs 9) ---"
+for k in 1 2 3 4 5 6 7 8 9; do mkdir -p "$B_HOME/c/ind$k/sz1"; done
+mkdir -p "$B_HOME/c/sz8192x"
+ln -sfn sz8192x "$B_HOME/c/Alias8192"
+IND_RULES=""
+for k in 1 2 3 4 5 6 7 8 9; do IND_RULES="$IND_RULES c/ind$k/sz1"; done
+# shellcheck disable=SC2086
+banner_run "$TEST_HOME/out-ind-fwd" apply 1 0 en $IND_RULES c/sz8192x c/Alias8192
+assert_file_contains "$TEST_HOME/out-ind-fwd" "Space that would be excluded (simulated): 8.0M" "9 independent + directory + alias: 9K + 8192K once (8.0M, not 16M)"
+# shellcheck disable=SC2086
+banner_run "$TEST_HOME/out-ind-rev" apply 1 0 en c/Alias8192 c/sz8192x $IND_RULES
+assert_file_contains "$TEST_HOME/out-ind-rev" "Space that would be excluded (simulated): 8.0M" "same, alias first (order does not matter)"
+
+echo ""
+echo "--- Aggregation scales: 6000 independent paths ---"
+# shellcheck disable=SC2016
+PERF_OUT="$("$BASH" -c '
+    source "$1"
+    EXCL_FILE="$2/excl.perf"; : > "$EXCL_FILE"
+    i=1; while [ "$i" -le 6000 ]; do printf "/r/d%s/node_modules\t8\n" "$i" >> "$EXCL_FILE"; i=$((i + 1)); done
+    EXCL_TRACKED=6000
+    S=$(date +%s); excl_space_compute; E=$(date +%s)
+    echo "$EXCL_TOTAL_KB $EXCL_MEASURED $EXCL_UNKNOWN $((E - S))"' _ "$B_FUNCS" "$TEST_HOME" 2>&1)" || true
+assert_eq "48000 6000 0" "$(printf '%s' "$PERF_OUT" | cut -d' ' -f1-3)" "6000 independent paths are all summed (6000 x 8K)"
+assert_true "6000 paths aggregate in under 5 s (took $(printf '%s' "$PERF_OUT" | cut -d' ' -f4) s)" test "$(printf '%s' "$PERF_OUT" | cut -d' ' -f4)" -lt 5
+
+echo ""
+echo "--- Documented limits and unsupported bytes ---"
+# A name with the byte 0x01 (the sort/awk field separator) is unsupported: no crash, counted as unmeasured.
+BYTE1_REL="c/sz7"$'\001'"x"
+mkdir -p "$B_HOME/$BYTE1_REL" "$B_HOME/c/sz8192c"
+banner_run "$TEST_HOME/out-byte1" apply 1 0 en c/sz8192c "$BYTE1_REL"
+assert_file_contains "$TEST_HOME/out-byte1" "Space that would be excluded (simulated): ≥ 8.0M (partial, unmeasured paths: 1)" "a 0x01 name does not crash and is counted as unmeasured"
+# Hard links of one file listed as separate paths are not detected: summed (documented limit).
+: > "$B_HOME/c/sz8192h1"
+ln -f "$B_HOME/c/sz8192h1" "$B_HOME/c/sz8192h2"
+banner_run "$TEST_HOME/out-hard" apply 1 0 en c/sz8192h1 c/sz8192h2
+assert_file_contains "$TEST_HOME/out-hard" "Space that would be excluded (simulated): 16.0M" "documented limit: two hard links to one file are summed as two paths"
+
+echo ""
 echo "--- Cost: cd -P resolutions vs master (frozen reference), deterministic count ---"
 # Master's size bookkeeping per processed path is ref_du_track_path + the one
 # normalize_path of path_size_column; with no keep and a path under HOME nothing
