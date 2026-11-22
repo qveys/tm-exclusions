@@ -8,7 +8,7 @@ This document compares what ships in **tm-exclusions** today versus an **archive
 |------|----------|------|
 | Agent instructions | `AGENTS.md` | Primary doc for AI CLI tools (Cursor, Claude Code, etc.) |
 | Cursor rules / skills | `.cursor/skills/` | Repo-local skills (e.g. release orchestration, git cleanup) |
-| Hooks | `.githooks/` + `Makefile` `setup` | Conventional Commits, hook fallbacks |
+| Hooks | `.githooks/` + `Makefile` `setup` | Conventional Commits, staged-file ShellCheck / config validation (`pre-commit`), hook fallbacks |
 | CI | `.github/workflows/` | Lint, smoke, security, triage, **release** (tag → tap bump) |
 
 There is **no** `.claude/` directory in this repo. Claude Code is expected to read **`AGENTS.md`** (and root **`CLAUDE.md`**, which points here).

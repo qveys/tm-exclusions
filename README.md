@@ -478,9 +478,22 @@ make test-summary  # Same suites, quiet: totals + only the failed assertions (no
 make lint     # ShellCheck on all .sh files
 make check-conf  # Validate config/*.conf syntax (also part of make check)
 make check-i18n  # Verify en/fr locales define the same MSG_* keys (also part of make check)
+make setup    # Activate the local git hooks (core.hooksPath = .githooks), incl. the pre-commit lint hook
 make version  # Print the current tm-exclusions version
 make install  # Homebrew bin if writable, else /usr/local (admin prompt if needed)
 ```
+
+### Pre-commit hook
+
+`make setup` points `core.hooksPath` at `.githooks/`, which activates [`.githooks/pre-commit`](.githooks/pre-commit). It only looks at the files **staged** for the commit (never the whole working tree) and stays fast:
+
+- staged `*.sh` → ShellCheck (same options as `make lint`); `locales/*.sh` → `bash -n`. The **staged content** is checked (exported from the index to a temporary directory), not the working-tree file, so a partially staged file is judged on what will be committed; files it sources are resolved from the working tree;
+- staged `*.conf` → `scripts/check-conf.sh` (config syntax);
+- a locale file staged without its sibling → non-blocking reminder to run `make check-i18n`.
+
+A ShellCheck or config error blocks the commit; a missing `shellcheck` only prints a warning (CI still lints). Skip it for one commit with `git commit --no-verify`.
+
+There is no one-line permanent opt-out: any `make` invocation (even `make help`) sets `core.hooksPath` back to `.githooks` (a different local value is reported on stderr before it is replaced), and the fallback hooks installed by `make setup` in `.git/hooks` do the same on the next commit, checkout or merge. `git config --unset core.hooksPath` therefore only lasts until then. `TM_EXCLUSIONS_NO_HOOKS=1 make …` skips the automatic `make` bootstrap (an explicit `make setup` still installs the hooks); to turn the hooks off for a clone, unset `core.hooksPath`, export `TM_EXCLUSIONS_NO_HOOKS=1` and delete the fallbacks in `$(git rev-parse --git-common-dir)/hooks`.
 
 ### Releasing
 

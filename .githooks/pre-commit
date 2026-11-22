@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+# pre-commit hook — fast checks on the files STAGED for this commit only.
+#
+#   * staged *.sh   -> ShellCheck (same options as `make lint`: -x, -s bash,
+#                      -s sh for POSIX-sh scripts); locales/*.sh -> bash -n,
+#                      as in `make lint`.
+#   * staged *.conf -> scripts/check-conf.sh (config syntax).
+#   * staged locales/*.sh without the sibling locale -> non-blocking reminder
+#                      pointing at `make check-i18n`.
+#
+# The checks run on the STAGED content (the index), not on the working tree:
+# the staged blobs are exported to a temporary directory with their relative
+# paths and checked there, so what is committed is what was linted (a partially
+# staged file is judged on its staged part). Files sourced by a checked script
+# are resolved from the script's directory, then from the working tree
+# (`shellcheck -P SCRIPTDIR -P <repo>`).
+#
+# Exit status: 1 when ShellCheck / bash -n / check-conf reports a problem
+# (the commit is blocked), 0 otherwise. A missing `shellcheck` only warns.
+#
+# Skipping: `git commit --no-verify` bypasses this hook for one commit. The
+# hook stays active as long as core.hooksPath is `.githooks`, and ANY `make`
+# invocation (even `make help`) sets it back unless TM_EXCLUSIONS_NO_HOOKS=1 is
+# exported; see CONTRIBUTING.md ("Pre-commit checks") for the exact procedure.
+#
+# Bash 3.2+ compatible (macOS stock bash); no GNU/BSD-only tool options.
+
+REPO=$(git rev-parse --show-toplevel 2>/dev/null) || {
+  printf 'pre-commit: not inside a git work tree, skipping.\n' >&2
+  exit 0
+}
+cd "$REPO" || exit 0
+
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/tm-pre-commit.XXXXXX") || exit 0
+trap 'rm -rf "$TMP"' EXIT
+
+# Added/Copied/Modified/Renamed files, NUL-separated (safe for any file name).
+if ! git diff --cached --name-only --diff-filter=ACMR -z > "$TMP/staged"; then
+  printf 'pre-commit: could not list staged files.\n' >&2
+  exit 1
+fi
+
+# Sets KIND to sh | locale | conf, or empty for files this hook ignores.
+classify() {
+  case "$1" in
+    locales/*.sh) KIND="locale" ;;
+    *.sh) KIND="sh" ;;
+    *.conf) KIND="conf" ;;
+    *) KIND="" ;;
+  esac
+}
+
+# Pass 1: pick the relevant staged paths and export their STAGED content.
+IDX="$TMP/index"
+mkdir -p "$IDX"
+RELEVANT=0
+: > "$TMP/relevant"
+while IFS= read -r -d '' f; do
+  classify "$f"
+  if [ -n "$KIND" ]; then
+    printf '%s\0' "$f" >> "$TMP/relevant"
+    RELEVANT=$((RELEVANT + 1))
+  fi
+done < "$TMP/staged"
+
+[ "$RELEVANT" -gt 0 ] || exit 0
+
+if ! git checkout-index -z --stdin --prefix="$IDX/" < "$TMP/relevant"; then
+  printf 'pre-commit: could not export the staged content.\n' >&2
+  exit 1
+fi
+
+# Pass 2: classify what was really exported (regular files only; symlinks,
+# submodules and the like are ignored).
+SH_FILES=()
+LOCALE_FILES=()
+CONF_FILES=()
+while IFS= read -r -d '' f; do
+  [ -f "$IDX/$f" ] && [ ! -L "$IDX/$f" ] || continue
+  classify "$f"
+  case "$KIND" in
+    locale) LOCALE_FILES+=("$f") ;;
+    sh) SH_FILES+=("$f") ;;
+    conf) CONF_FILES+=("$f") ;;
+  esac
+done < "$TMP/relevant"
+
+STATUS=0
+
+# --- ShellCheck / bash -n ----------------------------------------------------
+if [ "${#SH_FILES[@]}" -gt 0 ]; then
+  if command -v shellcheck >/dev/null 2>&1; then
+    SC_RC=()
+    # The exported copies live outside the repository: keep a repo rcfile.
+    [ -f "$REPO/.shellcheckrc" ] && SC_RC=(--rcfile "$REPO/.shellcheckrc")
+    for f in "${SH_FILES[@]}"; do
+      # Mirror `make lint`: POSIX-sh shebang -> -s sh, everything else -s bash.
+      first=$(head -n 1 < "$IDX/$f" 2>/dev/null | tr -d '\r')
+      case "$first" in
+        '#!/bin/sh'*|'#!/usr/bin/env sh'*|'#! /bin/sh'*) dialect="sh" ;;
+        *) dialect="bash" ;;
+      esac
+      if ! (cd "$IDX" && shellcheck -x -s "$dialect" -P SCRIPTDIR -P "$REPO" ${SC_RC[@]+"${SC_RC[@]}"} -- "$f"); then
+        printf 'pre-commit: ShellCheck failed for %s\n' "$f" >&2
+        STATUS=1
+      fi
+    done
+  else
+    printf 'pre-commit: warning: shellcheck not installed — skipping ShellCheck on %d staged shell file(s).\n' "${#SH_FILES[@]}" >&2
+    printf '            Install it (brew install shellcheck) to lint before committing; CI still runs it.\n' >&2
+  fi
+fi
+
+for f in ${LOCALE_FILES[@]+"${LOCALE_FILES[@]}"}; do
+  if ! (cd "$IDX" && bash -n "$f"); then
+    printf 'pre-commit: syntax error in %s\n' "$f" >&2
+    STATUS=1
+  fi
+done
+
+# --- Config syntax -----------------------------------------------------------
+if [ "${#CONF_FILES[@]}" -gt 0 ]; then
+  if [ -f "$REPO/scripts/check-conf.sh" ]; then
+    if ! (cd "$IDX" && bash "$REPO/scripts/check-conf.sh" "${CONF_FILES[@]}"); then
+      printf 'pre-commit: config validation failed (see errors above).\n' >&2
+      STATUS=1
+    fi
+  else
+    printf 'pre-commit: warning: scripts/check-conf.sh not found — skipping config validation.\n' >&2
+  fi
+fi
+
+# --- Locale sync reminder (never blocks) ------------------------------------
+if [ "${#LOCALE_FILES[@]}" -gt 0 ]; then
+  MISSING=""
+  while IFS= read -r tracked; do
+    case "$tracked" in
+      locales/*.sh) ;;
+      *) continue ;;
+    esac
+    found=0
+    for f in "${LOCALE_FILES[@]}"; do
+      [ "$f" = "$tracked" ] && found=1
+    done
+    [ "$found" -eq 0 ] && MISSING="${MISSING:+$MISSING, }$tracked"
+  done < <(git ls-files -- 'locales/*.sh')
+  if [ -n "$MISSING" ]; then
+    printf 'pre-commit: reminder: locale file(s) staged without %s — keep translations in sync (run: %s).\n' "$MISSING" "make check-i18n" >&2
+  fi
+fi
+
+exit "$STATUS"

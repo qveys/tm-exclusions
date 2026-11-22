@@ -75,6 +75,7 @@ This file provides guidance to AI agentic LLM CLI tools when working with code i
   - Keep `config/default.conf`'s format header, the README, and this list in sync when a new type is added.
 - Conventional Commits with leading emoji are enforced by local hooks in `.githooks/`.
   - Ensure hooks are active via `make setup` (also auto-bootstrapped by the Makefile).
+- `.githooks/pre-commit` checks only staged files: ShellCheck on `*.sh` (`bash -n` on `locales/*.sh`), `scripts/check-conf.sh` on `*.conf`, and a non-blocking `make check-i18n` reminder when one locale is staged without the other. It lints the staged (index) content. Missing `shellcheck` warns but does not block. Bypass with `git commit --no-verify`; any `make` call re-sets `core.hooksPath` (skip the bootstrap with `TM_EXCLUSIONS_NO_HOOKS=1`); covered by `tests/test_pre_commit.sh`.
 
 ## Agent skills
 

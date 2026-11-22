@@ -7,7 +7,7 @@ Thanks for considering a contribution. This is a small Bash project — keep PRs
 ```bash
 git clone https://github.com/qveys/tm-exclusions.git
 cd tm-exclusions
-make setup    # install local git hooks (Conventional Commits, etc.)
+make setup    # install local git hooks (Conventional Commits, staged-file lint, etc.)
 make check    # lint + smoke tests
 ```
 
@@ -19,6 +19,12 @@ See [`AGENTS.md`](AGENTS.md) for the full architecture, build commands, and Bash
 - **No external runtime dependencies.** The CLI must work on a stock macOS install.
 - **`--dry-run` first.** Any change to `tmutil` calls must be testable in dry-run mode.
 - **Keep tests deterministic.** `tests/smoke.bats-like.sh` runs against `--dry-run`; it must not require sudo or real `tmutil` state.
+
+## Pre-commit checks
+
+`make setup` also activates the [`pre-commit`](.githooks/pre-commit) hook: staged `.sh` files are checked with ShellCheck, staged `.conf` files with `scripts/check-conf.sh`, and editing one locale file without the other prints a reminder (`make check-i18n`). It only inspects staged files (their **staged content**, so a partially staged file is judged on what will be committed), so it is fast; `make check` remains the full gate.
+
+Skip it for one commit with `git commit --no-verify`. There is no one-line permanent opt-out: any `make` invocation (even `make help`) sets `core.hooksPath` back to `.githooks` — reporting on stderr a different local value it replaces — and the fallback hooks installed by `make setup` in `.git/hooks` restore it on the next commit, checkout or merge, so `git config --unset core.hooksPath` only lasts until then. `TM_EXCLUSIONS_NO_HOOKS=1 make …` skips the automatic `make` bootstrap (an explicit `make setup` still installs the hooks); to disable the hooks for a clone, unset `core.hooksPath`, export `TM_EXCLUSIONS_NO_HOOKS=1` and delete the fallbacks in `$(git rev-parse --git-common-dir)/hooks`.
 
 ## Commit style
 
