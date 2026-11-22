@@ -2015,14 +2015,15 @@ build_apps_inventory() {
 }
 
 # Physical path of existing directory $1 (symbolic links, "..", "//" and
-# trailing slashes resolved), newline-safe, without trailing newline: the
-# identity of a directory, whatever its spelling. One subshell per call; the
-# "x" sentinel keeps a trailing newline of the name from being stripped.
+# trailing slashes resolved): the identity of a directory, whatever its
+# spelling. Printed followed by a literal "x" sentinel, which the caller must
+# strip (phys="${phys%x}") after its command substitution: $(...) removes
+# trailing newlines, which would merge "dir" and a sibling named "dir<LF>".
+# One subshell per call.
 physical_dir() {
     local out
     out="$(cd -P -- "$1" 2>/dev/null && pwd -P && printf x)" || return 1
-    out="${out%x}"
-    printf '%s' "${out%$'\n'}"
+    printf '%sx' "${out%$'\n'x}"
 }
 
 # Colon-separated PATH string ($1) as NUL-separated "<entry>" "<physical path>"
@@ -2039,6 +2040,7 @@ list_path_dirs() {
         [[ "$entry" = /* ]] || continue
         while [[ "$entry" = ?*/ ]]; do entry="${entry%/}"; done
         phys="$(physical_dir "$entry")" || continue
+        phys="${phys%x}"
         dup=0
         i=0
         while [[ "$i" -lt "${#seen[@]}" ]]; do
@@ -2077,7 +2079,7 @@ list_dir_executables() {
 # by the tool names, wrapped like the Homebrew lists.
 build_path_tools_inventory() {
     local width="${1:-80}" sys_dirs dir phys names count word wrap_width found=0
-    local s sp is_sys
+    local s sp is_sys shown
     local -a sys_phys=()
     sys_dirs="${TM_EXCLUSIONS_SYSTEM_PATHS:-/bin:/sbin:/usr/bin:/usr/sbin}"
     # System directories by physical identity, resolved once: an alias of one
@@ -2085,6 +2087,7 @@ build_path_tools_inventory() {
     while IFS= read -r -d ':' s; do
         [[ "$s" = /* ]] || continue
         sp="$(physical_dir "$s")" || continue
+        sp="${sp%x}"
         sys_phys[${#sys_phys[@]}]="$sp"
     done < <(printf '%s:' "$sys_dirs")
     wrap_width=$(( width - 4 ))
@@ -2092,6 +2095,8 @@ build_path_tools_inventory() {
     printf '%s:\n' "${MSG_INVENTORY_PATH}"
     while IFS= read -r -d '' dir && IFS= read -r -d '' phys; do
         found=1
+        # A newline in the directory name is written as \n (one line each).
+        shown="${dir//$'\n'/\\n}"
         names="$(list_dir_executables "$dir")"
         count="$(printf '%s\n' "$names" | awk 'length($0) { n++ } END { print n + 0 }')"
         word="${MSG_INVENTORY_PATH_BINARIES}"
@@ -2101,9 +2106,9 @@ build_path_tools_inventory() {
             if [[ "$s" = "$phys" ]]; then is_sys=1; break; fi
         done
         if [[ "$is_sys" -eq 1 ]]; then
-            printf '[sys] %s (%s %s — %s)\n' "$dir" "$count" "$word" "${MSG_INVENTORY_PATH_OMITTED}"
+            printf '[sys] %s (%s %s — %s)\n' "$shown" "$count" "$word" "${MSG_INVENTORY_PATH_OMITTED}"
         else
-            printf '[dev] %s (%s %s)' "$dir" "$count" "$word"
+            printf '[dev] %s (%s %s)' "$shown" "$count" "$word"
             if [[ "$count" -gt 0 ]]; then
                 printf ':\n%s\n' "$(printf '%s\n' "$names" | wrap_name_list "$wrap_width" | sed 's/^/  /')"
             else

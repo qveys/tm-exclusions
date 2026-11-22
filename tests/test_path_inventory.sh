@@ -131,13 +131,37 @@ declare_i18n_en
 
 tool_calls_on() { grep -cF -- "$1" "$TOOL_CALLS" || true; }
 
-# list_path_dirs output (NUL-separated) as text lines, a newline written as \n.
+# list_path_dirs output as "<entry><TAB><physical path>" lines, a newline in a
+# name written as \n. The output must be NUL-terminated "<entry>" "<physical>"
+# pairs: an odd number of records is reported as a single FORMAT-ERROR line, so
+# a one-record-per-directory format (or any other) can never pass by accident.
 dir_lines() {
-    local d
-    while IFS= read -r -d '' d && IFS= read -r -d '' _; do
-        printf '%s\n' "${d//$'\n'/\\n}"
+    local rec n=0
+    local -a recs=()
+    while IFS= read -r -d '' rec; do
+        recs[${#recs[@]}]="$rec"
     done < <(list_path_dirs "$1")
+    n="${#recs[@]}"
+    if [[ $((n % 2)) -ne 0 ]]; then
+        printf 'FORMAT-ERROR: %s records (not entry/physical pairs)\n' "$n"
+        return 0
+    fi
+    local i=0
+    while [[ "$i" -lt "$n" ]]; do
+        rec="${recs[$i]}"
+        printf '%s\t%s\n' "${rec//$'\n'/\\n}" "${recs[$((i + 1))]//$'\n'/\\n}"
+        i=$((i + 2))
+    done
 }
+
+# Number of inventory entries of a kind (sys, dev or sys\|dev) that point into
+# the fake tree, the stub bin directory excepted: the real /usr/bin and /bin
+# kept in PATH for the tools the survey itself needs are not counted. Reads the
+# inventory on stdin.
+n_entries() { grep -F "$TEST_DIR" | grep -vF "] $STUB_BIN " | grep -c "^\[\($1\)\] " || true; }
+
+# Expected dir_lines line for an entry and its expected physical path.
+pair() { printf '%s\t%s' "$1" "$2"; }
 
 echo "path inventory tests"
 echo "========================================"
@@ -147,34 +171,59 @@ echo "--- list_path_dirs ---"
 NLDIR="$TEST_DIR/nl"$'\n'"dir"
 mkdir -p "$NLDIR"
 mkdir -p "$TEST_DIR/rel"
-assert_eq "$SYS
-$DEV
-$DEV2" "$(dir_lines "$SYS:$DEV:$SYS:$DEV2:$DEV/")" \
+# Expected physical paths, computed without the code under test (TEST_DIR may
+# itself sit behind a link, e.g. /var -> /private/var on macOS).
+RT="$(cd -P "$TEST_DIR" && pwd -P)"
+PSYS="$RT/fake_sys/usr_bin"
+PDEV="$RT/dev tools/bin"
+PDEV2="$RT/home/.cargo/bin"
+assert_eq "$(pair "$SYS" "$PSYS")
+$(pair "$DEV" "$PDEV")
+$(pair "$DEV2" "$PDEV2")" "$(dir_lines "$SYS:$DEV:$SYS:$DEV2:$DEV/")" \
     "duplicates (also with a trailing slash) are dropped, first occurrence order kept"
-assert_eq "$SYS
-$DEV" "$(dir_lines "$SYS:$TEST_DIR/does_not_exist:$DEV")" "missing directory is ignored"
-assert_eq "$SYS
-$DEV" "$(dir_lines ":$SYS::$DEV:")" "empty entries (current directory) are ignored"
-assert_eq "$SYS" "$(cd "$TEST_DIR" && dir_lines "rel:.:$SYS")" "relative entries are ignored"
-assert_eq "$SYS" "$(dir_lines "$SYS:$DEV/README.txt")" "a file in PATH is not a directory"
-assert_eq "$TEST_DIR/nl\\ndir" "$(dir_lines "$NLDIR")" "directory name with a newline is one entry"
+assert_eq "$(pair "$SYS" "$PSYS")
+$(pair "$DEV" "$PDEV")" "$(dir_lines "$SYS:$TEST_DIR/does_not_exist:$DEV")" "missing directory is ignored"
+assert_eq "$(pair "$SYS" "$PSYS")
+$(pair "$DEV" "$PDEV")" "$(dir_lines ":$SYS::$DEV:")" "empty entries (current directory) are ignored"
+assert_eq "$(pair "$SYS" "$PSYS")" "$(cd "$TEST_DIR" && dir_lines "rel:.:$SYS")" "relative entries are ignored"
+assert_eq "$(pair "$SYS" "$PSYS")" "$(dir_lines "$SYS:$DEV/README.txt")" "a file in PATH is not a directory"
+assert_eq "$(pair "$TEST_DIR/nl\\ndir" "$RT/nl\\ndir")" "$(dir_lines "$NLDIR")" "directory name with a newline is one entry"
 # Same directory under another spelling: symbolic link, "//", "..".
 ln -s "$SYS" "$TEST_DIR/sysalias"
 ln -s "$DEV" "$TEST_DIR/devalias"
 ln -s "$NLDIR" "$TEST_DIR/nlalias"
-assert_eq "$SYS" "$(dir_lines "$SYS:$TEST_DIR/sysalias")" "symbolic link to a listed directory is dropped"
-assert_eq "$TEST_DIR/sysalias" "$(dir_lines "$TEST_DIR/sysalias:$SYS")" "first spelling wins, even when it is the link"
-assert_eq "$DEV" "$(dir_lines "$DEV://$DEV")" "//dir spelling of a listed directory is dropped"
-assert_eq "$DEV" "$(dir_lines "$DEV:$DEV/../bin:$TEST_DIR/dev tools/../dev tools/bin/.")" \
-    "spellings with .. and . are dropped"
-assert_eq "$SYS
-$TEST_DIR/devalias" "$(dir_lines "$SYS:$TEST_DIR/devalias:$DEV:$TEST_DIR/sysalias")" \
+alias_out="$(dir_lines "$SYS:$TEST_DIR/sysalias")"
+assert_eq "$(pair "$SYS" "$PSYS")" "$alias_out" "symbolic link to a listed directory is dropped (one entry, physical key)"
+assert_eq "1" "$(printf '%s\n' "$alias_out" | wc -l | tr -d '[:space:]')" "symbolic link: exactly one output entry"
+assert_eq "$(pair "$TEST_DIR/sysalias" "$PSYS")" "$(dir_lines "$TEST_DIR/sysalias:$SYS")" \
+    "first spelling wins, even when it is the link; its physical path is the target"
+slash_out="$(dir_lines "$DEV://$DEV")"
+assert_eq "$(pair "$DEV" "$PDEV")" "$slash_out" "//dir spelling of a listed directory is dropped"
+assert_eq "1" "$(printf '%s\n' "$slash_out" | wc -l | tr -d '[:space:]')" "//dir: exactly one output entry"
+dots_out="$(dir_lines "$DEV:$DEV/../bin:$TEST_DIR/dev tools/../dev tools/bin/.")"
+assert_eq "$(pair "$DEV" "$PDEV")" "$dots_out" "spellings with .. and . are dropped"
+assert_eq "1" "$(printf '%s\n' "$dots_out" | wc -l | tr -d '[:space:]')" "..//.: exactly one output entry"
+assert_eq "$(pair "$SYS" "$PSYS")
+$(pair "$TEST_DIR/devalias" "$PDEV")" "$(dir_lines "$SYS:$TEST_DIR/devalias:$DEV:$TEST_DIR/sysalias")" \
     "aliases keep the first occurrence and the PATH order of distinct directories"
-assert_eq "$TEST_DIR/nl\\ndir" "$(dir_lines "$NLDIR:$TEST_DIR/nlalias")" \
+nlalias_out="$(dir_lines "$NLDIR:$TEST_DIR/nlalias")"
+assert_eq "$(pair "$TEST_DIR/nl\\ndir" "$RT/nl\\ndir")" "$nlalias_out" \
     "newline-named directory and its link are one entry"
+assert_eq "1" "$(printf '%s\n' "$nlalias_out" | wc -l | tr -d '[:space:]')" "newline-named link: exactly one output entry"
+# Trailing newline: "trail" and "trail<LF>" are two sibling directories whose
+# keys must stay distinct (command substitution would strip the final LF).
+TRAIL="$TEST_DIR/trail"
 TRAILNL="$TEST_DIR/trail"$'\n'
-mkdir -p "$TRAILNL"
-assert_eq "$TEST_DIR/trail\\n" "$(dir_lines "$TRAILNL")" "directory name ending with a newline is kept"
+mkdir -p "$TRAIL" "$TRAILNL"
+assert_eq "$(pair "$TEST_DIR/trail\\n" "$RT/trail\\n")" "$(dir_lines "$TRAILNL")" "directory name ending with a newline is kept"
+trail_out="$(dir_lines "$TRAIL:$TRAILNL")"
+assert_eq "$(pair "$TEST_DIR/trail" "$RT/trail")
+$(pair "$TEST_DIR/trail\\n" "$RT/trail\\n")" "$trail_out" \
+    "trail and trail<LF> siblings are two distinct entries with distinct keys"
+assert_eq "2" "$(printf '%s\n' "$trail_out" | wc -l | tr -d '[:space:]')" "trail / trail<LF>: exactly two output entries"
+assert_eq "$(pair "$TEST_DIR/trail\\n" "$RT/trail\\n")
+$(pair "$TEST_DIR/trail" "$RT/trail")" "$(dir_lines "$TRAILNL:$TRAIL:$TRAILNL")" \
+    "trail<LF> first, then trail; the repeated trail<LF> is dropped"
 assert_eq "" "$(dir_lines "")" "empty PATH lists nothing"
 assert_eq "" "$(dir_lines "::")" "PATH of only empty entries lists nothing"
 
@@ -253,14 +302,16 @@ EOF
 assert_true "alias of a system directory is not [dev]" not grep -qF "[dev] $TEST_DIR/sysalias" <<EOF
 $inv_alias
 EOF
-assert_eq "1" "$(printf '%s\n' "$inv_alias" | grep -c '^\[sys\] .*(3 binaries' || true)" \
-    "system directory and its aliases are shown once"
+assert_eq "1" "$(printf '%s\n' "$inv_alias" | n_entries 'sys')" \
+    "exactly one [sys] line: system directory and its aliases are shown once"
+assert_eq "2" "$(printf '%s\n' "$inv_alias" | n_entries 'sys\|dev')" \
+    "alias inventory: exactly two directory entries ([sys] + [dev]) in total"
 assert_true "alias of a dev directory is listed once, under its first spelling" \
     grep -qxF "[dev] $TEST_DIR/devalias (9 binaries):" <<EOF
 $inv_alias
 EOF
-assert_eq "1" "$(printf '%s\n' "$inv_alias" | grep -c '^\[dev\] .*(9 binaries)' || true)" \
-    "dev directory and its alias are listed once"
+assert_eq "1" "$(printf '%s\n' "$inv_alias" | n_entries 'dev')" \
+    "exactly one [dev] line: dev directory and its alias are listed once"
 TM_EXCLUSIONS_SYSTEM_PATHS="$TEST_DIR/sysalias:/usr/bin:/bin"
 PATH="$STUB_BIN:$SYS:$BASE_PATH"
 inv_alias2="$(build_path_tools_inventory 80)"
@@ -270,6 +321,34 @@ assert_true "system directory declared through an alias is [sys]" \
     grep -qxF "[sys] $SYS (3 binaries — omitted)" <<EOF
 $inv_alias2
 EOF
+assert_eq "1" "$(printf '%s\n' "$inv_alias2" | n_entries 'sys')" "override alias: one [sys] line"
+assert_eq "0" "$(printf '%s\n' "$inv_alias2" | n_entries 'dev')" "override alias: no [dev] line"
+
+# Trailing-newline siblings in the system override: only trail<LF> is system,
+# its sibling trail (no newline) stays a toolchain directory with its names.
+mkexe "$TRAIL/sib-tool"
+mkexe "$TRAILNL/sysbin"
+TM_EXCLUSIONS_SYSTEM_PATHS="$TRAILNL"
+PATH="$STUB_BIN:$TRAIL:$TRAILNL:$BASE_PATH"
+inv_trail="$(build_path_tools_inventory 80)"
+PATH="$STUB_BIN:$BASE_PATH"
+TM_EXCLUSIONS_SYSTEM_PATHS="$SYS:/usr/bin:/bin"
+assert_true "sibling without the trailing newline stays [dev] with its names" \
+    grep -qxF "[dev] $TEST_DIR/trail (1 binary):" <<EOF
+$inv_trail
+EOF
+assert_true "sibling's tool is listed" grep -qF "sib-tool" <<EOF
+$inv_trail
+EOF
+assert_true "trail<LF> is [sys] (newline written as \\n), binary omitted" \
+    grep -qxF "[sys] $TEST_DIR/trail\\n (1 binary — omitted)" <<EOF
+$inv_trail
+EOF
+assert_true "system binary of trail<LF> is not listed" not grep -qF "sysbin" <<EOF
+$inv_trail
+EOF
+assert_eq "2" "$(printf '%s\n' "$inv_trail" | n_entries 'sys\|dev')" \
+    "trail and trail<LF> give two inventory entries"
 
 # A name made only of blanks is an executable like any other: counted (the
 # count must match the listing) and kept by the wrapping.
