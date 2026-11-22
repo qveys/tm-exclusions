@@ -45,17 +45,17 @@ Targets may use leading `~` (expanded to `$HOME`) or the literal substring `$HOM
 | Type | Behavior |
 |---|---|
 | `path` | Static exclusion: apply `tmutil addexclusion` to the expanded path (optional glob expansion at load time) |
-| `pattern` | Dynamic scan: `find $HOME -maxdepth 6 -type d -name <pattern>` and exclude matches |
+| `pattern` | Dynamic scan: a single `find $HOME -maxdepth 6 -type d \( -name <p1> -o -name <p2> … \)` over all patterns, then exclude matches |
 | `prune` | Scan skip: paths under this prefix are ignored during dynamic pattern scanning (not excluded from backup) |
 | `keep` | Protect a literal path and descendants across all modes; also block ancestor exclusions. Existing exclusions are reported, not automatically removed. |
 | `setting` | Preference, not a Time Machine rule. Keys: `report_path` (saved report **file** path) and boolean `desktop_report` / `scan_images` (`true`/`1`/`yes` or `false`/`0`/`no`). Unknown keys and invalid `desktop_report` values warn on stderr and are ignored. |
 
 ## Scan Logic
 
-Dynamic scanning uses `find` from `$HOME` with `-maxdepth 6` to keep execution time practical. The `scan_dynamic_patterns()` function uses a two-phase approach to collect and process matches:
+Dynamic scanning walks `$HOME` with a single `find` — `-maxdepth 6` keeps execution time practical — that ORs every configured pattern into one expression: `find $HOME -maxdepth 6 -type d \( -name p1 -o -name p2 … \)`. One traversal of the tree discovers all patterns at once (#50); there is deliberately no `-prune`, because the old per-pattern walks kept descending into matched directories (nested matches such as `node_modules/.pnpm/*/node_modules` must still be discovered, notably in uninstall mode). The `scan_dynamic_patterns()` function then uses a two-phase approach to collect and process matches:
 
 **Phase 1: Collect**  
-For each configured pattern name (e.g., `node_modules`), `find` locates matching directories. Each match is tagged with its pattern name and written to a temporary file. All patterns are collected before any processing begins.
+The single consolidated `find` locates every directory matching any configured pattern. Each discovered directory is tagged with every configured pattern whose glob matches its basename (the same `(dir, pattern)` pairs the per-pattern `find -name <pattern>` calls produced), written tab-separated to a temporary file. All patterns are collected before any processing begins.
 
 **Phase 2: Sort and process**  
 The aggregated results are sorted lexically (`LC_ALL=C sort`). Because an ancestor path is always a strict string prefix of any descendant, this sort order guarantees parents precede their children. Each candidate is then processed in order:
@@ -308,8 +308,9 @@ cannot contain its own persistence failure. Optional inventory remains informati
 
 `setting|scan_images|true` enables the otherwise disabled image scan. At most 50
 candidates are processed; additional images produce a `LIMIT` line. The traversal is
-still per-pattern for dynamic rules: this change does not implement the separate
-single-traversal performance proposal.
+for dynamic rules is a single traversal since
+[#50](https://github.com/qveys/tm-exclusions/issues/50) (one consolidated `find`
+with all patterns OR-ed together); the image scan above remains its own pass.
 
 ### Cloud-sync prunes
 

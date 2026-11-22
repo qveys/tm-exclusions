@@ -142,7 +142,7 @@ tm-exclusions --lang en      # 🇬🇧 Force English
 
 ## 🏗️ How It Works
 
-Config files are loaded, merged, then applied via a dual `tmutil` strategy (user paths under `$HOME`, fixed-path for system paths). Dynamic scan uses `find "$HOME" -maxdepth 6 -type d -name <pattern>` and `prune` rules filter matched results under configured prefixes. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full flowchart and details.
+Config files are loaded, merged, then applied via a dual `tmutil` strategy (user paths under `$HOME`, fixed-path for system paths). Dynamic scan uses a single `find "$HOME" -maxdepth 6 -type d \( -name <p1> -o -name <p2> … \)` pass covering every configured pattern at once, and `prune` rules filter matched results under configured prefixes. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full flowchart and details.
 
 > 💡 Most exclusions won't appear in System Settings → Time Machine. They're still active — verify with `tmutil isexcluded ~/Library/Caches`
 

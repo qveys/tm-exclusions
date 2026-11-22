@@ -100,6 +100,8 @@ test: ## Run smoke tests
 	@bash tests/test_check_i18n.sh
 	@echo "Running category section tests..."
 	@bash tests/test_categories.sh
+	@echo "Running single-find scan tests..."
+	@bash tests/test_scan_single_find.sh
 
 check-conf: ## Validate the syntax of the repository config/*.conf files
 	@bash scripts/check-conf.sh
@@ -132,6 +134,7 @@ lint: ## Run ShellCheck on all shell scripts and syntax-check locale tables
 	@shellcheck -x -s bash scripts/check-i18n.sh
 	@shellcheck -x -s bash tests/test_check_i18n.sh
 	@shellcheck -x -s bash tests/test_categories.sh
+	@shellcheck -x -s bash tests/test_scan_single_find.sh
 	@echo "ShellCheck passed."
 
 install: setup ## Install tm-exclusions to PREFIX (Homebrew bin if writable, else /usr/local/bin)
