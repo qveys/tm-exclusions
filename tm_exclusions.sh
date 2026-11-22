@@ -1807,11 +1807,13 @@ desktop_report_enabled() {
 # ---------------------------------------------------------------------------
 # Inventory (informational)
 # ---------------------------------------------------------------------------
-# Width used to wrap the inventory lists: terminal width when stdout is a
-# terminal, otherwise the standard report width.
+# Width used to wrap the inventory lists: terminal width when the caller
+# reports stdout as a terminal ($1 = 1 — evaluated outside any $(...), since
+# inside a command substitution [[ -t 1 ]] is always false), otherwise the
+# standard report width.
 report_columns() {
     local cols=80
-    if [[ -t 1 ]]; then
+    if [[ "${1:-0}" = "1" ]]; then
         cols="$(tput cols 2>/dev/null || printf '80')"
     fi
     case "$cols" in
@@ -1845,19 +1847,23 @@ wrap_name_list() {
 }
 
 # One wrapped inventory block: "<label> (<count>):" followed by the names,
-# indented and wrapped to $3. $1 is the brew list flag (--cask / --formula).
+# indented by two spaces and wrapped so that the indented lines stay within
+# $3. $1 is the brew list flag (--cask / --formula).
 brew_list_block() {
-    local names count
+    local names count wrap_width
     names="$(brew list "$1" 2>/dev/null || true)"
     count="$(printf '%s\n' "$names" | awk 'NF { n++ } END { print n + 0 }')"
     printf '%s (%s):' "$2" "$count"
     if [[ "$count" -gt 0 ]]; then
-        printf '\n%s\n' "$(printf '%s\n' "$names" | wrap_name_list "$3" | sed 's/^/  /')"
+        # The two-space indent counts toward the line width.
+        wrap_width=$(( $3 - 2 ))
+        [[ "$wrap_width" -lt 10 ]] && wrap_width=10
+        printf '\n%s\n' "$(printf '%s\n' "$names" | wrap_name_list "$wrap_width" | sed 's/^/  /')"
     fi
 }
 
 build_inventory_section() {
-    local width path_total path_dirs p oifs
+    local stdout_tty="${1:-0}" width path_total path_dirs p oifs
     printf '=== Inventory (informational) ===\n'
     if [[ "${TM_EXCLUSIONS_SKIP_INVENTORY:-}" = "1" ]]; then
         printf '(skipped: TM_EXCLUSIONS_SKIP_INVENTORY=1)\n'
@@ -1868,7 +1874,7 @@ build_inventory_section() {
             "$(find /Applications -maxdepth 1 -mindepth 1 2>/dev/null | wc -l | tr -d '[:space:]' || true)"
     fi
     if command -v brew >/dev/null 2>&1; then
-        width="$(report_columns)"
+        width="$(report_columns "$stdout_tty")"
         printf '%s\n' "$(brew_list_block --cask 'Homebrew casks' "$width")"
         printf '%s\n' "$(brew_list_block --formula 'Homebrew formulas' "$width")"
     else
@@ -1929,8 +1935,12 @@ generate_report() {
     local dry_run_note=""
     local excluded_label="${MSG_REPORT_EXCLUDED}"
     local inv du_sec size_total_line size_total_disp tm_list out_path path_total path_dirs p szk sh total_k desk_copy raw_list tm_list_rc
+    local stdout_tty=0
+    # Evaluated here, in the main shell: inside $(...) stdout is a pipe and
+    # [[ -t 1 ]] would always be false.
+    [[ -t 1 ]] && stdout_tty=1
 
-    inv="$(build_inventory_section)"
+    inv="$(build_inventory_section "$stdout_tty")"
     if [[ "${UI}" -eq 1 ]]; then
         ui_print_inventory "$inv"
         ui_section "📝" "$MSG_UI_REPORT"

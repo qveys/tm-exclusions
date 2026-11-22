@@ -389,6 +389,34 @@ done
 [[ "$out" == *"an-extremely-long-package-name-that-exceeds-the-wrap-width-on-purpose"* ]]
 ' _ "$TM_EXCLUSIONS"
 
+# Unit: the 2-space indent counts toward the block width, and report_columns
+# only queries the terminal when the caller pre-evaluated [[ -t 1 ]] = 1.
+# shellcheck disable=SC2016
+assert_exit_code 0 "brew_list_block keeps indented lines within the width; report_columns honors the tty flag" \
+    bash -c '
+set -euo pipefail
+source <(sed "/^main /d" "$1")
+brew() {
+    case "$2" in
+        --cask) printf "%s\n" alpha beta gamma delta epsilon zeta eta theta iota kappa ;;
+    esac
+    return 0
+}
+out="$(brew_list_block --cask "Homebrew casks" 30)"
+[[ "$(printf "%s\n" "$out" | head -n 1)" = "Homebrew casks (10):" ]]
+while IFS= read -r line; do
+    [[ "${#line}" -le 30 ]]
+    [[ "$line" != *, ]]
+done <<< "$out"
+[[ "$(printf "%s\n" "$out" | wc -l | tr -d " ")" -gt 2 ]]
+[[ "$(report_columns)" = "80" ]]
+[[ "$(report_columns 0)" = "80" ]]
+tput() { printf "57\n"; }
+[[ "$(report_columns 1)" = "57" ]]
+tput() { printf "10\n"; }
+[[ "$(report_columns 1)" = "80" ]]
+' _ "$TM_EXCLUSIONS"
+
 # Unit: interactive runs print the inventory body under a localized header.
 # shellcheck disable=SC2016
 assert_exit_code 0 "ui_print_inventory shows the inventory body inline" \
