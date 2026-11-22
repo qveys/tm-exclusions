@@ -84,18 +84,18 @@ subheadings.
   Espace qui serait exclu (simulé) : 1.2G
 
   📄 Rapport sauvegardé dans : ~/.config/tm_exclusions/last_report.txt
-  💡 Vérifier une exclusion avec : tmutil isexcluded <path>
+  💡 Vérifier une exclusion avec : tmutil isexcluded /Users/me/Git/project/node_modules
 ```
 
 The final summary is a banner: counters (newly excluded / already excluded / skipped / missing),
 the cumulative disk usage of the touched paths, the **space excluded** by this run (sum of the
 `du -sk` sizes already measured for the newly excluded paths, shown as KB/MB/GB; nested paths
-counted once), the saved report path and a `tmutil isexcluded <path>` verification tip. With
-`--dry-run` the banner says the run is **simulated** (nothing changed, projected values); `--report`
-labels the figure "space needing exclusion". If some sizes cannot be read the figure is shown as
-a lower bound (`≥ 1.0M (partial, unmeasured paths: 1)`), or `unknown` when none could be read — never a false
-total. Interactive terminals only: `--quiet`, pipes and `NO_COLOR` runs print no banner (the
-same figure is in the report counters), and `TM_EXCLUSIONS_SKIP_DU=1` hides the size figures.
+counted once), the saved report path and a copy-pasteable `tmutil isexcluded '<first processed path>'` verification tip (shell-quoted real path). With
+`--dry-run` the banner says the run is **simulated** (no exclusion added or removed — only the read-only `tmutil isexcluded` / `listexclusions` status lookups run — projected values); `--report`
+labels the figure "space needing exclusion". If some sizes cannot be read (or `du` exits non-zero on unreadable children, so its total is partial) the figure is shown as
+a lower bound (truncated, never rounded up) (`≥ 1.0M (partial, unmeasured paths: 1)`), or `unknown` when none could be read — never a false
+total. Interactive terminals only: `--quiet`, pipes and `NO_COLOR` runs print no banner (`--quiet` stdout is unchanged;
+the figure is in the saved report and, for non-quiet plain runs, in the printed counters), and `TM_EXCLUSIONS_SKIP_DU=1` hides the size figures.
 
 Try `bash tm_exclusions.sh --dry-run --lang fr` in your terminal.
 Pipes, redirected output, `TERM=dumb` and `NO_COLOR=1` use the same compact
