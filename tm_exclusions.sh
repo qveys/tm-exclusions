@@ -235,12 +235,24 @@ progress_step() {
     progress_draw
 }
 
+# End-of-run banner for interactive runs (#44). Arguments, all computed once by
+# generate_report so the banner and the saved report show the same figures:
+#   $1 label of the excluded counter     $2 disk usage total of touched paths
+#   $3 label of the space-excluded line  $4 space-excluded value ("" = hide)
+#   $5 report file path ("" = hide)     $6 path for the verification tip ("" = example)
+# --quiet never shows it. Nothing here runs du: every size was measured once
+# while its path was processed.
 ui_summary() {
+    [[ "${QUIET}" -eq 0 ]] || return 0
     ui_section "📊" "${MSG_UI_SUMMARY}"
+    if [[ "${DRY_RUN}" -eq 1 ]]; then
+        printf '  %s%s %s%s\n' "$UI_CYAN" "$MSG_DRY_RUN_PREFIX" "$MSG_UI_SIMULATED_NOTE" "$UI_RESET"
+    fi
     printf '  %s %s\n' "$MSG_REPORT_CHECKED" "$TOTAL_CHECKED"
     printf '  %s%s %s%s\n' "$UI_GREEN" "$1" "$TOTAL_EXCLUDED" "$UI_RESET"
     printf '  %s %s\n' "$MSG_REPORT_ALREADY" "$TOTAL_ALREADY"
     printf '  %s%s %s%s\n' "$UI_DIM" "$MSG_REPORT_SKIPPED" "$TOTAL_SKIPPED" "$UI_RESET"
+    printf '  %s %s\n' "$MSG_REPORT_NOT_FOUND" "$TOTAL_NOT_FOUND"
     printf '  %s %s\n' "$MSG_REPORT_ERRORS" "$TOTAL_ERRORS"
     printf '  %s %s\n' "$MSG_REPORT_BLOCKED" "$TOTAL_BLOCKED"
     # Cumulative disk usage of the paths touched in this run (#45). The total is
@@ -250,9 +262,25 @@ ui_summary() {
     if [[ -n "${2:-}" ]]; then
         printf '  %s %s\n' "$MSG_REPORT_SIZE_TOTAL" "$2"
     fi
+    if [[ -n "${4:-}" ]]; then
+        printf '  %s%s %s%s\n' "$UI_GREEN" "$3" "$4" "$UI_RESET"
+    fi
     if [[ "${MODE}" = "uninstall" ]]; then
         printf '  %s %s\n' "$MSG_REPORT_REMOVED" "$TOTAL_REMOVED"
     fi
+    if [[ -n "${5:-}" ]]; then
+        printf '\n  %s📄 %s %s%s\n' "$UI_CYAN" "$MSG_REPORT_SAVED" "$5" "$UI_RESET"
+    fi
+    # Copy-pasteable command: a real path, shell-quoted (printf %q, Bash 3.2),
+    # or a placeholder-free example when no path was processed. Paths are
+    # absolute, so a leading "-" can never be read as an option.
+    local tip_arg
+    if [[ -n "${6:-}" ]]; then
+        tip_arg="$(printf '%q' "$6")"
+    else
+        tip_arg="\"${MSG_UI_VERIFY_EXAMPLE}\""
+    fi
+    printf '  %s💡 %s tmutil isexcluded %s%s\n' "$UI_DIM" "$MSG_UI_VERIFY_TIP" "$tip_arg" "$UI_RESET"
 }
 
 log_info() {
@@ -451,13 +479,95 @@ EOF
     RULE_SUMMARY="$new_summary"
 }
 
+# Size measurement only (never called by keep/exclusion/uninstall guards).
+# True (0) when measuring $1 could hit the WRONG directory because its raw or
+# resolved name holds a newline: `$(...)` strips a trailing newline, so an alias
+# to "small<LF>" resolves (in normalize_path) to the neighbouring "small" and its
+# size would be shown instead (#44 review). Such paths are never measured and
+# count as unmeasured. Returns 1 (safe) otherwise.
+#
+# Rule: a path that holds a symlink or ".." and whose physical resolution FAILS
+# is unsafe too — never fall back to measuring the raw path.
+#
+# Cheap by construction: a path without newline, without "." / ".." component
+# and with no symlink among its prefixes (the usual case) is decided with shell
+# builtins only — no subshell, no cd. Only otherwise are the components resolved
+# with an "x" sentinel and a separately tested `cd -P && pwd -P`. No memo:
+# process_path asks once per processed path and keeps the answer in
+# SIZE_UNSAFE_NOW, so it can never be stale for the next rule.
+SIZE_UNSAFE_NOW=0
+size_path_unsafe() {
+    local p="$1" rest part prefix="" slow=0 normalized="" physical out rc=1
+    case "$p" in
+        *$'\n'*) rc=0 ;;
+        *)
+            [[ "$p" = /* ]] || slow=1
+            rest="$p"
+            while [[ "$slow" -eq 0 ]]; do
+                part="${rest%%/*}"
+                case "$part" in
+                    ''|.) ;;
+                    ..) slow=1 ;;
+                    *)
+                        prefix="${prefix}/${part}"
+                        [[ -L "$prefix" ]] && slow=1
+                        ;;
+                esac
+                case "$rest" in
+                    */*) rest="${rest#*/}" ;;
+                    *) break ;;
+                esac
+            done
+            if [[ "$slow" -eq 1 ]]; then
+                rest="$p"
+                while :; do
+                    part="${rest%%/*}"
+                    case "$part" in
+                        ''|.) ;;
+                        ..) normalized="${normalized%/*}" ;;
+                        *) normalized="${normalized}/$part" ;;
+                    esac
+                    if [[ -d "${normalized:-/}" ]]; then
+                        # cd and pwd failures are propagated, not masked by the sentinel.
+                        out="$(cd -P -- "${normalized:-/}" 2>/dev/null && pwd -P && printf x)" || { rc=0; break; }
+                        physical="${out%x}"
+                        physical="${physical%$'\n'}"
+                        case "$physical" in
+                            *$'\n'*) rc=0; break ;;
+                        esac
+                        normalized="${physical%/}"
+                    fi
+                    case "$rest" in
+                        */*) rest="${rest#*/}" ;;
+                        *) break ;;
+                    esac
+                done
+            fi
+            ;;
+    esac
+    return "$rc"
+}
+
 # Track paths for optional du summary (dedupe; Bash 3.2 — no associative arrays)
 du_track_path() {
-    local p="$1" entry normalized retained=""
+    local p="$1"
     [[ -z "$p" || ! -e "$p" ]] && return 0
-    # Compare physical spellings: symlinked and `..`-relative duplicates must not
-    # inflate the total, and stored entries are normalized on the way in too.
+    # Size bookkeeping only: never record a name whose measurement would hit the
+    # wrong directory (#44).
+    if [[ "$SIZE_UNSAFE_NOW" -eq 1 ]]; then return 0; fi
+    DU_PATHS="$(path_set_add "$DU_PATHS" "$p")"
+}
+
+# Prints the newline-separated path set $1 with $2 merged in. Compare physical
+# spellings: symlinked and `..`-relative duplicates must not inflate a total,
+# and stored entries are normalized on the way in too. A path already covered
+# by a stored ancestor is not added; stored descendants of $2 are dropped.
+# Same logic as the former inline du_track_path (used only by it); it makes no
+# newline decision: du_track_path skips unsafe names first (size_path_unsafe).
+path_set_add() {
+    local set="$1" p="$2" entry normalized retained=""
     if ! p="$(normalize_path "$p")"; then
+        printf '%s' "$set"
         return 0
     fi
     while IFS= read -r entry; do
@@ -466,25 +576,201 @@ du_track_path() {
         if [[ -e "$entry" ]]; then
             normalized="$(normalize_path "$entry")" || normalized="$entry"
         fi
-        path_under "$p" "$normalized" && return 0
+        if path_under "$p" "$normalized"; then
+            printf '%s' "$set"
+            return 0
+        fi
         if ! path_under "$normalized" "$p"; then retained="${retained}${normalized}
 "; fi
     done <<EOF
-${DU_PATHS}
+${set}
 EOF
-    DU_PATHS="${retained}${p}"
+    printf '%s%s' "$retained" "$p"
+}
+
+# Paths newly excluded (or that would be, in dry-run/audit) by this run, for the
+# "space excluded" figure of the end-of-run summary and the report (#44); they
+# are recorded in the EXCL_FILE temporary file (see excl_track_path).
+EXCL_TOTAL_KB=0
+EXCL_MEASURED=0
+EXCL_UNKNOWN=0
+SPACE_EXCL_DISP=""
+
+EXCL_UNTRACKED=0
+# First newly excluded path and first processed existing path: the verification
+# tip of the banner shows a real, copy-pasteable command (#44).
+EXCL_FIRST_PATH=""
+TIP_PATH=""
+
+# Records $1 (already measured by path_size_column) for the space figure: one
+# "<normalized path><TAB><complete KiB or empty>" line appended to a temporary
+# file (split at the last tab, so tabs in names are safe). Nothing is
+# concatenated in a shell variable (that is quadratic in Bash 3.2) and no cd,
+# stat or cache lookup happens here; nesting is decided later, in one awk pass
+# (excl_space_compute). A path whose name is unsafe to measure (size_path_unsafe:
+# newline), without a normalized form, or holding the byte 0x01 (unsupported:
+# it is the awk/sort field separator) is counted as unmeasured instead.
+EXCL_FILE=""
+EXCL_FILE_FAILED=0
+EXCL_TRACKED=0
+excl_track_path() {
+    local p="$1" f=""
+    [[ -z "$p" || ! -e "$p" ]] && return 0
+    if [[ -z "$EXCL_FIRST_PATH" ]]; then EXCL_FIRST_PATH="$p"; fi
+    du_enabled || return 0
+    case "$PATH_SIZE_NP" in
+        *$'\001'*) EXCL_UNTRACKED=$((EXCL_UNTRACKED + 1)); return 0 ;;
+    esac
+    if [[ "$SIZE_UNSAFE_NOW" -eq 1 || -z "$PATH_SIZE_NP" || "$EXCL_FILE_FAILED" -eq 1 ]]; then
+        EXCL_UNTRACKED=$((EXCL_UNTRACKED + 1))
+        return 0
+    fi
+    if [[ -z "$EXCL_FILE" ]]; then
+        if f="$(mktemp "${TMPDIR:-/tmp}/tm_exc_space.XXXXXX" 2>/dev/null)"; then
+            EXCL_FILE="$f"
+            register_tmp_file "$EXCL_FILE"
+        else
+            EXCL_FILE_FAILED=1
+            EXCL_UNTRACKED=$((EXCL_UNTRACKED + 1))
+            return 0
+        fi
+    fi
+    if printf '%s\t%s\n' "$PATH_SIZE_NP" "$PATH_SIZE_KB" >> "$EXCL_FILE" 2>/dev/null; then
+        EXCL_TRACKED=$((EXCL_TRACKED + 1))
+    else
+        # A failed write can leave a fragment without its newline: the journal
+        # is no longer trustworthy, so stop writing and let the aggregation
+        # report everything as unmeasured.
+        EXCL_FILE_FAILED=1
+        EXCL_UNTRACKED=$((EXCL_UNTRACKED + 1))
+    fi
+}
+
+# Sets EXCL_TOTAL_KB / EXCL_MEASURED / EXCL_UNKNOWN from the EXCL_FILE records —
+# sizes already measured while each path was processed, never a fresh du (it can
+# take tens of seconds per tree). An entry is MEASURED when its size is complete,
+# UNMEASURED when du failed or was partial (non-zero exit, GNU and BSD alike);
+# unmeasured entries are counted in EXCL_UNKNOWN and never added.
+#
+# Semantics (display value only; no decision reads it):
+# - Entries nest by path PREFIX, with ASCII case folded (case-insensitive APFS:
+#   "Cache" / "cache/Child"); non-ASCII case is not folded. An ancestor boundary
+#   is a "/" ("foo" is not an ancestor of "foo-bar" or "foo bar").
+# - An entry is ignored when it lies under a MEASURED entry (that size already
+#   contains it), or — if itself unmeasured — under any unmeasured ancestor
+#   (already counted there). A measured descendant of an unmeasured ancestor is
+#   kept as a lower-bound contribution. Entries with the same folded path count
+#   once (measured if any of them is, with the larger size).
+# - Aliases / hard links between DIFFERENT paths are not detected: they are
+#   summed as separate paths. In apply mode a path inheriting an exclusion
+#   already set on its parent is not "newly excluded", so the order of
+#   application can change the figure.
+#
+# One pass: awk builds "<folded path>/<0x01><KiB>" keys, `LC_ALL=C sort` orders
+# them (an ancestor sorts right before its descendants), and a second awk walks
+# the sorted list with a stack of open ancestors. O(n log n), no shell loop.
+# Not meant for $() — it sets globals.
+excl_space_compute() {
+    local res="" total="" measured="" unknown=""
+    EXCL_TOTAL_KB=0
+    EXCL_MEASURED=0
+    EXCL_UNKNOWN="$EXCL_UNTRACKED"
+    if [[ "$EXCL_FILE_FAILED" -eq 1 ]]; then
+        # The journal may hold a truncated record: never read it, no false total.
+        EXCL_UNKNOWN=$((EXCL_TRACKED + EXCL_UNTRACKED))
+        return 0
+    fi
+    [[ -n "$EXCL_FILE" && "$EXCL_TRACKED" -gt 0 ]] || return 0
+    if res="$(LC_ALL=C awk '
+            {
+                line = $0
+                j = length(line)
+                while (j > 0 && substr(line, j, 1) != "\t") j--
+                if (j == 0) next
+                k = tolower(substr(line, 1, j - 1))
+                if (substr(k, length(k), 1) != "/") k = k "/"
+                printf "%s\001%s\n", k, substr(line, j + 1)
+            }' "$EXCL_FILE" | LC_ALL=C sort | LC_ALL=C awk '
+            function flush(   mc, uc) {
+                if (!have) return
+                while (sp > 0 && index(ckey, sk[sp]) != 1) sp--
+                mc = 0; uc = 0
+                if (sp > 0) { mc = smc[sp]; uc = suc[sp] }
+                if (mc > 0) { }
+                else if (cm) { total += ckb; meas++ }
+                else if (uc == 0) { unk++ }
+                sp++
+                sk[sp] = ckey
+                smc[sp] = mc + (cm ? 1 : 0)
+                suc[sp] = uc + (cm ? 0 : 1)
+            }
+            {
+                i = index($0, "\001")
+                key = substr($0, 1, i - 1)
+                kb = substr($0, i + 1)
+                m = (kb ~ /^[0-9]+$/)
+                if (have && key == ckey) {
+                    if (m) { if (!cm || kb + 0 > ckb + 0) ckb = kb + 0; cm = 1 }
+                    next
+                }
+                flush()
+                ckey = key; cm = m; ckb = m ? kb + 0 : 0; have = 1
+            }
+            END { flush(); printf "%.0f %d %d\n", total, meas, unk }')"; then
+        read -r total measured unknown <<< "$res"
+        case "${total}${measured}${unknown}" in
+            ''|*[!0-9]*) res="" ;;
+        esac
+    else
+        res=""
+    fi
+    if [[ -z "$res" ]]; then
+        # Aggregation failed: stay cautious, nothing measured.
+        EXCL_UNKNOWN=$((EXCL_UNTRACKED + EXCL_TRACKED))
+        return 0
+    fi
+    EXCL_TOTAL_KB="$total"
+    EXCL_MEASURED="$measured"
+    EXCL_UNKNOWN=$((EXCL_UNTRACKED + unknown))
+    return 0
+}
+
+# Sets SPACE_EXCL_DISP: the readable total, "≥ <total> (partial: N unmeasured)"
+# when some sizes are unknown, or "unknown" when none could be measured.
+# Empty when the figure does not apply (du disabled or uninstall mode).
+excl_space_display() {
+    SPACE_EXCL_DISP=""
+    du_enabled || return 0
+    [[ "${MODE}" != "uninstall" ]] || return 0
+    excl_space_compute
+    if [[ "$EXCL_UNKNOWN" -eq 0 ]]; then
+        SPACE_EXCL_DISP="$(format_size_kb "$EXCL_TOTAL_KB")"
+    elif [[ "$EXCL_MEASURED" -eq 0 ]]; then
+        SPACE_EXCL_DISP="${MSG_UI_SIZE_UNKNOWN}"
+    else
+        # Lower bound: truncated, never rounded up past the known total.
+        SPACE_EXCL_DISP="≥ $(format_size_kb "$EXCL_TOTAL_KB" floor) (${MSG_UI_SIZE_PARTIAL} ${EXCL_UNKNOWN})"
+    fi
+    return 0
 }
 
 # KiB on disk for $1. Permission-denied children (typical of /private/var/folders)
 # make BSD/GNU du exit non-zero even when a partial total was printed. Capture
 # du independently so set -euo pipefail cannot abort report generation (#18, #55).
+#
+# With a second argument ("mark"), a non-zero du exit that still printed a size
+# (unreadable children: the total is partial) appends "!" to the number so the
+# size cache can tell a complete measurement from a lower bound (#44).
 du_size_kb() {
-    local raw=""
-    raw="$(du -sk -- "$1" 2>/dev/null || true)"
+    local raw="" rc=0 kb
+    raw="$(du -sk -- "$1" 2>/dev/null)" || rc=$?
     [[ -z "$raw" ]] && return 0
-    awk '{print $1; exit}' <<EOF
+    kb="$(awk '{print $1; exit}' <<EOF
 ${raw}
 EOF
+)"
+    if [[ "$rc" -ne 0 && -n "${2:-}" && -n "$kb" ]]; then kb="${kb}!"; fi
+    printf '%s\n' "$kb"
 }
 
 # Per-path disk sizes are computed once, while the path is processed, and reused
@@ -500,24 +786,43 @@ du_enabled() {
 
 # Human-readable size from KiB (42K, 2.0M, 2.0G, 1.5T) — shared by the per-path
 # column and the report so both format identically (#45).
+#
+# With "floor" as second argument the value is truncated (never rounded up) to
+# one decimal: used for a lower bound ("≥ X") that must not exceed the known
+# total (2047K -> 1.9M, not 2.0M). The unit is still promoted at 1024.
 format_size_kb() {
-    awk -v k="$1" 'BEGIN {
+    # Rounding mode: 1023.95 (not 1024) so a value that rounds to 1024.0 at one
+    # decimal promotes to the next unit, never prints "1024.0M" (1048575K -> 1.0G).
+    awk -v k="$1" -v floor="${2:-}" 'function fmt(x, u) {
+            if (floor == "floor") { printf "%.1f%s", int(x * 10) / 10, u }
+            else { printf "%.1f%s", x, u }
+        }
+        BEGIN {
+        lim = (floor == "floor") ? 1024 : 1023.95
         if (k < 1024) { printf "%dK", k; exit }
         x = k / 1024.0
-        if (x < 1024) { printf "%.1fM", x; exit }
+        if (x < lim) { fmt(x, "M"); exit }
         x = x / 1024.0
-        if (x < 1024) { printf "%.1fG", x; exit }
+        if (x < lim) { fmt(x, "G"); exit }
         x = x / 1024.0
-        printf "%.1fT", x
+        fmt(x, "T")
     }'
 }
 
+# DU_SIZES lines are "<path>\t<KiB>[!]": the KiB never contains a tab, so each
+# line splits at its LAST tab and a path may itself contain tabs (#44 review).
+# A trailing "!" marks a partial measurement (du exited non-zero, e.g. on
+# unreadable children). Paths containing a newline cannot be stored in this
+# newline-delimited cache at all; callers skip them (see path_size_column).
+#
 # Record the KiB size of $1 (empty when unreadable). Overwrites an existing entry.
 du_size_record() {
-    local p="$1" kb="$2" entry ek found=0 retained=""
+    local p="$1" kb="$2" line entry ek found=0 retained=""
     [[ -z "$p" ]] && return 0
-    while IFS=$'\t' read -r entry ek; do
-        [[ -z "$entry" ]] && continue
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        entry="${line%$'\t'*}"
+        ek="${line##*$'\t'}"
         if [[ "$entry" = "$p" ]]; then found=1; ek="$kb"; fi
         retained="${retained}${entry}"$'\t'"${ek}"$'\n'
     done <<EOF
@@ -530,11 +835,13 @@ EOF
     return 0
 }
 
-# Echo the recorded KiB of $1; returns 1 when $1 has no recorded entry.
-du_size_lookup() {
-    local p="$1" entry kb
-    while IFS=$'\t' read -r entry kb; do
-        [[ -z "$entry" ]] && continue
+# Echo the raw recorded value of $1 (may end in "!"); returns 1 when absent.
+du_size_lookup_raw() {
+    local p="$1" line entry kb
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        entry="${line%$'\t'*}"
+        kb="${line##*$'\t'}"
         if [[ "$entry" = "$p" ]]; then
             printf '%s' "$kb"
             return 0
@@ -543,6 +850,21 @@ du_size_lookup() {
 ${DU_SIZES}
 EOF
     return 1
+}
+
+# Echo the recorded KiB of $1 (partial marker stripped, so partial sizes keep
+# showing as before, #55); returns 1 when $1 has no recorded entry.
+du_size_lookup() {
+    local raw
+    raw="$(du_size_lookup_raw "$1")" || return 1
+    printf '%s' "${raw%!}"
+}
+
+# True when the recorded size of $1 is only a lower bound (du exited non-zero).
+du_size_is_partial() {
+    local raw
+    raw="$(du_size_lookup_raw "$1")" || return 1
+    [[ "$raw" = *'!' ]]
 }
 
 # Cumulative disk usage (KiB) over the deduped DU_PATHS set, reusing recorded
@@ -573,18 +895,43 @@ EOF
 # when du is disabled (#45). Not meant to be captured with $() — it records the
 # KiB size in DU_SIZES as a side effect, which a subshell would discard.
 PATH_SIZE_COL=""
+# Normalized form of the last path measured (the cache key); read by excl_track_path.
+PATH_SIZE_NP=""
+# KiB of that path when its measurement is complete, "" when unreadable or partial
+# (du exited non-zero); read by excl_track_path so the space figure needs no
+# second lookup in the size cache.
+PATH_SIZE_KB=""
 path_size_column() {
     PATH_SIZE_COL=""
+    PATH_SIZE_NP=""
+    PATH_SIZE_KB=""
     du_enabled || return 0
     local p="$1" np="" szk=""
+    # A name that cannot be measured safely (newline, see size_path_unsafe) is
+    # unmeasured: no du at all (#44 review).
+    if [[ "$SIZE_UNSAFE_NOW" -eq 1 ]]; then
+        PATH_SIZE_COL="-"
+        return 0
+    fi
     if [[ -n "$p" && -e "$p" ]]; then
         if ! np="$(normalize_path "$p")"; then np="$p"; fi
+        PATH_SIZE_NP="$np"
         # Consult the cache before measuring: a repeated rule (same path twice)
         # must not walk the same tree again (#45).
         if ! szk="$(du_size_lookup "$np")"; then
-            szk="$(du_size_kb "$np")"
+            # "mark": remember a partial (du exited non-zero) measurement.
+            szk="$(du_size_kb "$np" mark)"
             du_size_record "$np" "$szk"
+            case "$szk" in
+                *'!') szk="${szk%!}" ;;
+                *) PATH_SIZE_KB="$szk" ;;
+            esac
+        elif ! du_size_is_partial "$np"; then
+            PATH_SIZE_KB="$szk"
         fi
+        case "$PATH_SIZE_KB" in
+            ''|*[!0-9]*) PATH_SIZE_KB="" ;;
+        esac
         case "$szk" in
             ''|*[!0-9]*) PATH_SIZE_COL="-" ;;
             *) PATH_SIZE_COL="$(format_size_kb "$szk")" ;;
@@ -1395,7 +1742,11 @@ process_path() {
         # leftover Time Machine records are cleaned and failures are reported.
         status=0
     fi
+    # One decision per processed path (no memo): used by the three size helpers.
+    SIZE_UNSAFE_NOW=0
+    if size_path_unsafe "$path"; then SIZE_UNSAFE_NOW=1; fi
     du_track_path "$path"
+    if [[ -z "$TIP_PATH" && -e "$path" ]]; then TIP_PATH="$path"; fi
     # Size computed once here and reused by the report; hidden when SKIP_DU=1.
     # path_size_column sets PATH_SIZE_COL (side effect) — never capture it with $().
     path_size_column "$path"
@@ -1421,14 +1772,17 @@ process_path() {
         add_report_line "OK    $path (already excluded)"
     elif [[ "$MODE" = report-only ]]; then
         TOTAL_EXCLUDED=$((TOTAL_EXCLUDED + 1))
+        excl_track_path "$path"
         log_path_result need "$path" "  $MSG_REPORT_NEED_EXCLUSION $(path_suffix "$size_col" "$path")"
         add_report_line "NEED  $path (not excluded)"
     elif [[ "$DRY_RUN" -eq 1 ]]; then
         TOTAL_EXCLUDED=$((TOTAL_EXCLUDED + 1))
+        excl_track_path "$path"
         log_path_result apply "$path" "  $MSG_DRY_RUN_PREFIX $MSG_APPLYING $(path_suffix "$size_col" "$path")"
         add_report_line "WOULD $path"
     elif tm_add_exclusion "$path"; then
         TOTAL_EXCLUDED=$((TOTAL_EXCLUDED + 1))
+        excl_track_path "$path"
         log_path_result apply "$path" "  $MSG_APPLYING $(path_suffix "$size_col" "$path")"
         add_report_line "ADD   $path"
     else
@@ -2198,6 +2552,7 @@ generate_report() {
     local dry_run_note=""
     local excluded_label="${MSG_REPORT_EXCLUDED}"
     local inv du_sec size_total_line size_total_disp tm_list out_path path_total path_dirs p szk sh total_k desk_copy raw_list tm_list_rc
+    local space_label banner_path report_saved=0 space_line="" tip_path=""
     local stdout_tty=0
     # Evaluated here, in the main shell: inside $(...) stdout is a pipe and
     # [[ -t 1 ]] would always be false.
@@ -2259,6 +2614,23 @@ Total (sum of du -sk, KiB): ${total_k}
         # total_k as the KiB line above.
         size_total_line="
 ${MSG_REPORT_SIZE_TOTAL} ${size_total_disp}"
+    fi
+
+    # Space of the newly excluded paths (#44), from the sizes recorded while the
+    # paths were processed. Computed once; the report counters and the
+    # interactive banner both print this exact string. Simulated in dry-run,
+    # "needing exclusion" in audit mode.
+    excl_space_display
+    space_label="${MSG_UI_SPACE_EXCLUDED}"
+    if [[ "${DRY_RUN}" -eq 1 ]]; then
+        space_label="${MSG_UI_SPACE_SIMULATED}"
+    elif [[ "${MODE}" = "report-only" ]]; then
+        space_label="${MSG_UI_SPACE_NEEDED}"
+    fi
+    if [[ -n "${SPACE_EXCL_DISP}" ]]; then
+        space_line="
+${space_label} ${SPACE_EXCL_DISP}"
+        size_total_line="${size_total_line}${space_line}"
     fi
 
     report="${MSG_REPORT_TITLE}
@@ -2336,19 +2708,34 @@ EOF
 ${MSG_REPORT_RULE_SUMMARY_EMPTY}"
     fi
 
+    # Write the report before the banner so the banner only advertises a file
+    # that really exists (#44).
+    out_path="$(resolve_report_out_path)"
+    if mkdir -p "$(dirname "${out_path}")" 2>/dev/null && printf '%s\n' "$report" > "${out_path}" 2>/dev/null; then
+        report_saved=1
+    fi
+
     if [[ "${UI}" -eq 1 ]]; then
-        ui_summary "$excluded_label" "$size_total_disp"
-    elif [[ "$VERBOSE" -eq 1 || "$QUIET" -eq 1 ]]; then
+        banner_path=""
+        if [[ "$report_saved" -eq 1 ]]; then banner_path="$out_path"; fi
+        tip_path="${EXCL_FIRST_PATH:-$TIP_PATH}"
+        ui_summary "$excluded_label" "$size_total_disp" "$space_label" "$SPACE_EXCL_DISP" "$banner_path" "$tip_path"
+    elif [[ "$QUIET" -eq 1 ]]; then
+        # --quiet stdout is unchanged from before #44: the new space line stays
+        # in the saved report file only.
+        printf '\n%s\n' "${report/"$space_line"/}"
+    elif [[ "$VERBOSE" -eq 1 ]]; then
         printf '\n%s\n' "$report"
     else
         printf '\n%s\n' "$console_report"
     fi
 
-    out_path="$(resolve_report_out_path)"
-
-    if mkdir -p "$(dirname "${out_path}")" 2>/dev/null && printf '%s\n' "$report" > "${out_path}" 2>/dev/null; then
-        log_info ""
-        log_info "${MSG_REPORT_SAVED} ${out_path}"
+    if [[ "$report_saved" -eq 1 ]]; then
+        # The interactive banner already shows the report path.
+        if [[ "${UI}" -eq 0 ]]; then
+            log_info ""
+            log_info "${MSG_REPORT_SAVED} ${out_path}"
+        fi
     else
         record_error "${MSG_ERROR_REPORT_WRITE} ${out_path}"
         # Keep the detailed results accessible if the compact view cannot link a file.
