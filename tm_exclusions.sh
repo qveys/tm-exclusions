@@ -1881,10 +1881,10 @@ report_columns() {
 
 # Wrap newline-separated names (stdin) into comma-separated lines no wider
 # than $1. Names are never split and the last item of each line carries no
-# trailing comma.
+# trailing comma. Only empty lines are dropped: a name made of blanks is kept.
 wrap_name_list() {
     awk -v width="$1" '
-        NF { names[++n] = $0 }
+        length($0) { names[++n] = $0 }
         END {
             line = ""
             for (i = 1; i <= n; i++) {
@@ -2093,7 +2093,7 @@ build_path_tools_inventory() {
     while IFS= read -r -d '' dir && IFS= read -r -d '' phys; do
         found=1
         names="$(list_dir_executables "$dir")"
-        count="$(printf '%s\n' "$names" | awk 'NF { n++ } END { print n + 0 }')"
+        count="$(printf '%s\n' "$names" | awk 'length($0) { n++ } END { print n + 0 }')"
         word="${MSG_INVENTORY_PATH_BINARIES}"
         [[ "$count" -eq 1 ]] && word="${MSG_INVENTORY_PATH_BINARY}"
         is_sys=0

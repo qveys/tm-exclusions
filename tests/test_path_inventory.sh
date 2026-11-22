@@ -23,24 +23,46 @@ export LANG=C LC_ALL=C
 export TM_EXCLUSIONS_SKIP_DU=1
 export TM_EXCLUSIONS_REPORT="$TEST_DIR/report"
 export TOOL_CALLS="$TEST_DIR/tool_calls"
+export TOOL_CALLS_ALL="$TEST_DIR/tool_calls_all"   # never truncated
 unset TM_EXCLUSIONS_SKIP_INVENTORY TM_EXCLUSIONS_EXTRA_CONF TM_EXCLUSIONS_REPORT_DESKTOP
 unset TM_EXCLUSIONS_LOCALES_DIR TM_EXCLUSIONS_DEFAULT_CONF
 mkdir -p "$HOME/.config/tm_exclusions" "$TEST_DIR/bin"
 : > "$TOOL_CALLS"
+: > "$TOOL_CALLS_ALL"
 
 # Stubs first in PATH. find and ls log every call and then run the real tool,
-# so a survey that shelled out to them is caught.
+# so a survey that shelled out to them is caught. A find on an applications
+# root (/Applications) is answered empty without touching the real tree: the
+# apps inventory is not under test here and must not walk or du real apps
+# (logged as "skipped-find", never "find").
 REAL_FIND="$(command -v find)"
 REAL_LS="$(command -v ls)"
 cat > "$TEST_DIR/bin/find" <<STUB
 #!/bin/sh
+for a in "\$@"; do
+    case "\$a" in
+        /Applications|/Applications/|*/Applications|*/Applications/)
+            printf 'skipped-find %s\n' "\$*" >> "\$TOOL_CALLS"
+            printf 'skipped-find %s\n' "\$*" >> "\$TOOL_CALLS_ALL"
+            exit 0
+            ;;
+    esac
+done
 printf 'find %s\n' "\$*" >> "\$TOOL_CALLS"
+printf 'find %s\n' "\$*" >> "\$TOOL_CALLS_ALL"
 exec "$REAL_FIND" "\$@"
 STUB
 cat > "$TEST_DIR/bin/ls" <<STUB
 #!/bin/sh
 printf 'ls %s\n' "\$*" >> "\$TOOL_CALLS"
 exec "$REAL_LS" "\$@"
+STUB
+# du is stubbed and logged: nothing under test may measure real disk usage.
+cat > "$TEST_DIR/bin/du" <<'STUB'
+#!/bin/sh
+printf 'du %s\n' "$*" >> "$TOOL_CALLS_ALL"
+for a in "$@"; do last="$a"; done
+printf '1K\t%s\n' "$last"
 STUB
 cat > "$TEST_DIR/bin/tmutil" <<'STUB'
 #!/bin/sh
@@ -249,6 +271,24 @@ assert_true "system directory declared through an alias is [sys]" \
 $inv_alias2
 EOF
 
+# A name made only of blanks is an executable like any other: counted (the
+# count must match the listing) and kept by the wrapping.
+WS="$TEST_DIR/ws_bin"
+mkdir -p "$WS"
+mkexe "$WS/   "
+mkexe "$WS/ok"
+assert_eq "   
+ok" "$(list_dir_executables "$WS")" "blank-only executable name is listed"
+PATH="$STUB_BIN:$WS:$BASE_PATH"
+inv_ws="$(build_path_tools_inventory 80)"
+PATH="$STUB_BIN:$BASE_PATH"
+assert_true "blank-only name is counted" grep -qxF "[dev] $WS (2 binaries):" <<EOF
+$inv_ws
+EOF
+assert_true "blank-only name is kept in the wrapped list" grep -qxF "     , ok" <<EOF
+$inv_ws
+EOF
+
 # Single-binary wording and the nothing-to-show notice.
 ONE="$TEST_DIR/one_bin"
 mkdir -p "$ONE"; mkexe "$ONE/solo"
@@ -386,6 +426,10 @@ assert_true "SKIP_INVENTORY=1 report has no PATH tools survey" not grep -qF "[de
 assert_true "SKIP_INVENTORY=1 report states it was skipped" \
     grep -q "skipped: TM_EXCLUSIONS_SKIP_INVENTORY=1" "$TM_EXCLUSIONS_REPORT"
 assert_eq "0" "$(tool_calls_on "$DEV")" "no find/ls on any PATH directory across the CLI runs"
+assert_eq "0" "$(grep -c '^find .*Applications' "$TOOL_CALLS_ALL" || true)" \
+    "no find ever reached a real applications root (whole run)"
+assert_eq "0" "$(grep -c '^du ' "$TOOL_CALLS_ALL" || true)" "no du call at all (no real application measured)"
+assert_true "the applications roots were intercepted (stub exercised)" grep -q '^skipped-find ' "$TOOL_CALLS_ALL"
 
 # A suite that ran nothing must never pass.
 if [[ "$TESTS_RUN" -le 0 ]]; then
