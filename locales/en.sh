@@ -10,6 +10,8 @@ declare_i18n_en() {
     MSG_UI_DISCOVERY="Discovering caches and disk images…"
     MSG_UI_REPORT="Preparing the detailed report…"
     MSG_UI_INVENTORY="Inventory"
+    MSG_INVENTORY_APPS="Installed applications"
+    MSG_INVENTORY_APPS_NONE="no .app bundles found in /Applications or ~/Applications"
     MSG_HELP_USAGE="Usage: ${PROGRAM_NAME} [OPTIONS]"
     MSG_HELP_DESC="macOS Time Machine exclusion manager for developer machines."
     MSG_HELP_MODES="Modes:"
