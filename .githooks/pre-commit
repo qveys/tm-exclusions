@@ -8,10 +8,20 @@
 #   * staged locales/*.sh without the sibling locale -> non-blocking reminder
 #                      pointing at `make check-i18n`.
 #
+# The checks run on the STAGED content (the index), not on the working tree:
+# the staged blobs are exported to a temporary directory with their relative
+# paths and checked there, so what is committed is what was linted (a partially
+# staged file is judged on its staged part). Files sourced by a checked script
+# are resolved from the script's directory, then from the working tree
+# (`shellcheck -P SCRIPTDIR -P <repo>`).
+#
 # Exit status: 1 when ShellCheck / bash -n / check-conf reports a problem
 # (the commit is blocked), 0 otherwise. A missing `shellcheck` only warns.
-# Bypass once with `git commit --no-verify`; disable for good with
-# `git config --unset core.hooksPath`.
+#
+# Skipping: `git commit --no-verify` bypasses this hook for one commit. The
+# hook stays active as long as core.hooksPath is `.githooks`, and ANY `make`
+# invocation (even `make help`) sets it back unless TM_EXCLUSIONS_NO_HOOKS=1 is
+# exported; see CONTRIBUTING.md ("Pre-commit checks") for the exact procedure.
 #
 # Bash 3.2+ compatible (macOS stock bash); no GNU/BSD-only tool options.
 
@@ -30,35 +40,67 @@ if ! git diff --cached --name-only --diff-filter=ACMR -z > "$TMP/staged"; then
   exit 1
 fi
 
+# Sets KIND to sh | locale | conf, or empty for files this hook ignores.
+classify() {
+  case "$1" in
+    locales/*.sh) KIND="locale" ;;
+    *.sh) KIND="sh" ;;
+    *.conf) KIND="conf" ;;
+    *) KIND="" ;;
+  esac
+}
+
+# Pass 1: pick the relevant staged paths and export their STAGED content.
+IDX="$TMP/index"
+mkdir -p "$IDX"
+RELEVANT=0
+: > "$TMP/relevant"
+while IFS= read -r -d '' f; do
+  classify "$f"
+  if [ -n "$KIND" ]; then
+    printf '%s\0' "$f" >> "$TMP/relevant"
+    RELEVANT=$((RELEVANT + 1))
+  fi
+done < "$TMP/staged"
+
+[ "$RELEVANT" -gt 0 ] || exit 0
+
+if ! git checkout-index -z --stdin --prefix="$IDX/" < "$TMP/relevant"; then
+  printf 'pre-commit: could not export the staged content.\n' >&2
+  exit 1
+fi
+
+# Pass 2: classify what was really exported (regular files only; symlinks,
+# submodules and the like are ignored).
 SH_FILES=()
 LOCALE_FILES=()
 CONF_FILES=()
-HAS_LOCALE_STAGED=0
 while IFS= read -r -d '' f; do
-  [ -f "$f" ] || continue
-  case "$f" in
-    locales/*.sh)
-      LOCALE_FILES+=("$f")
-      HAS_LOCALE_STAGED=1
-      ;;
-    *.sh) SH_FILES+=("$f") ;;
-    *.conf) CONF_FILES+=("$f") ;;
+  [ -f "$IDX/$f" ] && [ ! -L "$IDX/$f" ] || continue
+  classify "$f"
+  case "$KIND" in
+    locale) LOCALE_FILES+=("$f") ;;
+    sh) SH_FILES+=("$f") ;;
+    conf) CONF_FILES+=("$f") ;;
   esac
-done < "$TMP/staged"
+done < "$TMP/relevant"
 
 STATUS=0
 
 # --- ShellCheck / bash -n ----------------------------------------------------
 if [ "${#SH_FILES[@]}" -gt 0 ]; then
   if command -v shellcheck >/dev/null 2>&1; then
+    SC_RC=()
+    # The exported copies live outside the repository: keep a repo rcfile.
+    [ -f "$REPO/.shellcheckrc" ] && SC_RC=(--rcfile "$REPO/.shellcheckrc")
     for f in "${SH_FILES[@]}"; do
       # Mirror `make lint`: POSIX-sh shebang -> -s sh, everything else -s bash.
-      first=$(head -n 1 < "$f" 2>/dev/null | tr -d '\r')
+      first=$(head -n 1 < "$IDX/$f" 2>/dev/null | tr -d '\r')
       case "$first" in
         '#!/bin/sh'*|'#!/usr/bin/env sh'*|'#! /bin/sh'*) dialect="sh" ;;
         *) dialect="bash" ;;
       esac
-      if ! shellcheck -x -s "$dialect" -- "$f"; then
+      if ! (cd "$IDX" && shellcheck -x -s "$dialect" -P SCRIPTDIR -P "$REPO" ${SC_RC[@]+"${SC_RC[@]}"} -- "$f"); then
         printf 'pre-commit: ShellCheck failed for %s\n' "$f" >&2
         STATUS=1
       fi
@@ -70,7 +112,7 @@ if [ "${#SH_FILES[@]}" -gt 0 ]; then
 fi
 
 for f in ${LOCALE_FILES[@]+"${LOCALE_FILES[@]}"}; do
-  if ! bash -n "$f"; then
+  if ! (cd "$IDX" && bash -n "$f"); then
     printf 'pre-commit: syntax error in %s\n' "$f" >&2
     STATUS=1
   fi
@@ -78,8 +120,8 @@ done
 
 # --- Config syntax -----------------------------------------------------------
 if [ "${#CONF_FILES[@]}" -gt 0 ]; then
-  if [ -f scripts/check-conf.sh ]; then
-    if ! bash scripts/check-conf.sh "${CONF_FILES[@]}"; then
+  if [ -f "$REPO/scripts/check-conf.sh" ]; then
+    if ! (cd "$IDX" && bash "$REPO/scripts/check-conf.sh" "${CONF_FILES[@]}"); then
       printf 'pre-commit: config validation failed (see errors above).\n' >&2
       STATUS=1
     fi
@@ -89,7 +131,7 @@ if [ "${#CONF_FILES[@]}" -gt 0 ]; then
 fi
 
 # --- Locale sync reminder (never blocks) ------------------------------------
-if [ "$HAS_LOCALE_STAGED" -eq 1 ]; then
+if [ "${#LOCALE_FILES[@]}" -gt 0 ]; then
   MISSING=""
   while IFS= read -r tracked; do
     case "$tracked" in

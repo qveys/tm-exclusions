@@ -105,6 +105,10 @@ out_has() {
     return 1
 }
 # shellcheck disable=SC2329
+sc_called() { # sc_called <dialect> <file>: shellcheck was run on <file> with -x -s <dialect>
+    grep -Eq -- "^ARGS: -x -s $1 -P SCRIPTDIR -P .* -- $2\$" "$STUB_LOG"
+}
+# shellcheck disable=SC2329
 log_has() { grep -Fq -- "$1" "$STUB_LOG"; }
 
 # Create a repo with the hook, check-conf and two locale files committed.
@@ -147,7 +151,7 @@ printf '%s' "$CLEAN_SH" > "${repo}/new.sh"
 stage "$repo" new.sh
 run_hook "$repo" "${repo}/.githooks/pre-commit" "$STUB_PATH"
 assert_eq 0 "$HOOK_RC" "clean staged .sh: exit 0"
-assert_true "clean staged .sh: shellcheck called with -x -s bash" log_has "ARGS: -x -s bash -- new.sh"
+assert_true "clean staged .sh: shellcheck called with -x -s bash" sc_called bash "new.sh"
 
 repo="$(new_repo)"
 printf '%s' "$BAD_SH" > "${repo}/new.sh"
@@ -160,7 +164,7 @@ repo="$(new_repo)"
 printf '#!/bin/sh\necho posix\n' > "${repo}/posix.sh"
 stage "$repo" posix.sh
 run_hook "$repo" "${repo}/.githooks/pre-commit" "$STUB_PATH"
-assert_true "POSIX-sh shebang script: shellcheck called with -s sh" log_has "ARGS: -x -s sh -- posix.sh"
+assert_true "POSIX-sh shebang script: shellcheck called with -s sh" sc_called sh "posix.sh"
 
 repo="$(new_repo)"
 printf '%s' "$BAD_SH" > "${repo}/bad.sh"
@@ -187,7 +191,7 @@ repo="$(new_repo)"
 (cd "$repo" && git mv ok.sh renamed.sh)
 run_hook "$repo" "${repo}/.githooks/pre-commit" "$STUB_PATH"
 assert_eq 0 "$HOOK_RC" "staged rename: exit 0"
-assert_true "staged rename: new name is checked" log_has "ARGS: -x -s bash -- renamed.sh"
+assert_true "staged rename: new name is checked" sc_called bash "renamed.sh"
 
 repo="$(new_repo)"
 printf '%s' "$CLEAN_SH" > "${repo}/my script.sh"
@@ -195,8 +199,8 @@ printf '%s' "$BAD_SH" > "${repo}/-dash.sh"
 stage "$repo" "my script.sh" "-dash.sh"
 run_hook "$repo" "${repo}/.githooks/pre-commit" "$STUB_PATH"
 assert_eq 1 "$HOOK_RC" "file names with a space / leading dash handled (bad one fails)"
-assert_true "name with a space reaches shellcheck intact" log_has "ARGS: -x -s bash -- my script.sh"
-assert_true "leading-dash name reaches shellcheck after --" log_has "ARGS: -x -s bash -- -dash.sh"
+assert_true "name with a space reaches shellcheck intact" sc_called bash "my script.sh"
+assert_true "leading-dash name reaches shellcheck after --" sc_called bash "-dash.sh"
 assert_true "every checked file exists for shellcheck" not log_has "EXISTS: no"
 
 repo="$(new_repo)"
@@ -268,6 +272,68 @@ run_hook "$repo" "${repo}/.githooks/pre-commit" "$STUB_PATH"
 assert_eq 1 "$HOOK_RC" "staged locale with a syntax error: exit 1 (bash -n)"
 
 echo ""
+echo "--- Staged content, not the working tree (stub shellcheck) ---"
+
+# Index clean, working tree dirty: the commit would contain the clean blob.
+repo="$(new_repo)"
+printf '%s' "$CLEAN_SH" > "${repo}/new.sh"
+stage "$repo" new.sh
+printf '%s' "$BAD_SH" > "${repo}/new.sh"
+run_hook "$repo" "${repo}/.githooks/pre-commit" "$STUB_PATH"
+assert_eq 0 "$HOOK_RC" "clean index + dirty working tree: exit 0 (staged blob is clean)"
+
+# Index dirty, working tree fixed: the commit would contain the bad blob.
+repo="$(new_repo)"
+printf '%s' "$BAD_SH" > "${repo}/new.sh"
+stage "$repo" new.sh
+printf '%s' "$CLEAN_SH" > "${repo}/new.sh"
+run_hook "$repo" "${repo}/.githooks/pre-commit" "$STUB_PATH"
+assert_eq 1 "$HOOK_RC" "dirty index + fixed working tree: exit 1 (staged blob is bad)"
+assert_true "dirty index: message names the file" out_has "ShellCheck failed for new.sh"
+
+# Staged file removed from the working tree afterwards: still checked.
+repo="$(new_repo)"
+printf '%s' "$BAD_SH" > "${repo}/new.sh"
+stage "$repo" new.sh
+rm -f "${repo}/new.sh"
+run_hook "$repo" "${repo}/.githooks/pre-commit" "$STUB_PATH"
+assert_eq 1 "$HOOK_RC" "staged .sh deleted from the working tree is still checked from the index"
+
+# Same for config files and locale tables.
+repo="$(new_repo)"
+mkdir -p "${repo}/config"
+printf '%s' "$BAD_CONF" > "${repo}/config/x.conf"
+stage "$repo" config/x.conf
+printf '%s' "$GOOD_CONF" > "${repo}/config/x.conf"
+run_hook "$repo" "${repo}/.githooks/pre-commit" "$STUB_PATH"
+assert_eq 1 "$HOOK_RC" "dirty staged .conf + fixed working tree: exit 1"
+
+repo="$(new_repo)"
+mkdir -p "${repo}/config"
+printf '%s' "$GOOD_CONF" > "${repo}/config/x.conf"
+stage "$repo" config/x.conf
+printf '%s' "$BAD_CONF" > "${repo}/config/x.conf"
+run_hook "$repo" "${repo}/.githooks/pre-commit" "$STUB_PATH"
+assert_eq 0 "$HOOK_RC" "valid staged .conf + dirty working tree: exit 0"
+
+repo="$(new_repo)"
+printf 'MSG_A="unterminated\n' > "${repo}/locales/en.sh"
+printf 'MSG_A="a"\n' > "${repo}/locales/fr.sh"
+stage "$repo" locales/en.sh locales/fr.sh
+printf 'MSG_A="a"\n' > "${repo}/locales/en.sh"
+run_hook "$repo" "${repo}/.githooks/pre-commit" "$STUB_PATH"
+assert_eq 1 "$HOOK_RC" "staged locale with a syntax error + fixed working tree: exit 1"
+
+# Partially staged file via a real `git commit -a` (alternate index file).
+repo="$(new_repo)"
+git -C "$repo" config core.hooksPath .githooks
+printf '%s' "$BAD_SH" > "${repo}/ok.sh"
+commit_rc=0
+(cd "$repo" && PATH="$STUB_PATH" git commit -q -a -m "bad via -a" >/dev/null 2>&1) || commit_rc=$?
+assert_eq 1 "$commit_rc" "git commit -a: modified tracked bad .sh is checked and blocks"
+assert_eq "init" "$(git -C "$repo" log -1 --format=%s)" "git commit -a: HEAD untouched after the block"
+
+echo ""
 echo "--- Nothing relevant staged ---"
 
 repo="$(new_repo)"
@@ -303,7 +369,7 @@ printf '%s' "$BAD_SH" > "${repo}/new.sh"
 stage "$repo" new.sh
 run_hook "${repo}/sub/dir" "${repo}/.githooks/pre-commit" "$STUB_PATH"
 assert_eq 1 "$HOOK_RC" "run from a repo subdirectory: still finds staged files"
-assert_true "subdirectory run: path is repo-root relative" log_has "ARGS: -x -s bash -- new.sh"
+assert_true "subdirectory run: path is repo-root relative" sc_called bash "new.sh"
 
 repo="$(new_repo)"
 WT="${repo}-wt"
@@ -313,7 +379,7 @@ printf '%s' "$BAD_SH" > "${WT}/new.sh"
 stage "$WT" new.sh
 run_hook "${WT}/sub/dir" "${WT}/.githooks/pre-commit" "$STUB_PATH"
 assert_eq 1 "$HOOK_RC" "linked worktree, run from a subdirectory: blocks bad .sh"
-assert_true "worktree: staged file reached shellcheck" log_has "ARGS: -x -s bash -- new.sh"
+assert_true "worktree: staged file reached shellcheck" sc_called bash "new.sh"
 
 echo ""
 echo "--- Through a real 'git commit' (core.hooksPath) ---"
@@ -332,6 +398,92 @@ assert_eq 0 "$commit_rc" "git commit --no-verify bypasses the hook"
 assert_eq "add bad script" "$(git -C "$repo" log -1 --format=%s)" "--no-verify commit was created"
 
 echo ""
+echo "--- make bootstrap / make setup (core.hooksPath) ---"
+
+# A throwaway repo carrying the real Makefile and .githooks directory.
+new_make_repo() {
+    local repo
+    repo="$(mktemp -d "${WORK}/mk.XXXXXX")"
+    git init -q "$repo" 2>/dev/null
+    cp "${ROOT}/Makefile" "${repo}/Makefile"
+    cp -R "${ROOT}/.githooks" "${repo}/.githooks"
+    printf '%s' "$repo"
+}
+
+# Run `make <target>` and capture only stderr in MK_ERR.
+# Usage: run_make <repo> [VAR=value ...] <target>
+MK_ERR=""
+run_make() {
+    local repo="$1"
+    shift
+    MK_ERR="$(cd "$repo" && PATH="$ORIG_PATH" make "$@" 2>&1 >/dev/null)" || true
+}
+# shellcheck disable=SC2329
+mk_err_has() {
+    case "$MK_ERR" in *"$1"*) return 0 ;; esac
+    return 1
+}
+hooks_path() { git -C "$1" config --local --get core.hooksPath 2>/dev/null || true; }
+
+if PATH="$ORIG_PATH" command -v make >/dev/null 2>&1; then
+    # (1) A different local value is reported, then replaced; second pass is silent.
+    mk="$(new_make_repo)"
+    git -C "$mk" config core.hooksPath /tmp/custom-hooks-before
+    run_make "$mk" help
+    assert_eq ".githooks" "$(hooks_path "$mk")" "make: different local core.hooksPath is replaced by .githooks"
+    assert_true "make: the previous value is reported on stderr" mk_err_has "/tmp/custom-hooks-before"
+    run_make "$mk" help
+    assert_true "make: second invocation is silent (idempotent)" test -z "$MK_ERR"
+    run_make "$mk" setup
+    assert_true "make setup: silent once core.hooksPath is .githooks" test -z "$MK_ERR"
+    assert_eq ".githooks" "$(hooks_path "$mk")" "make setup: core.hooksPath stays .githooks"
+
+    # (2) First bootstrap of a fresh repo is silent too.
+    mk="$(new_make_repo)"
+    run_make "$mk" help
+    assert_true "make: fresh repo bootstrap is silent" test -z "$MK_ERR"
+    assert_eq ".githooks" "$(hooks_path "$mk")" "make: fresh repo gets core.hooksPath = .githooks"
+
+    # (3) The global configuration is never touched, and does not trigger a report.
+    mk="$(new_make_repo)"
+    printf '[core]\n\thooksPath = /global/hooks\n' > "$GIT_CONFIG_GLOBAL"
+    cp "$GIT_CONFIG_GLOBAL" "${WORK}/gitconfig.before"
+    run_make "$mk" help
+    assert_true "make: global config file left byte-identical" cmp -s "$GIT_CONFIG_GLOBAL" "${WORK}/gitconfig.before"
+    assert_eq ".githooks" "$(hooks_path "$mk")" "make: local core.hooksPath set despite a global value"
+    assert_true "make: a global value is not reported as a replaced one" test -z "$MK_ERR"
+    : > "$GIT_CONFIG_GLOBAL"
+
+    # (4) Any make call re-enables the hooks after an unset (documented limit),
+    #     unless TM_EXCLUSIONS_NO_HOOKS=1 skips the bootstrap.
+    mk="$(new_make_repo)"
+    run_make "$mk" help
+    git -C "$mk" config --local --unset core.hooksPath
+    run_make "$mk" help
+    assert_eq ".githooks" "$(hooks_path "$mk")" "unset + any make call: core.hooksPath comes back (not a permanent opt-out)"
+    git -C "$mk" config --local --unset core.hooksPath
+    run_make "$mk" TM_EXCLUSIONS_NO_HOOKS=1 help
+    assert_eq "" "$(hooks_path "$mk")" "TM_EXCLUSIONS_NO_HOOKS=1 make: bootstrap skipped"
+    run_make "$mk" TM_EXCLUSIONS_NO_HOOKS=1 setup
+    assert_eq ".githooks" "$(hooks_path "$mk")" "explicit make setup still installs the hooks under TM_EXCLUSIONS_NO_HOOKS=1"
+else
+    TESTS_RUN=$((TESTS_RUN + 1))
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b make is not installed: the bootstrap scenarios cannot run\n' "$RED" "$NC"
+fi
+
+echo ""
+echo "--- Documentation of the opt-out limits ---"
+for doc in README.md CONTRIBUTING.md CHANGELOG.md; do
+    assert_file_lacks_regex "${ROOT}/${doc}" 'disable (it )?for good' "${doc}: no 'disable for good' claim"
+done
+for doc in README.md CONTRIBUTING.md CHANGELOG.md Makefile .githooks/pre-commit; do
+    assert_file_contains "${ROOT}/${doc}" "TM_EXCLUSIONS_NO_HOOKS" "${doc}: documents the make-bootstrap limit and opt-out variable"
+done
+assert_file_lacks_regex "${ROOT}/.githooks/pre-commit" 'disable for good' "pre-commit header: no 'disable for good' claim"
+assert_file_lacks_regex "${ROOT}/Makefile" 'disable: git config --unset' "make setup message: no unset-as-disable claim"
+
+echo ""
 echo "--- Real ShellCheck (when installed) ---"
 
 if PATH="$ORIG_PATH" command -v shellcheck >/dev/null 2>&1; then
@@ -348,12 +500,40 @@ if PATH="$ORIG_PATH" command -v shellcheck >/dev/null 2>&1; then
     run_hook "$repo" "${repo}/.githooks/pre-commit" "$ORIG_PATH"
     assert_eq 1 "$HOOK_RC" "real shellcheck: unquoted variable blocks the commit"
     assert_true "real shellcheck: diagnostic is shown" out_has "SC2086"
+
+    # Staged content vs working tree, with the real ShellCheck (SC2086).
+    repo="$(new_repo)"
+    # shellcheck disable=SC2016
+    printf '#!/usr/bin/env bash\necho "$1"\n' > "${repo}/new.sh"
+    stage "$repo" new.sh
+    # shellcheck disable=SC2016
+    printf '#!/usr/bin/env bash\necho $1\n' > "${repo}/new.sh"
+    run_hook "$repo" "${repo}/.githooks/pre-commit" "$ORIG_PATH"
+    assert_eq 0 "$HOOK_RC" "real shellcheck: clean index + dirty working tree passes"
+
+    repo="$(new_repo)"
+    # shellcheck disable=SC2016
+    printf '#!/usr/bin/env bash\necho $1\n' > "${repo}/new.sh"
+    stage "$repo" new.sh
+    # shellcheck disable=SC2016
+    printf '#!/usr/bin/env bash\necho "$1"\n' > "${repo}/new.sh"
+    run_hook "$repo" "${repo}/.githooks/pre-commit" "$ORIG_PATH"
+    assert_eq 1 "$HOOK_RC" "real shellcheck: dirty index + fixed working tree blocks"
+    assert_true "real shellcheck: SC2086 reported for the staged blob" out_has "SC2086"
+
+    # A staged script sourcing a sibling file that is not staged (working tree).
+    repo="$(new_repo)"
+    printf 'helper() { echo helper; }\n' > "${repo}/lib.sh"
+    printf '#!/usr/bin/env bash\n# shellcheck source=lib.sh\nsource ./lib.sh\nhelper\n' > "${repo}/uses-lib.sh"
+    stage "$repo" uses-lib.sh
+    run_hook "$repo" "${repo}/.githooks/pre-commit" "$ORIG_PATH"
+    assert_eq 0 "$HOOK_RC" "real shellcheck: sourced non-staged file still resolves (-x)"
 else
     echo "  SKIP real ShellCheck scenarios (shellcheck not installed; stubbed scenarios above still ran)"
 fi
 
-if [[ "$TESTS_RUN" -lt 40 ]]; then
-    printf "${RED}  FAIL${NC} suite ran only %d assertions (expected at least 40)\n" "$TESTS_RUN"
+if [[ "$TESTS_RUN" -lt 70 ]]; then
+    printf "${RED}  FAIL${NC} suite ran only %d assertions (expected at least 70)\n" "$TESTS_RUN"
     TESTS_FAILED=$((TESTS_FAILED + 1))
 fi
 

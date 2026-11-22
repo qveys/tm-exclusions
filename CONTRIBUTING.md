@@ -22,7 +22,9 @@ See [`AGENTS.md`](AGENTS.md) for the full architecture, build commands, and Bash
 
 ## Pre-commit checks
 
-`make setup` also activates the [`pre-commit`](.githooks/pre-commit) hook: staged `.sh` files are checked with ShellCheck, staged `.conf` files with `scripts/check-conf.sh`, and editing one locale file without the other prints a reminder (`make check-i18n`). It only inspects staged files, so it is fast; `make check` remains the full gate. Skip it once with `git commit --no-verify`; disable it with `git config --unset core.hooksPath`.
+`make setup` also activates the [`pre-commit`](.githooks/pre-commit) hook: staged `.sh` files are checked with ShellCheck, staged `.conf` files with `scripts/check-conf.sh`, and editing one locale file without the other prints a reminder (`make check-i18n`). It only inspects staged files (their **staged content**, so a partially staged file is judged on what will be committed), so it is fast; `make check` remains the full gate.
+
+Skip it for one commit with `git commit --no-verify`. There is no one-line permanent opt-out: any `make` invocation (even `make help`) sets `core.hooksPath` back to `.githooks` — reporting on stderr a different local value it replaces — and the fallback hooks installed by `make setup` in `.git/hooks` restore it on the next commit, checkout or merge, so `git config --unset core.hooksPath` only lasts until then. `TM_EXCLUSIONS_NO_HOOKS=1 make …` skips the automatic `make` bootstrap (an explicit `make setup` still installs the hooks); to disable the hooks for a clone, unset `core.hooksPath`, export `TM_EXCLUSIONS_NO_HOOKS=1` and delete the fallbacks in `$(git rev-parse --git-common-dir)/hooks`.
 
 ## Commit style
 

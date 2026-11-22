@@ -57,14 +57,20 @@ OSASCRIPT_OR_DIE = \
 
 # Auto-bootstrap the versioned hooks path on every `make` invocation so the
 # local Conventional Commit hooks are active without requiring manual setup.
-_ := $(shell git config core.hooksPath .githooks 2>/dev/null)
+# A different local core.hooksPath is reported (stderr) before being replaced;
+# only the repository-local config is read and written, never the global one.
+# Opt out of this bootstrap with TM_EXCLUSIONS_NO_HOOKS=1 (explicit `make setup`
+# still installs the hooks).
+ifndef TM_EXCLUSIONS_NO_HOOKS
+_ := $(shell prev="$$(git config --local --get core.hooksPath 2>/dev/null)"; \
+  if [ -n "$$prev" ] && [ "$$prev" != ".githooks" ]; then \
+    echo "make: core.hooksPath was '$$prev'; switching to .githooks (restore: git config core.hooksPath '$$prev')." >&2; \
+  fi; \
+  git config core.hooksPath .githooks 2>/dev/null)
+endif
 
 setup: ## Explicitly install local Git hooks (also runs automatically on any 'make' invocation)
-	@prev="$$(git config --get core.hooksPath 2>/dev/null || true)"; \
-	if [ -n "$$prev" ] && [ "$$prev" != ".githooks" ]; then \
-	  echo "Note: core.hooksPath was '$$prev'; switching to .githooks (previous value: $$prev)." >&2; \
-	fi; \
-	git config core.hooksPath .githooks
+	@git config core.hooksPath .githooks
 	@set -e; \
 	HOOKS_DIR=$$(git rev-parse --git-common-dir)/hooks; \
 	mkdir -p "$$HOOKS_DIR"; \
@@ -72,7 +78,7 @@ setup: ## Explicitly install local Git hooks (also runs automatically on any 'ma
 	install -m 755 .githooks/prepare-commit-msg-fallback "$$HOOKS_DIR/prepare-commit-msg"; \
 	install -m 755 .githooks/post-checkout-fallback "$$HOOKS_DIR/post-checkout"; \
 	install -m 755 .githooks/post-merge-fallback "$$HOOKS_DIR/post-merge"
-	@echo "Git hooks installed (pre-commit, commit-msg, prepare-commit-msg, post-checkout, post-merge). Conventional Commits are enforced and staged .sh/.conf files are checked on every commit (bypass once: git commit --no-verify; disable: git config --unset core.hooksPath)."
+	@echo "Git hooks installed (pre-commit, commit-msg, prepare-commit-msg, post-checkout, post-merge). Conventional Commits are enforced and staged .sh/.conf files are checked on every commit (skip once: git commit --no-verify; note: any later 'make' re-enables core.hooksPath unless TM_EXCLUSIONS_NO_HOOKS=1 is exported — see CONTRIBUTING.md)."
 
 check-hooks: ## Verify that the local Git hooks are active; exit 1 if not
 	@HOOKS_PATH=$$(git config core.hooksPath 2>/dev/null); \
