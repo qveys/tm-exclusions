@@ -11,7 +11,8 @@
 # exits non-zero without printing any FAIL line (crash under `set -e`, syntax
 # error, ...) is reported as failed with the tail of its output.
 #
-# Exit status: 0 when every suite passed, 1 otherwise.
+# Exit status: 0 when every suite passed, 1 otherwise (including when no suite
+# was found: nothing verified is not a pass).
 # Bash 3.2 compatible.
 
 set -uo pipefail
@@ -39,22 +40,39 @@ failed_suites=0
 details="$WORK/details"
 : > "$details"
 
-# Print each FAIL line of a suite log together with its diagnostic context:
-# the non-result lines printed since the previous result/section line, plus
-# the indented lines that follow it.
+# Print each FAIL line of a suite log with the raw output around it: every
+# non-result line since the previous PASS/FAIL line (at most BEFORE_MAX, e.g. the
+# `cat` run_cli does before its FAIL line) and every one up to the next
+# PASS/FAIL line (at most AFTER_MAX, e.g. the `tail -n 40` of assert_file_contains
+# or the continuation lines of a multi-line "Output was:"). Each log line is
+# printed once, in order. Suite section banners and the final totals box are
+# dropped; blank lines and a bare `---` from real output are kept.
+BEFORE_MAX=20
+AFTER_MAX=40
 extract_failures() {
-    awk '
-        /^  PASS / { buf = ""; after = 0; next }
+    awk -v bmax="$BEFORE_MAX" -v amax="$AFTER_MAX" '
+        /^  PASS / { buf = ""; nbuf = 0; after = 0; next }
         /^  FAIL / {
-            if (buf != "") printf "%s", buf
+            if (nbuf > 0) printf "%s", buf
             print
-            buf = ""; after = 1; next
+            buf = ""; nbuf = 0; after = 1; nafter = 0; next
         }
-        /^$/ || /^---/ || /^====/ { buf = ""; after = 0; next }
-        after && /^    / { print; next }
-        { after = 0; buf = buf $0 "\n" }
+        /^--- .* ---$/ || /^=+$/ || /^Tests run:/ { next }
+        after && nafter < amax { print; nafter++; next }
+        {
+            buf = buf $0 "\n"; nbuf++
+            if (nbuf > bmax) { sub(/^[^\n]*\n/, "", buf); nbuf-- }
+        }
     ' "$1"
 }
+
+nsuites=${#suites[@]}
+# Nothing to run (e.g. tests/ holds only the helper): fail loudly rather than
+# report a green "0 failed" for a run that verified nothing.
+if [[ "$nsuites" -eq 0 ]]; then
+    printf 'FAILED: 0 total, 0 passed, 0 failed (0 suites) - no test suite found\n'
+    exit 1
+fi
 
 for suite in "${suites[@]}"; do
     name="$(basename "$suite")"
@@ -88,10 +106,10 @@ done
 if [[ "$failed" -gt 0 || "$failed_suites" -gt 0 ]]; then
     cat "$details"
     printf 'FAILED: %d total, %d passed, %d failed (%d of %d suites)\n' \
-        "$total" "$passed" "$failed" "$failed_suites" "${#suites[@]}"
+        "$total" "$passed" "$failed" "$failed_suites" "$nsuites"
     exit 1
 fi
 
 printf 'OK: %d total, %d passed, 0 failed (%d suites)\n' \
-    "$total" "$passed" "${#suites[@]}"
+    "$total" "$passed" "$nsuites"
 exit 0

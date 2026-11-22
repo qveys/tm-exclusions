@@ -82,4 +82,62 @@ assert_file_contains "$WORK/crash.out" "unexpected crash message" \
 assert_file_contains "$WORK/crash.out" "FAILED: 2 total, 1 passed, 1 failed (1 of 1 suites)" \
     "crashing suite: counted as one failure"
 
+echo ""
+echo "--- real helper output formats ---"
+# A suite that uses the real tests/test_helpers.sh, so the failure output has
+# exactly the shapes the helpers print: multi-line "Output was:" (with a bare
+# ---), an unindented file tail after FAIL, and run_cli's cat before FAIL
+# around a blank line.
+cat > "$WORK/fake_cli.sh" <<'EOF'
+#!/usr/bin/env bash
+printf 'context-before-blank\n\nafter-blank-line\n'
+exit 3
+EOF
+printf 'tail-line-1\nsecret-marker-ZZ\n' > "$WORK/some.file"
+cat > "$WORK/real.sh" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+source "${ROOT}/tests/test_helpers.sh"
+TM_EXCLUSIONS="$WORK/fake_cli.sh"
+assert_eq "x" "x" "hidden-pass-desc"
+assert_output_contains "no-such-text" "multiline-output-case" \\
+    printf 'alpha-marker\nbeta-marker\n---\ngamma-marker\n'
+assert_eq "x" "x" "hidden-pass-desc-2"
+assert_file_contains "$WORK/some.file" "absent-text" "file-tail-case"
+assert_eq "x" "x" "hidden-pass-desc-3"
+run_cli 0 "$WORK/cli.log" --whatever || true
+assert_eq "x" "x" "hidden-pass-desc-4"
+test_summary
+EOF
+rc=0
+run_runner "$WORK/real.out" "$WORK/real.sh" || rc=$?
+assert_eq "1" "$rc" "real helpers: exit code 1"
+assert_file_contains "$WORK/real.out" "FAILED: 7 total, 4 passed, 3 failed (1 of 1 suites)" \
+    "real helpers: totals"
+assert_file_contains "$WORK/real.out" "FAIL multiline-output-case" "real helpers: assert_output_contains FAIL listed"
+assert_file_contains "$WORK/real.out" "alpha-marker" "real helpers: multi-line output, first line"
+assert_file_contains "$WORK/real.out" "beta-marker" "real helpers: multi-line output, second line"
+assert_file_contains "$WORK/real.out" "gamma-marker" "real helpers: multi-line output, line after bare ---"
+assert_file_contains "$WORK/real.out" "FAIL file-tail-case" "real helpers: assert_file_contains FAIL listed"
+assert_file_contains "$WORK/real.out" "secret-marker-ZZ" "real helpers: unindented file tail after FAIL"
+assert_file_contains "$WORK/real.out" "CLI exit 3 (expected 0)" "real helpers: run_cli FAIL listed"
+assert_file_contains "$WORK/real.out" "context-before-blank" "real helpers: run_cli context before FAIL across a blank line"
+assert_file_contains "$WORK/real.out" "after-blank-line" "real helpers: run_cli context after the blank line"
+assert_file_lacks_regex "$WORK/real.out" "hidden-pass-desc" "real helpers: PASS lines stay hidden"
+assert_file_lacks_regex "$WORK/real.out" "Tests run:" "real helpers: suite totals box dropped"
+
+echo ""
+echo "--- no suite to run ---"
+# Same layout as the repo with only the helper in tests/: the runner locates
+# tests/ relative to itself, so run a copy of it there.
+mkdir -p "$WORK/empty/scripts" "$WORK/empty/tests"
+cp "$RUNNER" "$WORK/empty/scripts/test-summary.sh"
+cp "${ROOT}/tests/test_helpers.sh" "$WORK/empty/tests/test_helpers.sh"
+rc=0
+bash "$WORK/empty/scripts/test-summary.sh" > "$WORK/empty.out" 2>&1 || rc=$?
+assert_eq "1" "$rc" "no suite: exit code 1 (nothing verified is not a pass)"
+assert_file_contains "$WORK/empty.out" "FAILED: 0 total, 0 passed, 0 failed (0 suites)" \
+    "no suite: coherent 0/0/0 summary"
+assert_file_lacks_regex "$WORK/empty.out" "unbound" "no suite: no unbound-variable error"
+
 test_summary
