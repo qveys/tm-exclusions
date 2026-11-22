@@ -1919,45 +1919,77 @@ brew_list_block() {
 }
 
 # .app bundles under the given roots, up to two levels deep (e.g.
-# /Applications/Foo.app and /Applications/Utilities/Bar.app). Bundles are
-# never descended into, so nested helper apps are not listed. Missing or
-# unreadable roots are skipped. One path per line, sorted for stable output.
+# /Applications/Foo.app and /Applications/Utilities/Bar.app), NUL-separated so
+# any file name (spaces, newlines) survives. Bundles are never descended into,
+# so nested helper apps are not listed. Symbolic links are followed (find -L):
+# on recent macOS, Safari.app and Feedback Assistant.app are links into the
+# cryptex volume, and a folder that is a link may hold apps; only links that
+# resolve to a directory count, broken ones are ignored. The depth limit also
+# bounds any symlink loop. Missing or unreadable roots are skipped.
 list_app_bundles() {
     local root
     for root in "$@"; do
         [[ -d "$root" ]] || continue
         # Trailing slash: also follow a root that is itself a symlink.
-        find "${root%/}/" -mindepth 1 -maxdepth 2 -type d -name '*.app' -prune -print 2>/dev/null || true
-    done | LC_ALL=C sort
+        find -L "${root%/}/" -mindepth 1 -maxdepth 2 -type d -name '*.app' -prune -print0 2>/dev/null || true
+    done
 }
 
 # Inventory of installed applications with their disk usage: "<label> (<n>):"
-# then one "  <size><TAB><path>" line per bundle. All sizes come from a single
-# `du -sh` pass (xargs only batches it when the argument list is huge), so the
-# cost stays bounded. A bundle whose size cannot be read shows "-". Prints a
-# notice instead when no bundle is found.
+# then one "  <size><TAB><path>" line per bundle, sorted by path. Sizes come from
+# a single `du -sh -H` pass (-H: a link is measured as its target, not as 0B);
+# xargs only batches it when the argument list is huge, so the cost stays
+# bounded. A bundle whose size cannot be read shows "-". A path containing a
+# newline would break du's line output, so it is measured by its own du call
+# and shown with the newline written as \n. Prints a notice instead when no
+# bundle is found.
 build_apps_inventory() {
-    local list count sizes
-    list="$(list_app_bundles "$@")"
-    if [[ -z "$list" ]]; then
+    local -a plain=()
+    local p count=0 size sizes="" rows="" disp
+    while IFS= read -r -d '' p; do
+        count=$((count + 1))
+        size=""
+        case "$p" in
+            *$'\n'*)
+                # Only the first output line carries the size; du may exit
+                # non-zero on unreadable children, which must not abort.
+                size="$(du -sh -H -- "$p" 2>/dev/null | awk 'NR == 1 { print $1 }' || true)"
+                [[ -z "$size" ]] && size="-"
+                disp="${p//$'\n'/\\n}"
+                ;;
+            *)
+                plain[${#plain[@]}]="$p"
+                disp="$p"
+                ;;
+        esac
+        # Field 1 = path, field 2 = size when already known (\001-separated:
+        # a path may contain tabs).
+        rows="${rows}${disp}"$'\001'"${size}"$'\n'
+    done < <(list_app_bundles "$@")
+    if [[ "$count" -eq 0 ]]; then
         printf '%s\n' "${MSG_INVENTORY_APPS_NONE}"
         return 0
     fi
-    count="$(printf '%s\n' "$list" | awk 'END { print NR }')"
-    # NUL-separated so names with spaces are safe; du exits non-zero on
-    # unreadable children, which must not abort the report.
-    sizes="$(printf '%s\n' "$list" | tr '\n' '\0' | xargs -0 du -sh -- 2>/dev/null || true)"
+    if [[ "${#plain[@]}" -gt 0 ]]; then
+        # NUL-separated so names with spaces are safe; du exits non-zero on
+        # unreadable children, which must not abort the report.
+        sizes="$(printf '%s\0' "${plain[@]}" | xargs -0 du -sh -H -- 2>/dev/null || true)"
+    fi
     printf '%s (%s):\n' "${MSG_INVENTORY_APPS}" "$count"
     # Sizes travel through the environment: awk -v would interpret backslashes.
-    printf '%s\n' "$list" | DU_SH_OUT="$sizes" awk '
+    printf '%s' "$rows" | LC_ALL=C sort | DU_SH_OUT="$sizes" awk -F '\001' '
         BEGIN {
-            n = split(ENVIRON["DU_SH_OUT"], rows, "\n")
+            n = split(ENVIRON["DU_SH_OUT"], lines, "\n")
             for (i = 1; i <= n; i++) {
-                t = index(rows[i], "\t")
-                if (t > 1) size[substr(rows[i], t + 1)] = substr(rows[i], 1, t - 1)
+                t = index(lines[i], "\t")
+                if (t > 1) size[substr(lines[i], t + 1)] = substr(lines[i], 1, t - 1)
             }
         }
-        NF { printf "  %s\t%s\n", ($0 in size ? size[$0] : "-"), $0 }
+        NF {
+            s = $2
+            if (s == "") s = ($1 in size ? size[$1] : "-")
+            printf "  %s\t%s\n", s, $1
+        }
     '
 }
 

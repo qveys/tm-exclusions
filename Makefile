@@ -143,6 +143,7 @@ lint: ## Run ShellCheck on all shell scripts and syntax-check locale tables
 	@shellcheck -x -s bash tests/test_categories.sh
 	@shellcheck -x -s bash tests/test_scan_single_find.sh
 	@shellcheck -x -s bash tests/test_summary.sh
+	@shellcheck -x -s bash tests/test_apps_inventory.sh
 	@shellcheck -x -s bash scripts/test-summary.sh
 	@echo "ShellCheck passed."
 
