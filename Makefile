@@ -104,6 +104,8 @@ test: ## Run smoke tests
 	@bash tests/test_scan_single_find.sh
 	@echo "Running test-summary runner tests..."
 	@bash tests/test_summary.sh
+	@echo "Running apps inventory tests..."
+	@bash tests/test_apps_inventory.sh
 
 test-summary: ## Run all test suites quietly; print totals and only the failures (nonzero on failure)
 	@bash scripts/test-summary.sh

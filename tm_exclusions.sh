@@ -1918,6 +1918,49 @@ brew_list_block() {
     fi
 }
 
+# .app bundles under the given roots, up to two levels deep (e.g.
+# /Applications/Foo.app and /Applications/Utilities/Bar.app). Bundles are
+# never descended into, so nested helper apps are not listed. Missing or
+# unreadable roots are skipped. One path per line, sorted for stable output.
+list_app_bundles() {
+    local root
+    for root in "$@"; do
+        [[ -d "$root" ]] || continue
+        # Trailing slash: also follow a root that is itself a symlink.
+        find "${root%/}/" -mindepth 1 -maxdepth 2 -type d -name '*.app' -prune -print 2>/dev/null || true
+    done | LC_ALL=C sort
+}
+
+# Inventory of installed applications with their disk usage: "<label> (<n>):"
+# then one "  <size><TAB><path>" line per bundle. All sizes come from a single
+# `du -sh` pass (xargs only batches it when the argument list is huge), so the
+# cost stays bounded. A bundle whose size cannot be read shows "-". Prints a
+# notice instead when no bundle is found.
+build_apps_inventory() {
+    local list count sizes
+    list="$(list_app_bundles "$@")"
+    if [[ -z "$list" ]]; then
+        printf '%s\n' "${MSG_INVENTORY_APPS_NONE}"
+        return 0
+    fi
+    count="$(printf '%s\n' "$list" | awk 'END { print NR }')"
+    # NUL-separated so names with spaces are safe; du exits non-zero on
+    # unreadable children, which must not abort the report.
+    sizes="$(printf '%s\n' "$list" | tr '\n' '\0' | xargs -0 du -sh -- 2>/dev/null || true)"
+    printf '%s (%s):\n' "${MSG_INVENTORY_APPS}" "$count"
+    # Sizes travel through the environment: awk -v would interpret backslashes.
+    printf '%s\n' "$list" | DU_SH_OUT="$sizes" awk '
+        BEGIN {
+            n = split(ENVIRON["DU_SH_OUT"], rows, "\n")
+            for (i = 1; i <= n; i++) {
+                t = index(rows[i], "\t")
+                if (t > 1) size[substr(rows[i], t + 1)] = substr(rows[i], 1, t - 1)
+            }
+        }
+        NF { printf "  %s\t%s\n", ($0 in size ? size[$0] : "-"), $0 }
+    '
+}
+
 build_inventory_section() {
     local stdout_tty="${1:-0}" width path_total path_dirs p oifs
     printf '=== Inventory (informational) ===\n'
@@ -1929,6 +1972,7 @@ build_inventory_section() {
         printf '/Applications (top-level): %s\n' \
             "$(find /Applications -maxdepth 1 -mindepth 1 2>/dev/null | wc -l | tr -d '[:space:]' || true)"
     fi
+    build_apps_inventory /Applications "${HOME}/Applications"
     if command -v brew >/dev/null 2>&1; then
         width="$(report_columns "$stdout_tty")"
         printf '%s\n' "$(brew_list_block --cask 'Homebrew casks' "$width")"

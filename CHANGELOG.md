@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 
 ### Features
 
+- **Inventory — installed applications with disk sizes** ([#47](https://github.com/qveys/tm-exclusions/issues/47)): the inventory now lists every `.app` bundle found in `/Applications` and `~/Applications` (up to two levels deep, so `Utilities/Foo.app` is included and nested helper apps are not) with a readable `du -sh` size, in the interactive inventory, the verbose output and the saved report. Sizes come from a single grouped `du` call; names with spaces are handled, an unreadable bundle shows `-`, and missing or empty folders print a localized notice. `TM_EXCLUSIONS_SKIP_INVENTORY=1` skips it. The `/Applications (top-level)` count is kept. Covered by `tests/test_apps_inventory.sh` (`make test`) on a fake HOME, fake app tree and fake `du`.
 - **Inventory**: installed Homebrew casks and CLI formulae are now listed by name in column-wrapped blocks (terminal width, no trailing commas), both in interactive output and in the saved report; a friendly notice is shown when `brew` is not installed, and `TM_EXCLUSIONS_SKIP_INVENTORY=1` still skips the block. ([#48](https://github.com/qveys/tm-exclusions/issues/48))
 
 ### Build
