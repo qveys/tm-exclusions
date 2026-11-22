@@ -676,6 +676,43 @@ else
 fi
 
 echo ""
+echo "--- Partial/unknown ancestor: measurable descendants still count (lower bound) ---"
+# du stub: names containing "part" print a size AND exit 1 (partial = unmeasured).
+mkdir -p "$B_HOME/c/sz50-part/sz8192c" "$B_HOME/c/sz60-part/sz1024c/sz512g" "$B_HOME/c/sz60-part/sz2048c" \
+    "$B_HOME/c/sz100par/sz20c" "$B_HOME/c/sz70-part/sz5-part"
+banner_run "$TEST_HOME/out-pa-fwd" apply 1 0 en c/sz50-part c/sz50-part/sz8192c
+assert_file_contains "$TEST_HOME/out-pa-fwd" "Space that would be excluded (simulated): ≥ 8.0M (partial, unmeasured paths: 1)" \
+    "partial parent then 8M child: >= 8.0M (not unknown)"
+banner_run "$TEST_HOME/out-pa-rev" apply 1 0 en c/sz50-part/sz8192c c/sz50-part
+assert_file_contains "$TEST_HOME/out-pa-rev" "Space that would be excluded (simulated): ≥ 8.0M (partial, unmeasured paths: 1)" \
+    "8M child then partial parent: >= 8.0M (not unknown)"
+banner_run "$TEST_HOME/out-pa-alone" apply 1 0 en c/sz50-part
+assert_file_contains "$TEST_HOME/out-pa-alone" "Space that would be excluded (simulated): unknown (sizes could not be read)" \
+    "partial parent alone is unmeasured: unknown"
+banner_run "$TEST_HOME/out-pa-full" apply 1 0 en c/sz100par c/sz100par/sz20c
+assert_file_contains "$TEST_HOME/out-pa-full" "Space that would be excluded (simulated): 100K" "complete parent + child: the parent alone (no double counting)"
+banner_run "$TEST_HOME/out-pa-full-rev" apply 1 0 en c/sz100par/sz20c c/sz100par
+assert_file_contains "$TEST_HOME/out-pa-full-rev" "Space that would be excluded (simulated): 100K" "child + complete parent: the parent alone"
+banner_run "$TEST_HOME/out-pa-two" apply 1 0 en c/sz60-part c/sz60-part/sz1024c c/sz60-part/sz2048c
+assert_file_contains "$TEST_HOME/out-pa-two" "Space that would be excluded (simulated): ≥ 3.0M (partial, unmeasured paths: 1)" \
+    "two disjoint children under a partial parent are summed (1024K + 2048K)"
+banner_run "$TEST_HOME/out-pa-grand" apply 1 0 en c/sz60-part c/sz60-part/sz1024c c/sz60-part/sz1024c/sz512g
+assert_file_contains "$TEST_HOME/out-pa-grand" "Space that would be excluded (simulated): ≥ 1.0M (partial, unmeasured paths: 1)" \
+    "grandchild under a measured child under a partial parent: not counted twice (1024K, not 1536K)"
+banner_run "$TEST_HOME/out-pa-grand-rev" apply 1 0 en c/sz60-part/sz1024c/sz512g c/sz60-part/sz1024c c/sz60-part
+assert_file_contains "$TEST_HOME/out-pa-grand-rev" "Space that would be excluded (simulated): ≥ 1.0M (partial, unmeasured paths: 1)" \
+    "same, reverse order"
+banner_run "$TEST_HOME/out-pa-pp" apply 1 0 en c/sz70-part c/sz70-part/sz5-part
+assert_file_contains "$TEST_HOME/out-pa-pp" "Space that would be excluded (simulated): unknown (sizes could not be read)" \
+    "partial child under a partial parent: no usable measure, unknown (one unmeasured ancestor)"
+assert_file_contains "$B_HOME/report.txt" "Space that would be excluded (simulated): unknown" "the report carries the same figure"
+banner_run "$TEST_HOME/out-pa-dup" apply 1 0 en c/sz100id c/sz100id
+assert_file_contains "$TEST_HOME/out-pa-dup" "Space that would be excluded (simulated): 100K" "the same rule target twice counts once"
+banner_run "$TEST_HOME/out-pa-case" apply 1 0 en c/sz1024 c/sz100id c/sz50-part c/sz50-part/sz8192c
+assert_file_contains "$TEST_HOME/out-pa-case" "Space that would be excluded (simulated): ≥ 9.0M (partial, unmeasured paths: 1)" \
+    "independent measured paths add to the descendant lower bound (1024K + 100K + 8192K = 9316K, truncated to 9.0M)"
+
+echo ""
 echo "--- Cost: cd -P resolutions vs master (frozen reference), deterministic count ---"
 # Master's size bookkeeping per processed path is ref_du_track_path + the one
 # normalize_path of path_size_column; with no keep and a path under HOME nothing

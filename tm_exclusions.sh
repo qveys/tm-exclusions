@@ -628,14 +628,15 @@ path_id_covers() {
     done
 }
 
-# Records $1 for the space figure, reusing the normalized path that
-# path_size_column already computed for its size cache key (PATH_SIZE_NP): no
-# second normalization, so no extra cd -P per path. Nesting is decided with
-# path_under and file identity (path_id_covers): builtins only, no cd. A path
-# whose name is unsafe to measure, or that has no normalized form, is counted
-# as unmeasured instead (never a wrong or silently dropped size).
+# Records $1 (already measured by path_size_column) for the space figure as one
+# "<normalized path><TAB><complete KiB or empty>" line (split at the last tab, so
+# tabs in names are safe): no cd, no stat, no cache lookup, no nesting decision
+# here. Every candidate is kept, so a measurable descendant can still stand in
+# for an unmeasured ancestor (excl_space_compute). A path whose name is unsafe to
+# measure (size_path_unsafe) or without a normalized form is counted as
+# unmeasured instead. The same path twice is deduplicated at aggregation.
 excl_track_path() {
-    local p="$1" entry retained=""
+    local p="$1"
     [[ -z "$p" || ! -e "$p" ]] && return 0
     if [[ -z "$EXCL_FIRST_PATH" ]]; then EXCL_FIRST_PATH="$p"; fi
     du_enabled || return 0
@@ -643,45 +644,113 @@ excl_track_path() {
         EXCL_UNTRACKED=$((EXCL_UNTRACKED + 1))
         return 0
     fi
-    while IFS= read -r entry; do
-        [[ -z "$entry" ]] && continue
-        # String test first (cheap), then file identity for case/link spellings.
-        if path_under "$PATH_SIZE_NP" "$entry" || path_id_covers "$entry" "$PATH_SIZE_NP"; then
-            return 0
-        fi
-        if ! { path_under "$entry" "$PATH_SIZE_NP" || path_id_covers "$PATH_SIZE_NP" "$entry"; }; then
-            retained="${retained}${entry}
-"
-        fi
-    done <<EOF
-${EXCL_PATHS}
-EOF
-    EXCL_PATHS="${retained}${PATH_SIZE_NP}"
+    EXCL_PATHS="${EXCL_PATHS}${PATH_SIZE_NP}"$'\t'"${PATH_SIZE_KB}"$'\n'
+}
+
+# True when entry $1 is the same directory as, or lies under, entry $2 (indexes
+# into ep/fp, the paths and their ASCII-lowercased forms, of excl_space_compute).
+# Exact string nesting first; then, only for candidates nested up to ASCII case,
+# file identity (path_id_covers), so "Cache" / "cache/Child" on case-insensitive
+# APFS nest but no stat is spent on unrelated pairs.
+excl_is_under() {
+    local b="${ep[$1]}" a="${ep[$2]}"
+    if path_under "$b" "$a"; then return 0; fi
+    path_under "${fp[$1]}" "${fp[$2]}" || return 1
+    path_id_covers "$a" "$b"
 }
 
 # Sets EXCL_TOTAL_KB / EXCL_MEASURED / EXCL_UNKNOWN from EXCL_PATHS using the
-# sizes already recorded while each path was processed — never a fresh du (it can
+# sizes already measured while each path was processed — never a fresh du (it can
 # take tens of seconds per tree). Paths gone since their measurement are skipped
-# like du_total_kb does. Sizes that could not be read — or that du only measured
-# partially (non-zero exit on unreadable children, GNU and BSD alike) — are
-# counted in EXCL_UNKNOWN and never added, so the total is flagged partial, not
-# wrong. Not meant for $() — it sets globals.
+# like du_total_kb does. An entry is MEASURED when its recorded size is a
+# complete one; an unreadable or partial size (du exited non-zero, GNU and BSD
+# alike) makes it UNMEASURED, counted in EXCL_UNKNOWN and never added.
+#
+# Nesting only prevents double counting, it never discards a usable
+# measurement: an entry is ignored when it lies under a MEASURED entry (that
+# ancestor's size already contains it), or — if it is itself unmeasured — under
+# any unmeasured ancestor (already counted there). A measured descendant of an
+# unmeasured ancestor is kept as a lower-bound contribution. The same directory
+# spelled twice counts once (the earlier entry). Not meant for $() — it sets
+# globals.
+#
+# Ancestors are found in O(n log n): the ASCII-lowercased "<path>/" keys are
+# sorted once and walked with a stack of open ancestors, so there is no pairwise
+# scan of the whole list and no stat except to confirm a case-only match.
 excl_space_compute() {
-    local p kb
+    local -a ep fp ek stk
+    local n=0 sp=0 i j k p kb line key top plist="" flist="" keys="" sorted="" covered
     EXCL_TOTAL_KB=0
     EXCL_MEASURED=0
     EXCL_UNKNOWN="$EXCL_UNTRACKED"
-    while IFS= read -r p; do
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        p="${line%$'\t'*}"
+        kb="${line##*$'\t'}"
         [[ -z "$p" || ! -e "$p" ]] && continue
-        if ! kb="$(du_size_lookup "$p")"; then kb=""; fi
-        if du_size_is_partial "$p"; then kb=""; fi
         case "$kb" in
-            ''|*[!0-9]*) EXCL_UNKNOWN=$((EXCL_UNKNOWN + 1)); continue ;;
+            ''|*[!0-9]*) kb="" ;;
         esac
-        EXCL_TOTAL_KB=$((EXCL_TOTAL_KB + kb))
-        EXCL_MEASURED=$((EXCL_MEASURED + 1))
+        ep[n]="$p"
+        ek[n]="$kb"
+        plist="${plist}${p}"$'\n'
+        n=$((n + 1))
     done <<EOF
 ${EXCL_PATHS}
+EOF
+    [[ "$n" -gt 0 ]] || return 0
+    # One fork for the whole list (not per path); ASCII case folding only.
+    flist="$(printf '%s' "$plist" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
+    i=0
+    while IFS= read -r line; do
+        fp[i]="$line"
+        i=$((i + 1))
+    done <<EOF
+${flist}
+EOF
+    if [[ "$i" -ne "$n" ]]; then
+        for ((i = 0; i < n; i++)); do fp[i]="${ep[i]}"; done
+    fi
+    for ((i = 0; i < n; i++)); do
+        key="${fp[i]}"
+        [[ "$key" == */ ]] || key="${key}/"
+        keys="${keys}${key}"$'\001'"${i}"$'\n'
+    done
+    sorted="$(printf '%s' "$keys" | LC_ALL=C sort)"
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        i="${line##*$'\001'}"
+        key="${line%$'\001'*}"
+        # Open ancestors: keep only the stack entries whose key prefixes this one.
+        while [[ "$sp" -gt 0 ]]; do
+            top="${stk[sp-1]}"
+            case "$key" in
+                "${top%%$'\001'*}"*) break ;;
+            esac
+            sp=$((sp - 1))
+        done
+        covered=0
+        for ((k = 0; k < sp; k++)); do
+            j="${stk[k]##*$'\001'}"
+            excl_is_under "$i" "$j" || continue
+            if excl_is_under "$j" "$i"; then
+                # Same directory through two spellings: the earlier entry stands for it.
+                if [[ "$j" -lt "$i" ]]; then covered=1; break; fi
+                continue
+            fi
+            if [[ -n "${ek[j]}" || -z "${ek[i]}" ]]; then covered=1; break; fi
+        done
+        stk[sp]="${key}"$'\001'"${i}"
+        sp=$((sp + 1))
+        [[ "$covered" -eq 0 ]] || continue
+        if [[ -n "${ek[i]}" ]]; then
+            EXCL_TOTAL_KB=$((EXCL_TOTAL_KB + ek[i]))
+            EXCL_MEASURED=$((EXCL_MEASURED + 1))
+        else
+            EXCL_UNKNOWN=$((EXCL_UNKNOWN + 1))
+        fi
+    done <<EOF
+${sorted}
 EOF
     return 0
 }
@@ -848,9 +917,14 @@ EOF
 PATH_SIZE_COL=""
 # Normalized form of the last path measured (the cache key); read by excl_track_path.
 PATH_SIZE_NP=""
+# KiB of that path when its measurement is complete, "" when unreadable or partial
+# (du exited non-zero); read by excl_track_path so the space figure needs no
+# second lookup in the size cache.
+PATH_SIZE_KB=""
 path_size_column() {
     PATH_SIZE_COL=""
     PATH_SIZE_NP=""
+    PATH_SIZE_KB=""
     du_enabled || return 0
     local p="$1" np="" szk=""
     # A name that cannot be measured safely (newline, see size_path_unsafe) is
@@ -868,8 +942,16 @@ path_size_column() {
             # "mark": remember a partial (du exited non-zero) measurement.
             szk="$(du_size_kb "$np" mark)"
             du_size_record "$np" "$szk"
-            szk="${szk%!}"
+            case "$szk" in
+                *'!') szk="${szk%!}" ;;
+                *) PATH_SIZE_KB="$szk" ;;
+            esac
+        elif ! du_size_is_partial "$np"; then
+            PATH_SIZE_KB="$szk"
         fi
+        case "$PATH_SIZE_KB" in
+            ''|*[!0-9]*) PATH_SIZE_KB="" ;;
+        esac
         case "$szk" in
             ''|*[!0-9]*) PATH_SIZE_COL="-" ;;
             *) PATH_SIZE_COL="$(format_size_kb "$szk")" ;;
