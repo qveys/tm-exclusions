@@ -33,7 +33,13 @@ REAL_DEFAULT_CONF="${SCRIPT_DIR}/config/default.conf"
 cat > "$TEST_DIR/bin/tmutil" <<'STUB'
 #!/bin/sh
 printf '%s\n' "$*" >> "$TEST_CALLS"
-if [ "$1" = isexcluded ]; then printf '[Included] %s\n' "$2"; fi
+if [ "$1" = isexcluded ]; then
+    if [ "${TEST_STUB_EXCLUDED:-0}" = "1" ]; then
+        printf '[Excluded] %s\n' "$2"
+    else
+        printf '[Included] %s\n' "$2"
+    fi
+fi
 exit 0
 STUB
 cat > "$TEST_DIR/bin/brew" <<'STUB'
@@ -261,5 +267,53 @@ cut -f1 "$TEST_DIR/b_ref" | sort -u > "$TEST_DIR/b_ref_dirs"
 sort -u "$FIND_RAW" > "$TEST_DIR/b_raw_dirs"
 assert_files_equal "$TEST_DIR/b_ref_dirs" "$TEST_DIR/b_raw_dirs" \
     "single find over real catalog discovers the same directories as the per-pattern reference"
+
+# ---------------------------------------------------------------------------
+# Scenario C — extglob-literal regression: (path, pattern) pairs themselves.
+# On Bash 3.2, `[[ $base == $pattern ]]` reads extended globs (+(…), @(…), …)
+# even with extglob off, diverging from `find -name`; `case` does not. A
+# literal directory named `+(cache)` must be tagged only with the pattern
+# `+(cache)`, and `cache` only with `cache`. Run in --uninstall mode (the
+# kept-prefix prune is bypassed there) so every tagged pair is processed and
+# visible in the report as `REMOVE <path> [file:line | pattern|<pat> | …]`.
+# The CLI is run with /bin/bash (Bash 3.2.57 on macOS) when available, so the
+# pre-fix `[[ == ]]` tagging actually fails here.
+# ---------------------------------------------------------------------------
+echo ""
+echo "--- Extglob-literal tagging regression (+(cache) vs cache) ---"
+
+C_HOME="$TEST_DIR/c"
+C_CONF="$TEST_DIR/c-default.conf"
+mkdir -p "$C_HOME/.config/tm_exclusions"
+mkdir -p "$C_HOME/p1/+(cache)" "$C_HOME/p2/cache" "$C_HOME/p3/cachecache"
+cat > "$C_CONF" <<'CONF'
+# extglob-looking pattern must stay a literal glob for find -name
+pattern|+(cache)|extglob literal plus
+pattern|cache|plain cache
+CONF
+
+C_PATTERNS="$(grep -hE '^pattern\|' "$C_CONF" | cut -d'|' -f2)"
+
+BASH32="/bin/bash"
+[[ -x "$BASH32" ]] || BASH32="bash"
+
+reset_find_logs
+assert_exit_code 0 \
+    "uninstall run under $BASH32 over extglob-literal tree exits 0" \
+    env HOME="$C_HOME" TM_EXCLUSIONS_DEFAULT_CONF="$C_CONF" TEST_STUB_EXCLUDED=1 \
+        "$BASH32" "$TM_EXCLUSIONS" -q --uninstall
+
+assert_eq 1 "$(find_call_count)" \
+    "extglob scenario still uses exactly ONE find invocation"
+
+reference_discover "$C_HOME" "$C_PATTERNS" "$TEST_DIR/c_ref"
+
+# Extract (path, pattern) pairs from the report's REMOVE lines (trailing
+# whitespace of the rule context is trimmed from the pattern field).
+sed -n 's/^REMOVE \(.*\) \[.*| pattern|\([^|]*\)|.*\]$/\1\t\2/p' \
+    "$TM_EXCLUSIONS_REPORT" | sed 's/[[:space:]]*$//' > "$TEST_DIR/c_actual"
+
+assert_files_equal "$TEST_DIR/c_ref" "$TEST_DIR/c_actual" \
+    "tagged (path, pattern) pairs match the per-pattern find reference"
 
 test_summary

@@ -1576,23 +1576,31 @@ EOF
     # matches its basename — the same (dir, pattern) pairs the per-pattern
     # `find -name <pattern>` calls produced, so pattern_match_allowed can
     # re-check later. Tab-separated; pattern names never contain tabs in our
-    # config schema.
+    # config schema. A `case` pattern is required here, not `[[ == ]]`: on
+    # Bash 3.2 `[[ == ]]` interprets extended globs (+(…), @(…), !(…), …) even
+    # with extglob off, which would diverge from `find -name` (e.g. a literal
+    # `+(cache)` directory). `case` only honors them when extglob is on, so
+    # force extglob off around the loop and restore the initial state after.
+    local extglob_was_on=0
+    if shopt -q extglob; then extglob_was_on=1; fi
+    shopt -u extglob
     local found_dir base_name
     while IFS= read -r found_dir; do
         [[ -z "$found_dir" ]] && continue
         base_name="${found_dir##*/}"
         while IFS= read -r pattern_name; do
             [[ -z "$pattern_name" ]] && continue
-            # Unquoted right-hand side on purpose: glob match on the basename,
-            # with the same * ? [ ] metacharacter semantics as `find -name`.
-            # shellcheck disable=SC2053
-            if [[ "$base_name" == $pattern_name ]]; then
-                printf '%s\t%s\n' "$found_dir" "$pattern_name" >> "$all_results"
-            fi
+            # shellcheck disable=SC2254
+            case "$base_name" in
+                $pattern_name)
+                    printf '%s\t%s\n' "$found_dir" "$pattern_name" >> "$all_results"
+                    ;;
+            esac
         done <<EOF
 ${CONF_PATTERNS}
 EOF
     done < "$tmp_scan"
+    if [[ "$extglob_was_on" -eq 1 ]]; then shopt -s extglob; fi
     rm -f "$tmp_scan"
     unregister_tmp_file "$tmp_scan"
 
