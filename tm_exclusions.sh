@@ -2014,6 +2014,93 @@ build_apps_inventory() {
     '
 }
 
+# Colon-separated PATH string ($1) as NUL-separated, usable directories: first
+# occurrence order kept, duplicates dropped (after removing trailing slashes),
+# and skipped entries that are empty (the current directory), relative (they
+# depend on the working directory) or not an existing directory. NUL-separated
+# so an entry containing a newline survives.
+list_path_dirs() {
+    local -a seen=()
+    local entry i dup
+    while IFS= read -r -d ':' entry; do
+        [[ "$entry" = /* ]] || continue
+        while [[ "$entry" = ?*/ ]]; do entry="${entry%/}"; done
+        [[ -d "$entry" ]] || continue
+        dup=0
+        i=0
+        while [[ "$i" -lt "${#seen[@]}" ]]; do
+            if [[ "${seen[$i]}" = "$entry" ]]; then dup=1; break; fi
+            i=$((i + 1))
+        done
+        [[ "$dup" -eq 1 ]] && continue
+        seen[${#seen[@]}]="$entry"
+        printf '%s\0' "$entry"
+    done < <(printf '%s:' "$1")
+}
+
+# Executable files directly inside directory $1, one name per line, sorted.
+# One pass of shell tests over a glob (no find/ls, no fork per file): a
+# directory of thousands of tools stays fast. `-f` and `-x` follow symbolic
+# links, so a link to an executable (Homebrew's bin/) counts while a broken
+# link, a link to a directory or a non-executable file does not. A newline in a
+# name is written as \n so every name stays on one line.
+list_dir_executables() {
+    local f name
+    local -a names=()
+    for f in "$1"/* "$1"/.[!.]* "$1"/..?*; do
+        [[ -f "$f" && -x "$f" ]] || continue
+        name="${f##*/}"
+        names[${#names[@]}]="${name//$'\n'/\\n}"
+    done
+    [[ "${#names[@]}" -gt 0 ]] || return 0
+    printf '%s\n' "${names[@]}" | LC_ALL=C sort
+}
+
+# True when directory $1 is one of the colon-separated system directories in
+# $2 (compared without trailing slashes).
+is_system_path_dir() {
+    local dir="$1" s
+    while IFS= read -r -d ':' s; do
+        while [[ "$s" = ?*/ ]]; do s="${s%/}"; done
+        [[ "$s" = "$dir" ]] && return 0
+    done < <(printf '%s:' "$2")
+    return 1
+}
+
+# Survey of the command-line tools installed in the PATH directories.
+# $1 is the width of the wrapped lists. Standard system directories
+# (TM_EXCLUSIONS_SYSTEM_PATHS, default /bin:/sbin:/usr/bin:/usr/sbin) only get
+# their binary count: "[sys] <dir> (<n> binaries — omitted)". Every other
+# directory is a toolchain one and gets "[dev] <dir> (<n> binaries):" followed
+# by the tool names, wrapped like the Homebrew lists.
+build_path_tools_inventory() {
+    local width="${1:-80}" sys_dirs dir names count word wrap_width found=0
+    sys_dirs="${TM_EXCLUSIONS_SYSTEM_PATHS:-/bin:/sbin:/usr/bin:/usr/sbin}"
+    wrap_width=$(( width - 4 ))
+    [[ "$wrap_width" -lt 10 ]] && wrap_width=10
+    printf '%s:\n' "${MSG_INVENTORY_PATH}"
+    while IFS= read -r -d '' dir; do
+        found=1
+        names="$(list_dir_executables "$dir")"
+        count="$(printf '%s\n' "$names" | awk 'NF { n++ } END { print n + 0 }')"
+        word="${MSG_INVENTORY_PATH_BINARIES}"
+        [[ "$count" -eq 1 ]] && word="${MSG_INVENTORY_PATH_BINARY}"
+        if is_system_path_dir "$dir" "$sys_dirs"; then
+            printf '[sys] %s (%s %s — %s)\n' "$dir" "$count" "$word" "${MSG_INVENTORY_PATH_OMITTED}"
+        else
+            printf '[dev] %s (%s %s)' "$dir" "$count" "$word"
+            if [[ "$count" -gt 0 ]]; then
+                printf ':\n%s\n' "$(printf '%s\n' "$names" | wrap_name_list "$wrap_width" | sed 's/^/  /')"
+            else
+                printf '\n'
+            fi
+        fi
+    done < <(list_path_dirs "${PATH:-}")
+    if [[ "$found" -eq 0 ]]; then
+        printf '  %s\n' "${MSG_INVENTORY_PATH_NONE}"
+    fi
+}
+
 build_inventory_section() {
     local stdout_tty="${1:-0}" width path_total path_dirs p oifs
     printf '=== Inventory (informational) ===\n'
@@ -2042,6 +2129,9 @@ build_inventory_section() {
     done
     IFS="${oifs}"
     printf 'PATH: %s existing directories (of %s colon-separated entries)\n' "$path_dirs" "$path_total"
+    if [[ "${QUIET}" -eq 0 ]]; then
+        build_path_tools_inventory "$(report_columns "$stdout_tty")"
+    fi
 }
 
 # Interactive runs get the inventory inline (first line of $1 is the report
