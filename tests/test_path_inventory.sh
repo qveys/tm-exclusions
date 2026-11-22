@@ -112,7 +112,7 @@ tool_calls_on() { grep -cF -- "$1" "$TOOL_CALLS" || true; }
 # list_path_dirs output (NUL-separated) as text lines, a newline written as \n.
 dir_lines() {
     local d
-    while IFS= read -r -d '' d; do
+    while IFS= read -r -d '' d && IFS= read -r -d '' _; do
         printf '%s\n' "${d//$'\n'/\\n}"
     done < <(list_path_dirs "$1")
 }
@@ -136,6 +136,23 @@ $DEV" "$(dir_lines ":$SYS::$DEV:")" "empty entries (current directory) are ignor
 assert_eq "$SYS" "$(cd "$TEST_DIR" && dir_lines "rel:.:$SYS")" "relative entries are ignored"
 assert_eq "$SYS" "$(dir_lines "$SYS:$DEV/README.txt")" "a file in PATH is not a directory"
 assert_eq "$TEST_DIR/nl\\ndir" "$(dir_lines "$NLDIR")" "directory name with a newline is one entry"
+# Same directory under another spelling: symbolic link, "//", "..".
+ln -s "$SYS" "$TEST_DIR/sysalias"
+ln -s "$DEV" "$TEST_DIR/devalias"
+ln -s "$NLDIR" "$TEST_DIR/nlalias"
+assert_eq "$SYS" "$(dir_lines "$SYS:$TEST_DIR/sysalias")" "symbolic link to a listed directory is dropped"
+assert_eq "$TEST_DIR/sysalias" "$(dir_lines "$TEST_DIR/sysalias:$SYS")" "first spelling wins, even when it is the link"
+assert_eq "$DEV" "$(dir_lines "$DEV://$DEV")" "//dir spelling of a listed directory is dropped"
+assert_eq "$DEV" "$(dir_lines "$DEV:$DEV/../bin:$TEST_DIR/dev tools/../dev tools/bin/.")" \
+    "spellings with .. and . are dropped"
+assert_eq "$SYS
+$TEST_DIR/devalias" "$(dir_lines "$SYS:$TEST_DIR/devalias:$DEV:$TEST_DIR/sysalias")" \
+    "aliases keep the first occurrence and the PATH order of distinct directories"
+assert_eq "$TEST_DIR/nl\\ndir" "$(dir_lines "$NLDIR:$TEST_DIR/nlalias")" \
+    "newline-named directory and its link are one entry"
+TRAILNL="$TEST_DIR/trail"$'\n'
+mkdir -p "$TRAILNL"
+assert_eq "$TEST_DIR/trail\\n" "$(dir_lines "$TRAILNL")" "directory name ending with a newline is kept"
 assert_eq "" "$(dir_lines "")" "empty PATH lists nothing"
 assert_eq "" "$(dir_lines "::")" "PATH of only empty entries lists nothing"
 
@@ -200,6 +217,37 @@ $inv
 EOF
 assert_eq "0" "$(tool_calls_on "$DEV")" "no find/ls is run on a PATH directory"
 assert_eq "0" "$(tool_calls_on "$SYS")" "no find/ls is run on a system directory"
+
+# Aliases of one directory: a link to a system directory is [sys] and shown
+# once; a link to a dev directory is listed once; the override may itself be an
+# alias.
+PATH="$STUB_BIN:$TEST_DIR/sysalias:$SYS://$SYS:$TEST_DIR/devalias:$DEV:$BASE_PATH"
+inv_alias="$(build_path_tools_inventory 80)"
+PATH="$STUB_BIN:$BASE_PATH"
+assert_true "alias of a system directory is [sys]" \
+    grep -qxF "[sys] $TEST_DIR/sysalias (3 binaries — omitted)" <<EOF
+$inv_alias
+EOF
+assert_true "alias of a system directory is not [dev]" not grep -qF "[dev] $TEST_DIR/sysalias" <<EOF
+$inv_alias
+EOF
+assert_eq "1" "$(printf '%s\n' "$inv_alias" | grep -c '^\[sys\] .*(3 binaries' || true)" \
+    "system directory and its aliases are shown once"
+assert_true "alias of a dev directory is listed once, under its first spelling" \
+    grep -qxF "[dev] $TEST_DIR/devalias (9 binaries):" <<EOF
+$inv_alias
+EOF
+assert_eq "1" "$(printf '%s\n' "$inv_alias" | grep -c '^\[dev\] .*(9 binaries)' || true)" \
+    "dev directory and its alias are listed once"
+TM_EXCLUSIONS_SYSTEM_PATHS="$TEST_DIR/sysalias:/usr/bin:/bin"
+PATH="$STUB_BIN:$SYS:$BASE_PATH"
+inv_alias2="$(build_path_tools_inventory 80)"
+PATH="$STUB_BIN:$BASE_PATH"
+TM_EXCLUSIONS_SYSTEM_PATHS="$SYS:/usr/bin:/bin"
+assert_true "system directory declared through an alias is [sys]" \
+    grep -qxF "[sys] $SYS (3 binaries — omitted)" <<EOF
+$inv_alias2
+EOF
 
 # Single-binary wording and the nothing-to-show notice.
 ONE="$TEST_DIR/one_bin"
@@ -274,17 +322,15 @@ echo ""
 echo "--- build_inventory_section gating ---"
 : > "$TOOL_CALLS"
 PATH="$STUB_BIN:$SYS:$DEV:$BASE_PATH"
-QUIET=0
-sec="$(build_inventory_section 0)"
+sec="$(QUIET=0 build_inventory_section 0)"
 assert_true "normal run includes the PATH tools survey" grep -qF "[dev] $DEV (9 binaries):" <<EOF
 $sec
 EOF
 assert_true "normal run keeps the PATH directory count line" grep -q "^PATH: [0-9]* existing directories" <<EOF
 $sec
 EOF
-QUIET=1
 : > "$TOOL_CALLS"
-sec_quiet="$(build_inventory_section 0)"
+sec_quiet="$(QUIET=1 build_inventory_section 0)"
 assert_true "--quiet suppresses the PATH tools survey" not grep -qF "[dev]" <<EOF
 $sec_quiet
 EOF
@@ -292,9 +338,6 @@ assert_true "--quiet does not list tool names" not grep -qF "my tool" <<EOF
 $sec_quiet
 EOF
 assert_eq "0" "$(tool_calls_on "$DEV")" "--quiet: no find/ls on a PATH directory"
-# QUIET is read by build_inventory_section (sourced from the script under test).
-# shellcheck disable=SC2034
-QUIET=0
 : > "$TOOL_CALLS"
 sec_skip="$(TM_EXCLUSIONS_SKIP_INVENTORY=1 build_inventory_section 0)"
 assert_true "SKIP_INVENTORY=1 states it was skipped" grep -q "skipped: TM_EXCLUSIONS_SKIP_INVENTORY=1" <<EOF

@@ -2014,27 +2014,40 @@ build_apps_inventory() {
     '
 }
 
-# Colon-separated PATH string ($1) as NUL-separated, usable directories: first
-# occurrence order kept, duplicates dropped (after removing trailing slashes),
-# and skipped entries that are empty (the current directory), relative (they
-# depend on the working directory) or not an existing directory. NUL-separated
-# so an entry containing a newline survives.
+# Physical path of existing directory $1 (symbolic links, "..", "//" and
+# trailing slashes resolved), newline-safe, without trailing newline: the
+# identity of a directory, whatever its spelling. One subshell per call; the
+# "x" sentinel keeps a trailing newline of the name from being stripped.
+physical_dir() {
+    local out
+    out="$(cd -P -- "$1" 2>/dev/null && pwd -P && printf x)" || return 1
+    out="${out%x}"
+    printf '%s' "${out%$'\n'}"
+}
+
+# Colon-separated PATH string ($1) as NUL-separated "<entry>" "<physical path>"
+# pairs of usable directories. Duplicates are dropped on the PHYSICAL
+# directory, so a symbolic link, "//dir" or "a/../dir" to an already listed
+# directory counts once; the first occurrence (and its PATH spelling, minus
+# trailing slashes) is kept, in PATH order. Skipped entries are empty (the
+# current directory), relative (they depend on the working directory) and not
+# an existing directory. NUL-separated so a name with a newline survives.
 list_path_dirs() {
     local -a seen=()
-    local entry i dup
+    local entry phys i dup
     while IFS= read -r -d ':' entry; do
         [[ "$entry" = /* ]] || continue
         while [[ "$entry" = ?*/ ]]; do entry="${entry%/}"; done
-        [[ -d "$entry" ]] || continue
+        phys="$(physical_dir "$entry")" || continue
         dup=0
         i=0
         while [[ "$i" -lt "${#seen[@]}" ]]; do
-            if [[ "${seen[$i]}" = "$entry" ]]; then dup=1; break; fi
+            if [[ "${seen[$i]}" = "$phys" ]]; then dup=1; break; fi
             i=$((i + 1))
         done
         [[ "$dup" -eq 1 ]] && continue
-        seen[${#seen[@]}]="$entry"
-        printf '%s\0' "$entry"
+        seen[${#seen[@]}]="$phys"
+        printf '%s\0%s\0' "$entry" "$phys"
     done < <(printf '%s:' "$1")
 }
 
@@ -2056,17 +2069,6 @@ list_dir_executables() {
     printf '%s\n' "${names[@]}" | LC_ALL=C sort
 }
 
-# True when directory $1 is one of the colon-separated system directories in
-# $2 (compared without trailing slashes).
-is_system_path_dir() {
-    local dir="$1" s
-    while IFS= read -r -d ':' s; do
-        while [[ "$s" = ?*/ ]]; do s="${s%/}"; done
-        [[ "$s" = "$dir" ]] && return 0
-    done < <(printf '%s:' "$2")
-    return 1
-}
-
 # Survey of the command-line tools installed in the PATH directories.
 # $1 is the width of the wrapped lists. Standard system directories
 # (TM_EXCLUSIONS_SYSTEM_PATHS, default /bin:/sbin:/usr/bin:/usr/sbin) only get
@@ -2074,18 +2076,31 @@ is_system_path_dir() {
 # directory is a toolchain one and gets "[dev] <dir> (<n> binaries):" followed
 # by the tool names, wrapped like the Homebrew lists.
 build_path_tools_inventory() {
-    local width="${1:-80}" sys_dirs dir names count word wrap_width found=0
+    local width="${1:-80}" sys_dirs dir phys names count word wrap_width found=0
+    local s sp is_sys
+    local -a sys_phys=()
     sys_dirs="${TM_EXCLUSIONS_SYSTEM_PATHS:-/bin:/sbin:/usr/bin:/usr/sbin}"
+    # System directories by physical identity, resolved once: an alias of one
+    # (symbolic link, "//", "..") is a system directory too.
+    while IFS= read -r -d ':' s; do
+        [[ "$s" = /* ]] || continue
+        sp="$(physical_dir "$s")" || continue
+        sys_phys[${#sys_phys[@]}]="$sp"
+    done < <(printf '%s:' "$sys_dirs")
     wrap_width=$(( width - 4 ))
     [[ "$wrap_width" -lt 10 ]] && wrap_width=10
     printf '%s:\n' "${MSG_INVENTORY_PATH}"
-    while IFS= read -r -d '' dir; do
+    while IFS= read -r -d '' dir && IFS= read -r -d '' phys; do
         found=1
         names="$(list_dir_executables "$dir")"
         count="$(printf '%s\n' "$names" | awk 'NF { n++ } END { print n + 0 }')"
         word="${MSG_INVENTORY_PATH_BINARIES}"
         [[ "$count" -eq 1 ]] && word="${MSG_INVENTORY_PATH_BINARY}"
-        if is_system_path_dir "$dir" "$sys_dirs"; then
+        is_sys=0
+        for s in ${sys_phys[@]+"${sys_phys[@]}"}; do
+            if [[ "$s" = "$phys" ]]; then is_sys=1; break; fi
+        done
+        if [[ "$is_sys" -eq 1 ]]; then
             printf '[sys] %s (%s %s — %s)\n' "$dir" "$count" "$word" "${MSG_INVENTORY_PATH_OMITTED}"
         else
             printf '[dev] %s (%s %s)' "$dir" "$count" "$word"
