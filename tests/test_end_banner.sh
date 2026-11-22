@@ -399,6 +399,50 @@ assert_file_contains "$TEST_HOME/out-nl-both" "Space excluded: ≥ 92K (partial,
     "neighbour counted once, the newline-named link counted unmeasured"
 assert_eq 1 "$(grep -Fxc "$B_PHYS/c/sz92" "$B_DU_CALLS")" "neighbour measured exactly once (no cache key confusion)"
 
+echo ""
+echo "--- An alias to a newline-named target never aliases the neighbour (#44) ---"
+# Rule `path` -> alias -> "small<LF>" (empty) next to a measured "small": the raw
+# alias name has no newline, but resolving it drops the target's trailing newline
+# in a $(...) capture, so du used to run on the neighbour. Checked on the
+# RESOLVED path too; --dry-run, as in the field report.
+mkdir_paths c/sz92x c/sz95
+NLA_TARGET="c/sz92x"$'\n'
+mkdir -p "$B_HOME/$NLA_TARGET"
+# The neighbour "sz92x" (made above) is measured by du as 92K, via its name.
+ln -s "$B_HOME/$NLA_TARGET" "$B_HOME/c/alias-abs"
+ln -s "sz92x"$'\n' "$B_HOME/c/alias-rel"
+ln -s "$B_HOME/c/alias-abs" "$B_HOME/c/alias-chain"
+NLM_TARGET="c/sz95"$'\n'"b"
+mkdir -p "$B_HOME/$NLM_TARGET"
+ln -s "$B_HOME/$NLM_TARGET" "$B_HOME/c/alias-mid"
+nl_alias_case() {
+    local alias_rel="$1" desc="$2" out="$TEST_HOME/out-nla"
+    banner_run "$out" apply 1 0 en "$alias_rel"
+    assert_file_lacks_regex "$out" 'sz92x|92K|95K' "$desc: nothing borrowed from the neighbour in the output"
+    assert_file_contains "$out" "Space that would be excluded (simulated): unknown (sizes could not be read)" \
+        "$desc: counted unmeasured in the simulated total"
+    assert_eq 0 "$(wc -l < "$B_DU_CALLS" | tr -d ' ')" "$desc: du never called"
+    assert_eq 0 "$(grep -Evc '^(isexcluded|listexclusions)$' "$B_ALL" || true)" "$desc: dry-run stayed read-only"
+}
+nl_alias_case c/alias-abs "absolute alias to 'sz92x<LF>'"
+nl_alias_case c/alias-rel "relative alias to 'sz92x<LF>'"
+nl_alias_case c/alias-chain "alias of an alias to 'sz92x<LF>'"
+nl_alias_case c/alias-mid "alias to a target with a newline in the middle ('sz95<LF>b')"
+# Control: the neighbour itself is still measured (the guard is not over-broad).
+banner_run "$TEST_HOME/out-nla-ctl" apply 1 0 en c/sz95
+assert_file_contains "$TEST_HOME/out-nla-ctl" "Space that would be excluded (simulated): 95K" "control: the real neighbour is measured"
+
+# normalize_path_into is newline-exact (and plain names resolve as before).
+nl_norm() {
+    bash -c 'source "$1"; normalize_path_into "$2"; printf "%s" "$NORMALIZED_PATH"' _ "$B_FUNCS" "$1"
+}
+# Sentinel "x": $(...) would strip the very newline under test.
+assert_eq "$B_PHYS/c/sz92x"$'\n'"x" "$(nl_norm "$B_HOME/c/alias-chain"; printf x)" \
+    "normalize_path_into keeps the trailing newline of a resolved link target"
+assert_eq "$B_PHYS/c/sz95"$'\n'"b" "$(nl_norm "$B_HOME/c/alias-mid")" \
+    "normalize_path_into keeps a newline in the middle of a name (no truncation at the first line)"
+assert_eq "$B_PHYS/c/sz95" "$(nl_norm "$B_HOME/c/../c/./sz95/")" "plain names (dots, trailing slash) resolve as before"
+
 if [[ "$TESTS_RUN" -eq 0 ]]; then
     echo "FAIL: no assertion was executed" >&2
     exit 1

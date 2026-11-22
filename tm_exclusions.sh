@@ -493,13 +493,13 @@ du_track_path() {
 # Shared by DU_PATHS (every path touched) and EXCL_PATHS (newly excluded, #44).
 path_set_add() {
     local set="$1" p="$2" entry normalized retained=""
-    # Checked on the RAW name, before normalize_path: its $(...) capture strips
-    # trailing newlines, so a path named "small<LF>" would otherwise collapse onto
-    # the neighbouring "small" and be measured as that directory (#44 review).
-    # The set is newline-delimited and cannot hold such names anyway.
-    case "$p" in
-        *$'\n'*) printf '%s' "$set"; return 0 ;;
-    esac
+    # The set is newline-delimited and cannot hold a name with a newline: reject
+    # it on the raw AND the resolved path (an alias to "small<LF>" must not
+    # collapse onto the neighbouring "small", #44 review).
+    if path_resolves_with_newline "$p"; then
+        printf '%s' "$set"
+        return 0
+    fi
     if ! p="$(normalize_path "$p")"; then
         printf '%s' "$set"
         return 0
@@ -544,9 +544,10 @@ excl_track_path() {
     du_enabled || return 0
     # The path set is newline-delimited, so a name containing a newline cannot be
     # stored: count it as unmeasured rather than silently dropping its size.
-    case "$p" in
-        *$'\n'*) EXCL_UNTRACKED=$((EXCL_UNTRACKED + 1)); return 0 ;;
-    esac
+    if path_resolves_with_newline "$p"; then
+        EXCL_UNTRACKED=$((EXCL_UNTRACKED + 1))
+        return 0
+    fi
     EXCL_PATHS="$(path_set_add "$EXCL_PATHS" "$p")"
 }
 
@@ -743,9 +744,10 @@ path_size_column() {
     local p="$1" np="" szk=""
     # A newline in the name cannot live in the newline-delimited cache: report
     # it as unmeasured without running du at all (#44 review).
-    case "$p" in
-        *$'\n'*) PATH_SIZE_COL="-"; return 0 ;;
-    esac
+    if path_resolves_with_newline "$p"; then
+        PATH_SIZE_COL="-"
+        return 0
+    fi
     if [[ -n "$p" && -e "$p" ]]; then
         if ! np="$(normalize_path "$p")"; then np="$p"; fi
         # Consult the cache before measuring: a repeated rule (same path twice)
@@ -1466,22 +1468,60 @@ EOF
 }
 
 # Normalize dot components and existing symlink prefixes without requiring realpath.
-normalize_path() {
-    local path="$1" part normalized="" physical
-    local -a parts
-    IFS='/' read -r -a parts <<< "$path"
-    for part in "${parts[@]}"; do
+#
+# normalize_path_into sets NORMALIZED_PATH (no subshell, so newlines survive) and
+# is newline-exact: components are split with parameter expansion (`read` would
+# stop at the first newline of the name) and the physical path of each existing
+# directory is captured with an "x" sentinel, so a trailing newline in a name
+# (e.g. a link target "small<LF>") is not stripped by $(...) and cannot collapse
+# onto the neighbouring "small" (#44 review; same family as physical_dir, #89).
+# Only the newline appended by pwd is removed. Names without a newline resolve
+# exactly as before.
+NORMALIZED_PATH=""
+normalize_path_into() {
+    local rest="$1" part normalized="" physical
+    while :; do
+        part="${rest%%/*}"
         case "$part" in
             ''|.) ;;
             ..) normalized="${normalized%/*}" ;;
             *) normalized="${normalized}/$part" ;;
         esac
         if [[ -d "${normalized:-/}" ]]; then
-            physical="$(cd -P "${normalized:-/}" 2>/dev/null && pwd)" || return 1
+            physical="$(cd -P -- "${normalized:-/}" 2>/dev/null && { pwd -P; printf x; })" || return 1
+            physical="${physical%x}"
+            physical="${physical%$'\n'}"
             normalized="${physical%/}"
         fi
+        case "$rest" in
+            */*) rest="${rest#*/}" ;;
+            *) break ;;
+        esac
     done
-    printf '%s\n' "${normalized:-/}"
+    NORMALIZED_PATH="${normalized:-/}"
+}
+
+# Normalized path on stdout. Callers capture it with $(...), which strips any
+# trailing newline of the OUTPUT: paths that may contain a newline must use
+# normalize_path_into / path_resolves_with_newline instead.
+normalize_path() {
+    normalize_path_into "$1" || return 1
+    printf '%s\n' "$NORMALIZED_PATH"
+}
+
+# True when $1 — raw or once links and dot components are resolved — contains a
+# newline. Such paths cannot be stored in the newline-delimited size caches and
+# are never measured (#44): checking only the raw name misses an alias whose
+# target name ends in a newline.
+path_resolves_with_newline() {
+    case "$1" in
+        *$'\n'*) return 0 ;;
+    esac
+    normalize_path_into "$1" || return 1
+    case "$NORMALIZED_PATH" in
+        *$'\n'*) return 0 ;;
+    esac
+    return 1
 }
 
 # Reject both descendants and ancestors: excluding a parent would defeat keep.
