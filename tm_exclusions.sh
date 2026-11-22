@@ -484,23 +484,20 @@ EOF
 # resolved name holds a newline: `$(...)` strips a trailing newline, so an alias
 # to "small<LF>" resolves (in normalize_path) to the neighbouring "small" and its
 # size would be shown instead (#44 review). Such paths are never measured and
-# count as unmeasured. Returns 1 (safe) otherwise, including when resolution
-# fails (the caller then keeps its pre-existing fallback to the raw path).
+# count as unmeasured. Returns 1 (safe) otherwise.
+#
+# Rule: a path that holds a symlink or ".." and whose physical resolution FAILS
+# is unsafe too — never fall back to measuring the raw path.
 #
 # Cheap by construction: a path without newline, without "." / ".." component
 # and with no symlink among its prefixes (the usual case) is decided with shell
-# builtins only — no subshell. Only otherwise are the components resolved, once,
-# with an "x" sentinel and a separately tested `cd -P && pwd -P`. The last
-# answer is memoized: process_path asks about the same path three times.
-# Must not run inside $(...) (the memo would be lost, not wrong).
-SIZE_UNSAFE_PATH=""
-SIZE_UNSAFE_SET=0
-SIZE_UNSAFE_RC=1
+# builtins only — no subshell, no cd. Only otherwise are the components resolved
+# with an "x" sentinel and a separately tested `cd -P && pwd -P`. No memo:
+# process_path asks once per processed path and keeps the answer in
+# SIZE_UNSAFE_NOW, so it can never be stale for the next rule.
+SIZE_UNSAFE_NOW=0
 size_path_unsafe() {
     local p="$1" rest part prefix="" slow=0 normalized="" physical out rc=1
-    if [[ "$SIZE_UNSAFE_SET" -eq 1 && "$p" = "$SIZE_UNSAFE_PATH" ]]; then
-        return "$SIZE_UNSAFE_RC"
-    fi
     case "$p" in
         *$'\n'*) rc=0 ;;
         *)
@@ -532,7 +529,7 @@ size_path_unsafe() {
                     esac
                     if [[ -d "${normalized:-/}" ]]; then
                         # cd and pwd failures are propagated, not masked by the sentinel.
-                        out="$(cd -P -- "${normalized:-/}" 2>/dev/null && pwd -P && printf x)" || break
+                        out="$(cd -P -- "${normalized:-/}" 2>/dev/null && pwd -P && printf x)" || { rc=0; break; }
                         physical="${out%x}"
                         physical="${physical%$'\n'}"
                         case "$physical" in
@@ -548,9 +545,6 @@ size_path_unsafe() {
             fi
             ;;
     esac
-    SIZE_UNSAFE_PATH="$p"
-    SIZE_UNSAFE_SET=1
-    SIZE_UNSAFE_RC="$rc"
     return "$rc"
 }
 
@@ -560,7 +554,7 @@ du_track_path() {
     [[ -z "$p" || ! -e "$p" ]] && return 0
     # Size bookkeeping only: never record a name whose measurement would hit the
     # wrong directory (#44).
-    if size_path_unsafe "$p"; then return 0; fi
+    if [[ "$SIZE_UNSAFE_NOW" -eq 1 ]]; then return 0; fi
     DU_PATHS="$(path_set_add "$DU_PATHS" "$p")"
 }
 
@@ -568,9 +562,8 @@ du_track_path() {
 # spellings: symlinked and `..`-relative duplicates must not inflate a total,
 # and stored entries are normalized on the way in too. A path already covered
 # by a stored ancestor is not added; stored descendants of $2 are dropped.
-# Shared by DU_PATHS (every path touched) and EXCL_PATHS (newly excluded, #44);
-# same logic as the former inline du_track_path. It makes no newline decision:
-# callers skip unsafe names first (size_path_unsafe).
+# Same logic as the former inline du_track_path (used only by it); it makes no
+# newline decision: du_track_path skips unsafe names first (size_path_unsafe).
 path_set_add() {
     local set="$1" p="$2" entry normalized retained=""
     if ! p="$(normalize_path "$p")"; then
@@ -610,18 +603,30 @@ EXCL_UNTRACKED=0
 EXCL_FIRST_PATH=""
 TIP_PATH=""
 
+# Records $1 for the space figure, reusing the normalized path that
+# path_size_column already computed for its size cache key (PATH_SIZE_NP): no
+# second normalization, so no extra cd -P per path. Entries are stored
+# normalized, so nesting is decided with path_under only (builtins). A path
+# whose name is unsafe to measure, or that has no normalized form, is counted
+# as unmeasured instead (never a wrong or silently dropped size).
 excl_track_path() {
-    local p="$1"
+    local p="$1" entry retained=""
     [[ -z "$p" || ! -e "$p" ]] && return 0
     if [[ -z "$EXCL_FIRST_PATH" ]]; then EXCL_FIRST_PATH="$p"; fi
     du_enabled || return 0
-    # The path set is newline-delimited, so a name containing a newline cannot be
-    # stored: count it as unmeasured rather than silently dropping its size.
-    if size_path_unsafe "$p"; then
+    if [[ "$SIZE_UNSAFE_NOW" -eq 1 || -z "$PATH_SIZE_NP" ]]; then
         EXCL_UNTRACKED=$((EXCL_UNTRACKED + 1))
         return 0
     fi
-    EXCL_PATHS="$(path_set_add "$EXCL_PATHS" "$p")"
+    while IFS= read -r entry; do
+        [[ -z "$entry" ]] && continue
+        if path_under "$PATH_SIZE_NP" "$entry"; then return 0; fi
+        if ! path_under "$entry" "$PATH_SIZE_NP"; then retained="${retained}${entry}
+"; fi
+    done <<EOF
+${EXCL_PATHS}
+EOF
+    EXCL_PATHS="${retained}${PATH_SIZE_NP}"
 }
 
 # Sets EXCL_TOTAL_KB / EXCL_MEASURED / EXCL_UNKNOWN from EXCL_PATHS using the
@@ -811,18 +816,22 @@ EOF
 # when du is disabled (#45). Not meant to be captured with $() — it records the
 # KiB size in DU_SIZES as a side effect, which a subshell would discard.
 PATH_SIZE_COL=""
+# Normalized form of the last path measured (the cache key); read by excl_track_path.
+PATH_SIZE_NP=""
 path_size_column() {
     PATH_SIZE_COL=""
+    PATH_SIZE_NP=""
     du_enabled || return 0
     local p="$1" np="" szk=""
-    # A newline in the name cannot live in the newline-delimited cache: report
-    # it as unmeasured without running du at all (#44 review).
-    if size_path_unsafe "$p"; then
+    # A name that cannot be measured safely (newline, see size_path_unsafe) is
+    # unmeasured: no du at all (#44 review).
+    if [[ "$SIZE_UNSAFE_NOW" -eq 1 ]]; then
         PATH_SIZE_COL="-"
         return 0
     fi
     if [[ -n "$p" && -e "$p" ]]; then
         if ! np="$(normalize_path "$p")"; then np="$p"; fi
+        PATH_SIZE_NP="$np"
         # Consult the cache before measuring: a repeated rule (same path twice)
         # must not walk the same tree again (#45).
         if ! szk="$(du_size_lookup "$np")"; then
@@ -1641,6 +1650,9 @@ process_path() {
         # leftover Time Machine records are cleaned and failures are reported.
         status=0
     fi
+    # One decision per processed path (no memo): used by the three size helpers.
+    SIZE_UNSAFE_NOW=0
+    if size_path_unsafe "$path"; then SIZE_UNSAFE_NOW=1; fi
     du_track_path "$path"
     if [[ -z "$TIP_PATH" && -e "$path" ]]; then TIP_PATH="$path"; fi
     # Size computed once here and reused by the report; hidden when SKIP_DU=1.

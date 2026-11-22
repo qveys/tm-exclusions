@@ -83,15 +83,20 @@ banner_run() {
     : > "$B_ALL"
     : > "$B_DU_CALLS"
     (
+        # shellcheck disable=SC2030
         export HOME="$B_HOME"
         # shellcheck disable=SC2030
         export PATH="$B_BIN:$PATH"
+        # shellcheck disable=SC2030
         export TM_EXCLUSIONS_REPORT="$B_HOME/report.txt"
         # shellcheck disable=SC1090
         source "$B_FUNCS"
         # shellcheck disable=SC1090
         source "$ROOT/locales/${lang}.sh"
         "declare_i18n_${lang}"
+        # Optional hook for tests: shell code run after the script is loaded
+        # (e.g. to make pwd -P fail).
+        if [[ -n "${B_PRELUDE:-}" ]]; then eval "$B_PRELUDE"; fi
         # shellcheck disable=SC2034
         MODE="$mode"
         # shellcheck disable=SC2034
@@ -289,7 +294,7 @@ assert_eq 0 "$(grep -c 'c/new' "$B_DU_CALLS" || true)" \
 assert_eq 1 "$(grep -Fxc "$B_PHYS/c/sz1024" "$B_DU_CALLS")" "the other path was still measured exactly once"
 
 echo ""
-echo "--- Audit mode (--report) and French locale ---"
+echo "--- Audit mode (--report-only) and French locale ---"
 banner_run "$TEST_HOME/out-audit" report-only 0 0 en c/sz1024
 assert_file_contains "$TEST_HOME/out-audit" "Space needing exclusion: 1.0M" "audit labels the space as needing exclusion"
 assert_file_lacks_regex "$TEST_HOME/out-audit" 'Simulated run' "audit is not a simulated run"
@@ -569,26 +574,103 @@ assert_file_contains "$B_HOME/keep-report.txt" "KEEP  " "keep via alias: uninsta
 assert_eq 0 "$(wc -l < "$B_CALLS" | tr -d ' ')" "keep via alias: uninstall makes no mutation call"
 
 echo ""
-echo "--- Cost: the size guard adds no subshell/cd for ordinary paths ---"
-cd_count() {
-    local mode="$1" cnt="$TEST_HOME/cd.count"
+echo "--- A failing physical resolution is unmeasured, never a raw-path fallback ---"
+# pwd -P fails while plain pwd works: normalize_path (plain pwd) would still
+# resolve the alias to the neighbouring 'sz92x' and du would measure it.
+# shellcheck disable=SC2016
+B_PRELUDE='pwd() { if [ "${1:-}" = "-P" ]; then return 1; fi; builtin pwd "$@"; }' \
+    banner_run "$TEST_HOME/out-pwdfail" apply 1 0 en c/alias-abs
+assert_file_lacks_regex "$TEST_HOME/out-pwdfail" 'sz92x|92K' "pwd -P failing: nothing borrowed from the neighbour"
+assert_file_contains "$TEST_HOME/out-pwdfail" "Space that would be excluded (simulated): unknown (sizes could not be read)" \
+    "pwd -P failing on a link: counted unmeasured, no raw-path fallback"
+assert_eq 0 "$(wc -l < "$B_DU_CALLS" | tr -d ' ')" "pwd -P failing: du never called"
+
+echo ""
+echo "--- An alias redirected between two rules is re-decided (no stale answer) ---"
+mkdir -p "$B_HOME/c/redir-target-ok"
+ln -sfn "$B_HOME/c/sz1024" "$B_HOME/c/redir"
+: > "$B_DU_CALLS"
+(
+    # shellcheck disable=SC2031
+    export HOME="$B_HOME" TM_EXCLUSIONS_REPORT="$B_HOME/report.txt"
+    # shellcheck disable=SC2030,SC2031
+    export PATH="$B_BIN:$PATH"
+    # shellcheck disable=SC1090
+    source "$B_FUNCS"
+    # shellcheck disable=SC1090
+    source "$ROOT/locales/en.sh"
+    declare_i18n_en
+    # shellcheck disable=SC2034
+    MODE=apply DRY_RUN=1 QUIET=0 UI=1 HAS_TMUTIL=1
+    process_path "$B_HOME/c/redir"
+    ln -sfn "$B_HOME/$NLA_TARGET" "$B_HOME/c/redir"
+    process_path "$B_HOME/c/redir"
+    generate_report
+) > "$TEST_HOME/out-redir" 2>&1 || true
+assert_file_contains "$TEST_HOME/out-redir" "Space that would be excluded (simulated): ≥ 1.0M (partial, unmeasured paths: 1)" \
+    "second rule on the redirected alias is unmeasured, the first stays exact"
+assert_file_lacks_regex "$TEST_HOME/out-redir" '92K' "redirected alias never shows the neighbour's 92K"
+assert_eq 0 "$(grep -c 'c/sz92x' "$B_DU_CALLS" || true)" "du never called on the neighbour after the redirect"
+
+echo ""
+echo "--- Cost: cd -P resolutions vs master (frozen reference), deterministic count ---"
+# Master's size bookkeeping per processed path is ref_du_track_path + the one
+# normalize_path of path_size_column; with no keep and a path under HOME nothing
+# else in process_path resolves. 25 distinct ordinary paths, dry-run. Counting
+# is a cd wrapper logging each call (functions are inherited by $(...)).
+COST_ROOT="$B_PHYS/cost"
+mkdir -p "$COST_ROOT"
+for i in $(seq 1 25); do mkdir -p "$COST_ROOT/proj$i/node_modules/cache"; done
+cost_paths() { for i in $(seq 1 25); do printf '%s\n' "$COST_ROOT/proj$i/node_modules/cache"; done; }
+cd_calls_master() {
+    local cnt="$TEST_HOME/cd.master"
     : > "$cnt"
-    bash -c '
-        source "$1"; source "$2/locales/en.sh"; declare_i18n_en
-        if [ "$3" = noguard ]; then size_path_unsafe() { return 1; }; fi
-        CD_LOG="$4"
+    cost_paths | CD_LOG="$cnt" bash -c '
+        source "$1"; source "$2"; DU_PATHS=""
         cd() { echo x >> "$CD_LOG"; builtin cd "$@"; }
-        MODE=apply; DRY_RUN=1; QUIET=1; UI=0; HAS_TMUTIL=1
-        process_path "$5"' _ "$B_FUNCS" "$ROOT" "$mode" "$cnt" "$B_PHYS/c/sz1024" >/dev/null 2>&1 || true
+        while IFS= read -r p; do
+            ref_du_track_path "$p"
+            np="$(ref_normalize_path "$p")"
+        done' _ "$B_FUNCS" "$B_REF"
     wc -l < "$cnt" | tr -d ' '
 }
-# shellcheck disable=SC2031
-HOME="$B_PHYS" PATH="$B_BIN:$PATH" cd_count guard > "$TEST_HOME/cd-guard"
-# shellcheck disable=SC2031
-HOME="$B_PHYS" PATH="$B_BIN:$PATH" cd_count noguard > "$TEST_HOME/cd-noguard"
-assert_true "baseline sanity: process_path resolves prefixes (cd calls > 0)" test "$(cat "$TEST_HOME/cd-noguard")" -gt 0
-assert_eq "$(cat "$TEST_HOME/cd-noguard")" "$(cat "$TEST_HOME/cd-guard")" \
-    "ordinary path: same number of cd -P resolutions with and without the size guard"
+cd_calls_pr() {
+    local cnt="$TEST_HOME/cd.pr"
+    : > "$cnt"
+    # shellcheck disable=SC2031
+    cost_paths | HOME="$B_PHYS" PATH="$B_BIN:$PATH" CD_LOG="$cnt" bash -c '
+        source "$1"; source "$2/locales/en.sh"; declare_i18n_en
+        cd() { echo x >> "$CD_LOG"; builtin cd "$@"; }
+        MODE=apply; DRY_RUN=1; QUIET=1; UI=0; HAS_TMUTIL=1
+        while IFS= read -r p; do process_path "$p"; done' _ "$B_FUNCS" "$ROOT" >/dev/null 2>&1
+    wc -l < "$cnt" | tr -d ' '
+}
+COST_MASTER="$(cd_calls_master)"
+COST_PR="$(cd_calls_pr)"
+assert_true "baseline sanity: the frozen master bookkeeping resolves prefixes ($COST_MASTER cd calls)" test "$COST_MASTER" -gt 100
+assert_true "dry-run cd -P calls on 25 ordinary paths: PR ($COST_PR) <= master ($COST_MASTER) + 10" \
+    test "$COST_PR" -le $((COST_MASTER + 10))
+
+echo ""
+echo "--- Documented options exist and the documented modes run ---"
+HELP_OUT="$(bash "$TM_EXCLUSIONS" --help 2>&1 || true)"
+doc_options() {
+    {
+        awk '/The final summary is a banner/{f=1} f{print} f&&/^$/{exit}' "$ROOT/README.md"
+        grep -F '[#44]' "$ROOT/CHANGELOG.md" | head -n 1
+        awk '/^### End-of-run banner/{f=1;next} f&&NF{print;exit}' "$ROOT/docs/ARCHITECTURE.md"
+    } | grep -oE -e '--[a-z][a-z-]*' | sort -u
+}
+DOC_OPTS="$(doc_options)"
+assert_true "the #44 docs mention command-line options (extraction works)" test -n "$DOC_OPTS"
+while IFS= read -r opt; do
+    [[ -n "$opt" ]] || continue
+    # Whole option name: "--report" must not match "--report-only".
+    assert_true "documented option $opt is listed by --help" grep -qE -e "(^|[^a-z-])${opt}([^a-z-]|\$)" <<<"$HELP_OUT"
+done <<<"$DOC_OPTS"
+assert_exit_code 0 "documented --report-only run exits 0" cli_run "$TEST_HOME/cli-audit" --report-only
+assert_file_contains "$B_HOME/cli-report.txt" "Space needing exclusion: 2.0M" "documented --report-only labels the space as needing exclusion"
+assert_exit_code 1 "the former wrong spelling --report is rejected (docs must not use it)" cli_run "$TEST_HOME/cli-badopt" --report
 
 if [[ "$TESTS_RUN" -eq 0 ]]; then
     echo "FAIL: no assertion was executed" >&2
