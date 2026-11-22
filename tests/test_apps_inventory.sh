@@ -115,9 +115,19 @@ EMPTY="$TEST_DIR/empty_apps"
 mkdir -p "$EMPTY"
 MISSING="$TEST_DIR/does_not_exist"
 
-# Load the functions only (drop the trailing `main "$@"` call).
-# shellcheck disable=SC1090
-source <(sed '/^main /d' "$TM_EXCLUSIONS")
+# Load the functions only (drop the trailing `main "$@"` call). Temp file
+# (removed with TEST_DIR by the EXIT trap) instead of process substitution:
+# `source <(...)` returns 0 without defining anything under Bash 3.2 (macOS
+# default), which would turn this whole suite into a silent false green.
+sed '/^main /d' "$TM_EXCLUSIONS" > "$TEST_DIR/tm_exclusions_functions.sh"
+# shellcheck disable=SC1091
+source "$TEST_DIR/tm_exclusions_functions.sh"
+for fn in list_app_bundles build_apps_inventory declare_i18n_en; do
+    if [[ "$fn" != declare_i18n_en ]] && ! type "$fn" >/dev/null 2>&1; then
+        echo "FAIL: $fn was not loaded from $TM_EXCLUSIONS (source failed silently?)" >&2
+        exit 1
+    fi
+done
 # shellcheck source=locales/en.sh
 source "${ROOT}/locales/en.sh"
 declare_i18n_en
@@ -332,4 +342,9 @@ assert_true "report still generated without ~/Applications" \
 assert_true "no ~/Applications entries when the folder is missing" \
     not grep -qF "$HOME/Applications" "$TM_EXCLUSIONS_REPORT"
 
+# A suite that ran nothing must never pass.
+if [[ "$TESTS_RUN" -le 0 ]]; then
+    echo "FAIL: no assertion was executed" >&2
+    exit 1
+fi
 test_summary
