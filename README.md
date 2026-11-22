@@ -478,9 +478,20 @@ make test-summary  # Same suites, quiet: totals + only the failed assertions (no
 make lint     # ShellCheck on all .sh files
 make check-conf  # Validate config/*.conf syntax (also part of make check)
 make check-i18n  # Verify en/fr locales define the same MSG_* keys (also part of make check)
+make setup    # Activate the local git hooks (core.hooksPath = .githooks), incl. the pre-commit lint hook
 make version  # Print the current tm-exclusions version
 make install  # Homebrew bin if writable, else /usr/local (admin prompt if needed)
 ```
+
+### Pre-commit hook
+
+`make setup` points `core.hooksPath` at `.githooks/`, which activates [`.githooks/pre-commit`](.githooks/pre-commit). It only looks at the files **staged** for the commit (never the whole working tree) and stays fast:
+
+- staged `*.sh` → ShellCheck (same options as `make lint`); `locales/*.sh` → `bash -n`;
+- staged `*.conf` → `scripts/check-conf.sh` (config syntax);
+- a locale file staged without its sibling → non-blocking reminder to run `make check-i18n`.
+
+A ShellCheck or config error blocks the commit; a missing `shellcheck` only prints a warning (CI still lints). Bypass once with `git commit --no-verify`; disable for good with `git config --unset core.hooksPath` (re-enable with `make setup`).
 
 ### Releasing
 

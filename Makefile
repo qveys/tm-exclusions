@@ -60,7 +60,11 @@ OSASCRIPT_OR_DIE = \
 _ := $(shell git config core.hooksPath .githooks 2>/dev/null)
 
 setup: ## Explicitly install local Git hooks (also runs automatically on any 'make' invocation)
-	@git config core.hooksPath .githooks
+	@prev="$$(git config --get core.hooksPath 2>/dev/null || true)"; \
+	if [ -n "$$prev" ] && [ "$$prev" != ".githooks" ]; then \
+	  echo "Note: core.hooksPath was '$$prev'; switching to .githooks (previous value: $$prev)." >&2; \
+	fi; \
+	git config core.hooksPath .githooks
 	@set -e; \
 	HOOKS_DIR=$$(git rev-parse --git-common-dir)/hooks; \
 	mkdir -p "$$HOOKS_DIR"; \
@@ -68,7 +72,7 @@ setup: ## Explicitly install local Git hooks (also runs automatically on any 'ma
 	install -m 755 .githooks/prepare-commit-msg-fallback "$$HOOKS_DIR/prepare-commit-msg"; \
 	install -m 755 .githooks/post-checkout-fallback "$$HOOKS_DIR/post-checkout"; \
 	install -m 755 .githooks/post-merge-fallback "$$HOOKS_DIR/post-merge"
-	@echo "Git hooks installed (commit-msg, prepare-commit-msg, post-checkout, post-merge). Conventional Commits will be enforced on every commit."
+	@echo "Git hooks installed (pre-commit, commit-msg, prepare-commit-msg, post-checkout, post-merge). Conventional Commits are enforced and staged .sh/.conf files are checked on every commit (bypass once: git commit --no-verify; disable: git config --unset core.hooksPath)."
 
 check-hooks: ## Verify that the local Git hooks are active; exit 1 if not
 	@HOOKS_PATH=$$(git config core.hooksPath 2>/dev/null); \
@@ -108,6 +112,8 @@ test: ## Run smoke tests
 	@bash tests/test_apps_inventory.sh
 	@echo "Running PATH tools inventory tests..."
 	@bash tests/test_path_inventory.sh
+	@echo "Running pre-commit hook tests..."
+	@bash tests/test_pre_commit.sh
 
 test-summary: ## Run all test suites quietly; print totals and only the failures (nonzero on failure)
 	@bash scripts/test-summary.sh
@@ -148,6 +154,8 @@ lint: ## Run ShellCheck on all shell scripts and syntax-check locale tables
 	@shellcheck -x -s bash tests/test_apps_inventory.sh
 	@shellcheck -x -s bash tests/test_path_inventory.sh
 	@shellcheck -x -s bash scripts/test-summary.sh
+	@shellcheck -x -s bash .githooks/pre-commit
+	@shellcheck -x -s bash tests/test_pre_commit.sh
 	@echo "ShellCheck passed."
 
 install: setup ## Install tm-exclusions to PREFIX (Homebrew bin if writable, else /usr/local/bin)

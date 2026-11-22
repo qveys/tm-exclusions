@@ -7,7 +7,7 @@ Thanks for considering a contribution. This is a small Bash project — keep PRs
 ```bash
 git clone https://github.com/qveys/tm-exclusions.git
 cd tm-exclusions
-make setup    # install local git hooks (Conventional Commits, etc.)
+make setup    # install local git hooks (Conventional Commits, staged-file lint, etc.)
 make check    # lint + smoke tests
 ```
 
@@ -19,6 +19,10 @@ See [`AGENTS.md`](AGENTS.md) for the full architecture, build commands, and Bash
 - **No external runtime dependencies.** The CLI must work on a stock macOS install.
 - **`--dry-run` first.** Any change to `tmutil` calls must be testable in dry-run mode.
 - **Keep tests deterministic.** `tests/smoke.bats-like.sh` runs against `--dry-run`; it must not require sudo or real `tmutil` state.
+
+## Pre-commit checks
+
+`make setup` also activates the [`pre-commit`](.githooks/pre-commit) hook: staged `.sh` files are checked with ShellCheck, staged `.conf` files with `scripts/check-conf.sh`, and editing one locale file without the other prints a reminder (`make check-i18n`). It only inspects staged files, so it is fast; `make check` remains the full gate. Skip it once with `git commit --no-verify`; disable it with `git config --unset core.hooksPath`.
 
 ## Commit style
 
