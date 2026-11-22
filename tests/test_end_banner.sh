@@ -725,7 +725,7 @@ WORK="$2"
 EXCL_FILE="$WORK/excl.cmp"
 POOL=("/r/Foo" "/r/foo/a" "/r/FOO/A/b" "/r/foobar" "/r/foo bar" "/r/foo-bar" "/r/foo/c" \
       "/r/x1" "/r/x2" "/r/x3" "/r/x4" "/r/x5" "/r/x6" "/r/x7" "/r/x8" "/r/x9" "/r/x10" "/r/X10/z" \
-      "/r/y" "/r/Y/q" "/r/foo/a/b2" "/r/Foo")
+      "/r/y" "/r/Y/q" "/r/foo/a/b2" "/r/Foo" "/r/X10")
 KBS=("" "8" "100" "1024" "5" "")
 NP=${#POOL[@]}
 FOLD=()
@@ -842,8 +842,13 @@ for size in 10 11 12 14; do
     done
 done
 # Targeted: nine independent entries, then a directory and its second spelling (x10 sorts before x9).
-SAVE_I=(7 8 9 10 11 12 13 14 15 16 1); SAVE_K=(1 1 1 1 1 1 1 1 1 8 8)
-n=11; E_I=("${SAVE_I[@]}"); E_K=("${SAVE_K[@]}"); ref; check
+# 16 = /r/x10 (5K) and 22 = /r/X10 (8K) are two spellings of one key: they must merge into a
+# single 8K contribution, next to nine independent 1K paths -> total 17, 10 measured, 0 unknown.
+SAVE_I=(7 8 9 10 11 12 13 14 15 16 22); SAVE_K=(1 1 1 1 1 1 1 1 1 5 8)
+n=11; E_I=("${SAVE_I[@]}"); E_K=("${SAVE_K[@]}"); ref
+if [[ "$R_TOTAL $R_MEAS $R_UNK" != "17 10 0" ]]; then echo "MISMATCH reference for the targeted case: $R_TOTAL $R_MEAS $R_UNK"; BAD=$((BAD + 1)); fi
+check
+if [[ "$EXCL_TOTAL_KB $EXCL_MEASURED $EXCL_UNKNOWN" != "17 10 0" ]]; then echo "MISMATCH targeted merge case: $EXCL_TOTAL_KB $EXCL_MEASURED $EXCL_UNKNOWN"; fi
 echo "CASES=$CASES BAD=$BAD"
 CMPEOF
 CMP_OUT="$(bash "$TEST_HOME/cmp.sh" "$B_FUNCS" "$TEST_HOME" 2>&1)" || true
@@ -853,17 +858,17 @@ printf '%s\n' "$CMP_OUT" | grep '^MISMATCH' || true
 
 echo ""
 echo "--- Nine independent paths, then a directory and its alias (index 10 vs 9) ---"
-for k in 1 2 3 4 5 6 7 8 9; do mkdir -p "$B_HOME/c/ind$k/sz1"; done
+for k in 1 2 3 4 5 6 7 8 9; do mkdir -p "$B_HOME/c/ind$k/sz128"; done
 mkdir -p "$B_HOME/c/sz8192x"
 ln -sfn sz8192x "$B_HOME/c/Alias8192"
 IND_RULES=""
-for k in 1 2 3 4 5 6 7 8 9; do IND_RULES="$IND_RULES c/ind$k/sz1"; done
+for k in 1 2 3 4 5 6 7 8 9; do IND_RULES="$IND_RULES c/ind$k/sz128"; done
 # shellcheck disable=SC2086
 banner_run "$TEST_HOME/out-ind-fwd" apply 1 0 en $IND_RULES c/sz8192x c/Alias8192
-assert_file_contains "$TEST_HOME/out-ind-fwd" "Space that would be excluded (simulated): 8.0M" "9 independent + directory + alias: 9K + 8192K once (8.0M, not 16M)"
+assert_file_contains "$TEST_HOME/out-ind-fwd" "Space that would be excluded (simulated): 9.1M" "9 independent 128K + directory + alias: 1152K + 8192K once (9.1M; 16M-style double count or one lost path would differ)"
 # shellcheck disable=SC2086
 banner_run "$TEST_HOME/out-ind-rev" apply 1 0 en c/Alias8192 c/sz8192x $IND_RULES
-assert_file_contains "$TEST_HOME/out-ind-rev" "Space that would be excluded (simulated): 8.0M" "same, alias first (order does not matter)"
+assert_file_contains "$TEST_HOME/out-ind-rev" "Space that would be excluded (simulated): 9.1M" "same, alias first (order does not matter)"
 
 echo ""
 echo "--- Aggregation scales: 6000 independent paths ---"
@@ -877,6 +882,32 @@ PERF_OUT="$("$BASH" -c '
     echo "$EXCL_TOTAL_KB $EXCL_MEASURED $EXCL_UNKNOWN $((E - S))"' _ "$B_FUNCS" "$TEST_HOME" 2>&1)" || true
 assert_eq "48000 6000 0" "$(printf '%s' "$PERF_OUT" | cut -d' ' -f1-3)" "6000 independent paths are all summed (6000 x 8K)"
 assert_true "6000 paths aggregate in under 5 s (took $(printf '%s' "$PERF_OUT" | cut -d' ' -f4) s)" test "$(printf '%s' "$PERF_OUT" | cut -d' ' -f4)" -lt 5
+
+echo ""
+echo "--- A failed journal write never produces a numeric total ---"
+# shellcheck disable=SC2016
+WF_SCRIPT='
+    source "$1"
+    d="$2/wf"; mkdir -p "$d/p/c" "$d/p/d"
+    trk() { PATH_SIZE_NP="$1"; PATH_SIZE_KB="$2"; SIZE_UNSAFE_NOW=0; excl_track_path "$1"; }
+    if [ "$3" = fragment ]; then
+        trk "$d/p" 100
+        # printf shim: writes a fragment WITHOUT its newline, then fails.
+        printf() { builtin printf "frag"; return 1; }
+        trk "$d/p/c" 40
+        unset -f printf
+        trk "$d/p/d" 30
+    else
+        EXCL_FILE="$2/no-such-dir/journal"
+        trk "$d/p" 100
+        trk "$d/p/c" 40
+    fi
+    excl_space_compute
+    echo "$EXCL_TOTAL_KB $EXCL_MEASURED $EXCL_UNKNOWN $EXCL_FILE_FAILED"'
+WF_FRAG="$(TMPDIR="$TEST_HOME" "$BASH" -c "$WF_SCRIPT" _ "$B_FUNCS" "$TEST_HOME" fragment 2>&1 | tail -n 1)" || true
+assert_eq "0 0 3 1" "$WF_FRAG" "write fails mid-line, later paths follow: all 3 paths unmeasured, no total (never 140K)"
+WF_BAD="$(TMPDIR="$TEST_HOME" "$BASH" -c "$WF_SCRIPT" _ "$B_FUNCS" "$TEST_HOME" nodir 2>&1 | tail -n 1)" || true
+assert_eq "0 0 2 1" "$WF_BAD" "journal on an unwritable path: both paths unmeasured, no total"
 
 echo ""
 echo "--- Documented limits and unsupported bytes ---"

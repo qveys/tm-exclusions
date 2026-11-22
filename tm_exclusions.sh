@@ -638,6 +638,10 @@ excl_track_path() {
     if printf '%s\t%s\n' "$PATH_SIZE_NP" "$PATH_SIZE_KB" >> "$EXCL_FILE" 2>/dev/null; then
         EXCL_TRACKED=$((EXCL_TRACKED + 1))
     else
+        # A failed write can leave a fragment without its newline: the journal
+        # is no longer trustworthy, so stop writing and let the aggregation
+        # report everything as unmeasured.
+        EXCL_FILE_FAILED=1
         EXCL_UNTRACKED=$((EXCL_UNTRACKED + 1))
     fi
 }
@@ -671,6 +675,11 @@ excl_space_compute() {
     EXCL_TOTAL_KB=0
     EXCL_MEASURED=0
     EXCL_UNKNOWN="$EXCL_UNTRACKED"
+    if [[ "$EXCL_FILE_FAILED" -eq 1 ]]; then
+        # The journal may hold a truncated record: never read it, no false total.
+        EXCL_UNKNOWN=$((EXCL_TRACKED + EXCL_UNTRACKED))
+        return 0
+    fi
     [[ -n "$EXCL_FILE" && "$EXCL_TRACKED" -gt 0 ]] || return 0
     if res="$(LC_ALL=C awk '
             {
