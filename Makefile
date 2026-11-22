@@ -1,4 +1,4 @@
-.PHONY: setup check-hooks help test lint check-conf check-i18n install uninstall check release tag version auto-patch
+.PHONY: setup check-hooks help test test-summary lint check-conf check-i18n install uninstall check release tag version auto-patch
 
 SCRIPT = tm_exclusions.sh
 # Homebrew bin if writable (typical Apple Silicon), else /usr/local/bin.
@@ -102,6 +102,11 @@ test: ## Run smoke tests
 	@bash tests/test_categories.sh
 	@echo "Running single-find scan tests..."
 	@bash tests/test_scan_single_find.sh
+	@echo "Running test-summary runner tests..."
+	@bash tests/test_summary.sh
+
+test-summary: ## Run all test suites quietly; print totals and only the failures (nonzero on failure)
+	@bash scripts/test-summary.sh
 
 check-conf: ## Validate the syntax of the repository config/*.conf files
 	@bash scripts/check-conf.sh
@@ -135,6 +140,8 @@ lint: ## Run ShellCheck on all shell scripts and syntax-check locale tables
 	@shellcheck -x -s bash tests/test_check_i18n.sh
 	@shellcheck -x -s bash tests/test_categories.sh
 	@shellcheck -x -s bash tests/test_scan_single_find.sh
+	@shellcheck -x -s bash tests/test_summary.sh
+	@shellcheck -x -s bash scripts/test-summary.sh
 	@echo "ShellCheck passed."
 
 install: setup ## Install tm-exclusions to PREFIX (Homebrew bin if writable, else /usr/local/bin)

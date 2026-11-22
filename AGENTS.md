@@ -31,6 +31,8 @@ This file provides guidance to AI agentic LLM CLI tools when working with code i
   - `bash scripts/check-i18n.sh [en_file fr_file]` (reports `file:line` of keys missing from the other locale; exit 1 on mismatch)
 - Run smoke tests:
   - `make test`
+- Concise pass/fail summary (totals + only failed assertions):
+  - `make test-summary`
 - Run the smoke test script directly:
   - `bash tests/smoke.bats-like.sh`
 - Install locally:
