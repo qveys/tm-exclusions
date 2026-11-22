@@ -120,6 +120,8 @@ test: ## Run smoke tests
 	@bash tests/test_path_inventory.sh
 	@echo "Running pre-commit hook tests..."
 	@bash tests/test_pre_commit.sh
+	@echo "Running end-of-run banner tests..."
+	@bash tests/test_end_banner.sh
 
 test-summary: ## Run all test suites quietly; print totals and only the failures (nonzero on failure)
 	@bash scripts/test-summary.sh
@@ -162,6 +164,7 @@ lint: ## Run ShellCheck on all shell scripts and syntax-check locale tables
 	@shellcheck -x -s bash scripts/test-summary.sh
 	@shellcheck -x -s bash .githooks/pre-commit
 	@shellcheck -x -s bash tests/test_pre_commit.sh
+	@shellcheck -x -s bash tests/test_end_banner.sh
 	@echo "ShellCheck passed."
 
 install: setup ## Install tm-exclusions to PREFIX (Homebrew bin if writable, else /usr/local/bin)

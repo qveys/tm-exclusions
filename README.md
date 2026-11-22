@@ -78,9 +78,24 @@ subheadings.
   Seraient exclus : 12
   Déjà exclus : 25
   Ignorés : 5
+  Chemins absents : 5
   Erreurs : 0
   Usage disque total : 2.0G
+  Espace qui serait exclu (simulé) : 1.2G
+
+  📄 Rapport sauvegardé dans : ~/.config/tm_exclusions/last_report.txt
+  💡 Vérifier une exclusion avec : tmutil isexcluded <path>
 ```
+
+The final summary is a banner: counters (newly excluded / already excluded / skipped / missing),
+the cumulative disk usage of the touched paths, the **space excluded** by this run (sum of the
+`du -sk` sizes already measured for the newly excluded paths, shown as KB/MB/GB; nested paths
+counted once), the saved report path and a `tmutil isexcluded <path>` verification tip. With
+`--dry-run` the banner says the run is **simulated** (nothing changed, projected values); `--report`
+labels the figure "space needing exclusion". If some sizes cannot be read the figure is shown as
+a lower bound (`≥ 1.0M (partial, unmeasured paths: 1)`), or `unknown` when none could be read — never a false
+total. Interactive terminals only: `--quiet`, pipes and `NO_COLOR` runs print no banner (the
+same figure is in the report counters), and `TM_EXCLUSIONS_SKIP_DU=1` hides the size figures.
 
 Try `bash tm_exclusions.sh --dry-run --lang fr` in your terminal.
 Pipes, redirected output, `TERM=dumb` and `NO_COLOR=1` use the same compact
