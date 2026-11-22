@@ -1969,8 +1969,9 @@ build_apps_inventory() {
                 disp="$p"
                 ;;
         esac
-        # Field 1 = path, field 2 = size when already known (\001-separated:
-        # a path may contain tabs).
+        # "<path>\001<size>", size when already known else empty. The size
+        # never contains \001 but a path may (like tabs, newlines): the awk
+        # below splits at the LAST \001.
         rows="${rows}${disp}"$'\001'"${size}"$'\n'
     done < <(list_app_bundles "$@")
     if [[ "$count" -eq 0 ]]; then
@@ -1993,18 +1994,22 @@ build_apps_inventory() {
     fi
     printf '%s (%s):\n' "${MSG_INVENTORY_APPS}" "$count"
     # Sizes travel through the environment: awk -v would interpret backslashes.
-    printf '%s' "$rows" | LC_ALL=C sort | DU_SH_OUT="$sizes" awk -F '\001' '
+    printf '%s' "$rows" | LC_ALL=C sort | DU_SH_OUT="$sizes" awk '
         BEGIN {
+            sep = sprintf("%c", 1)
             n = split(ENVIRON["DU_SH_OUT"], lines, "\n")
             for (i = 1; i <= n; i++) {
                 t = index(lines[i], "\t")
                 if (t > 1) size[substr(lines[i], t + 1)] = substr(lines[i], 1, t - 1)
             }
         }
-        NF {
-            s = $2
-            if (s == "") s = ($1 in size ? size[$1] : "-")
-            printf "  %s\t%s\n", s, $1
+        length($0) {
+            for (k = length($0); k > 0; k--) if (substr($0, k, 1) == sep) break
+            if (k == 0) next
+            path = substr($0, 1, k - 1)
+            s = substr($0, k + 1)
+            if (s == "") s = (path in size ? size[path] : "-")
+            printf "  %s\t%s\n", s, path
         }
     '
 }

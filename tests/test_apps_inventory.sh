@@ -111,6 +111,9 @@ NL_APP="$SYS/Bad"$'\n'"Name.app"
 mkdir -p "$NL_APP"
 PART="$TEST_DIR/partial_apps"
 mkdir -p "$PART/Good.app" "$PART/Partial Denied.app"
+SEP="$TEST_DIR/sep_apps"
+SEP_APP="$SEP/A"$'\001'"B.app"
+mkdir -p "$SEP_APP"
 EMPTY="$TEST_DIR/empty_apps"
 mkdir -p "$EMPTY"
 MISSING="$TEST_DIR/does_not_exist"
@@ -273,6 +276,17 @@ $inv_part
 EOF
 assert_eq "3" "$(du_call_count)" "failed grouped pass is redone once per bundle (1 + 2 calls)"
 
+# A name containing the internal \001 field separator keeps its full path and
+# its own size (the split happens at the last separator).
+: > "$DU_CALLS"; : > "$DU_ARGS"
+inv_sep="$(build_apps_inventory "$SEP")"
+assert_true "name containing \\001: full path and size are kept" \
+    grep -qxF "$(printf '  42M\t%s' "$SEP_APP")" <<EOF
+$inv_sep
+EOF
+assert_eq "2" "$(printf '%s\n' "$inv_sep" | wc -l | tr -d '[:space:]')" \
+    "name containing \\001: header plus a single entry"
+
 : > "$DU_CALLS"; : > "$DU_ARGS"
 assert_eq "$MSG_INVENTORY_APPS_NONE" "$(build_apps_inventory "$EMPTY" "$MISSING")" \
     "empty and missing roots print the localized notice"
@@ -295,6 +309,9 @@ declare_i18n_en
 run_cli_to() {
     local out="$1"
     shift
+    # A run that fails before writing its report must not be judged on the
+    # previous scenario's report (TM_EXCLUSIONS_REPORT is the file asserted on).
+    rm -f "$TM_EXCLUSIONS_REPORT"
     "$@" > "$out" 2>&1 || true
 }
 
