@@ -1939,21 +1939,28 @@ list_app_bundles() {
 # then one "  <size><TAB><path>" line per bundle, sorted by path. Sizes come from
 # a single `du -sh -H` pass (-H: a link is measured as its target, not as 0B);
 # xargs only batches it when the argument list is huge, so the cost stays
-# bounded. A bundle whose size cannot be read shows "-". A path containing a
-# newline would break du's line output, so it is measured by its own du call
+# bounded. A bundle whose size cannot be read shows "-": an unreadable
+# subdirectory makes du exit non-zero while still printing a PARTIAL total, so
+# when the grouped pass fails every bundle is measured again on its own and
+# only measurements with a zero status are kept. A path containing a newline
+# would break du's line output, so it is always measured by its own du call
 # and shown with the newline written as \n. Prints a notice instead when no
 # bundle is found.
 build_apps_inventory() {
     local -a plain=()
-    local p count=0 size sizes="" rows="" disp
+    local p count=0 size sizes="" rows="" disp out grouped_rc=0
     while IFS= read -r -d '' p; do
         count=$((count + 1))
         size=""
         case "$p" in
             *$'\n'*)
-                # Only the first output line carries the size; du may exit
-                # non-zero on unreadable children, which must not abort.
-                size="$(du -sh -H -- "$p" 2>/dev/null | awk 'NR == 1 { print $1 }' || true)"
+                # Only the first output line carries the size; a non-zero
+                # status (partial total) means "unknown", and must not abort.
+                if out="$(du -sh -H -- "$p" 2>/dev/null)"; then
+                    size="${out%%$'\t'*}"
+                else
+                    size="-"
+                fi
                 [[ -z "$size" ]] && size="-"
                 disp="${p//$'\n'/\\n}"
                 ;;
@@ -1971,9 +1978,18 @@ build_apps_inventory() {
         return 0
     fi
     if [[ "${#plain[@]}" -gt 0 ]]; then
-        # NUL-separated so names with spaces are safe; du exits non-zero on
-        # unreadable children, which must not abort the report.
-        sizes="$(printf '%s\0' "${plain[@]}" | xargs -0 du -sh -H -- 2>/dev/null || true)"
+        # NUL-separated so names with spaces are safe. A failing du (xargs
+        # exits non-zero) must not abort the report, but its totals may be
+        # partial: fall back to one du per bundle and keep only the clean ones.
+        sizes="$(printf '%s\0' "${plain[@]}" | xargs -0 du -sh -H -- 2>/dev/null)" || grouped_rc=$?
+        if [[ "$grouped_rc" -ne 0 ]]; then
+            sizes=""
+            for p in "${plain[@]}"; do
+                if out="$(du -sh -H -- "$p" 2>/dev/null)"; then
+                    sizes="${sizes}${out}"$'\n'
+                fi
+            done
+        fi
     fi
     printf '%s (%s):\n' "${MSG_INVENTORY_APPS}" "$count"
     # Sizes travel through the environment: awk -v would interpret backslashes.

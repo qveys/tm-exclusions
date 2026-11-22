@@ -32,12 +32,15 @@ mkdir -p "$HOME/.config/tm_exclusions" "$TEST_DIR/bin"
 # (DU_CALLS) and every path argument NUL-terminated in DU_ARGS. A path
 # containing "Unreadable" yields no line, like a permission-denied du. Like the
 # real du, a symbolic link is measured as 0B unless -H is given, in which case
-# it is measured as its target (34M here; real bundles are 42M).
+# it is measured as its target (34M here; real bundles are 42M). A path
+# containing "Partial" prints a PARTIAL total (7M) and makes du exit 1, like an
+# app with an unreadable subdirectory.
 cat > "$TEST_DIR/bin/du" <<'STUB'
 #!/bin/sh
 printf '%s\n' "$*" | tr '\n' '~' >> "$DU_CALLS"
 printf '\n' >> "$DU_CALLS"
 h=0
+rc=0
 for a in "$@"; do
     [ "$a" = "-H" ] && h=1
 done
@@ -48,6 +51,7 @@ for a in "$@"; do
     printf '%s\0' "$a" >> "$DU_ARGS"
     case "$a" in
         *Unreadable*) continue ;;
+        *Partial*) printf '7M\t%s\n' "$a"; rc=1; continue ;;
     esac
     if [ -L "$a" ]; then
         if [ "$h" = 1 ]; then printf '34M\t%s\n' "$a"; else printf '0B\t%s\n' "$a"; fi
@@ -55,7 +59,7 @@ for a in "$@"; do
         printf '42M\t%s\n' "$a"
     fi
 done
-exit 0
+exit "$rc"
 STUB
 cat > "$TEST_DIR/bin/tmutil" <<'STUB'
 #!/bin/sh
@@ -105,6 +109,8 @@ ln -s "$TEST_DIR/plain_file" "$SYS/File Link.app"       # link to a file: ignore
 # A file name with a newline (legal on APFS).
 NL_APP="$SYS/Bad"$'\n'"Name.app"
 mkdir -p "$NL_APP"
+PART="$TEST_DIR/partial_apps"
+mkdir -p "$PART/Good.app" "$PART/Partial Denied.app"
 EMPTY="$TEST_DIR/empty_apps"
 mkdir -p "$EMPTY"
 MISSING="$TEST_DIR/does_not_exist"
@@ -238,6 +244,24 @@ assert_true "bundle whose size cannot be read shows -" \
     grep -qxF "$(printf '  -\t%s' "$SYS/Unreadable.app")" <<EOF
 $inv
 EOF
+
+# An unreadable subdirectory: du prints a partial total and exits non-zero.
+# The grouped pass failed, so each bundle is measured again on its own and the
+# partial one is shown as "-" instead of its incomplete total.
+: > "$DU_CALLS"; : > "$DU_ARGS"
+inv_part="$(build_apps_inventory "$PART")"
+assert_true "bundle with a partial du total shows -, not the partial size" \
+    grep -qxF "$(printf '  -\t%s' "$PART/Partial Denied.app")" <<EOF
+$inv_part
+EOF
+assert_true "partial total is never displayed" not grep -q "7M" <<EOF
+$inv_part
+EOF
+assert_true "clean bundle keeps its size after the fallback" \
+    grep -qxF "$(printf '  42M\t%s' "$PART/Good.app")" <<EOF
+$inv_part
+EOF
+assert_eq "3" "$(du_call_count)" "failed grouped pass is redone once per bundle (1 + 2 calls)"
 
 : > "$DU_CALLS"; : > "$DU_ARGS"
 assert_eq "$MSG_INVENTORY_APPS_NONE" "$(build_apps_inventory "$EMPTY" "$MISSING")" \
