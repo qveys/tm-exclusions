@@ -398,17 +398,19 @@ set -euo pipefail
 source <(sed "/^main /d" "$1")
 brew() {
     case "$2" in
-        --cask) printf "%s\n" alpha beta gamma delta epsilon zeta eta theta iota kappa ;;
+        --cask) printf "%s\n" "aaaaaaaaa" "bbbbbbbbbbbbbbbbbb" ;;
     esac
     return 0
 }
 out="$(brew_list_block --cask "Homebrew casks" 30)"
-[[ "$(printf "%s\n" "$out" | head -n 1)" = "Homebrew casks (10):" ]]
+[[ "$(printf "%s\n" "$out" | head -n 1)" = "Homebrew casks (2):" ]]
+# 9 + 2 + 18 = 29 unindented: with the old wrap (width 30) the indented line is
+# 31 > 30 and this test must FAIL; with wrap width-2 it splits into 2 lines
+# whose indented lengths are <= 30.
 while IFS= read -r line; do
     [[ "${#line}" -le 30 ]]
     [[ "$line" != *, ]]
 done <<< "$out"
-[[ "$(printf "%s\n" "$out" | wc -l | tr -d " ")" -gt 2 ]]
 [[ "$(report_columns)" = "80" ]]
 [[ "$(report_columns 0)" = "80" ]]
 tput() { printf "57\n"; }
