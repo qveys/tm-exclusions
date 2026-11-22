@@ -26,6 +26,16 @@ See [`AGENTS.md`](AGENTS.md) for the full architecture, build commands, and Bash
 
 Skip it for one commit with `git commit --no-verify`. There is no one-line permanent opt-out: any `make` invocation (even `make help`) sets `core.hooksPath` back to `.githooks` — reporting on stderr a different local value it replaces — and the fallback hooks installed by `make setup` in `.git/hooks` restore it on the next commit, checkout or merge, so `git config --unset core.hooksPath` only lasts until then. `TM_EXCLUSIONS_NO_HOOKS=1 make …` skips the automatic `make` bootstrap (an explicit `make setup` still installs the hooks); to disable the hooks for a clone, unset `core.hooksPath`, export `TM_EXCLUSIONS_NO_HOOKS=1` and delete the fallbacks in `$(git rev-parse --git-common-dir)/hooks`.
 
+## Adding an exclusion category
+
+```bash
+scripts/add-category.sh --dry-run --name "Deno" \
+  --add path '$HOME/.deno/cache' 'Deno cache — re-downloaded' \
+  --add pattern '.deno' 'Deno project cache'
+```
+
+Drop `--dry-run` to write it (run without `--name`/`--add` in a terminal to be prompted). The script validates the fields (`path`, `pattern`, `prune` or `keep`; no empty value, `|` or newline), refuses an existing category or rule, inserts the `#@Name` section into `config/default.conf` following its layout (`path`/`keep` before the pattern banner, `pattern` before the prune banner, `prune` at the end), and replaces the file only if `scripts/check-conf.sh` and `scripts/check-i18n.sh` pass. Category names are displayed as written in the `#@` marker, so no `locales/*.sh` key is needed. Afterwards update the category count (`tests/smoke.bats-like.sh`, `README.md`, `docs/ARCHITECTURE.md`) and run `make check`.
+
 ## Commit style
 
 Conventional Commits with a leading emoji, enforced by the local [`commit-msg`](.githooks/commit-msg) hook (active when `core.hooksPath = .githooks`, set up by `make setup`). Examples:
