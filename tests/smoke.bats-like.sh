@@ -258,6 +258,159 @@ else
     printf '%b  PASS%b default run: no Desktop copy (default OFF)\n' "$GREEN" "$NC"
 fi
 
+# ---- Homebrew inventory: casks and formulae listed by name (#48) ----
+echo ""
+echo "--- Homebrew inventory (#48) ---"
+
+# Fake brew with known casks/formulae, shadowing the empty stub via PATH order.
+BREW_BIN="${TEST_HOME}/brew-bin"
+mkdir -p "${BREW_BIN}"
+cat > "${BREW_BIN}/tmutil" <<'STUB'
+#!/bin/sh
+if [ "$1" = isexcluded ]; then printf '[Included] %s\n' "$2"; fi
+exit 0
+STUB
+cat > "${BREW_BIN}/brew" <<'STUB'
+#!/bin/sh
+case "$1" in
+    --cache) exit 0 ;;
+    list)
+        case "$2" in
+            --cask)
+                printf '%s\n' firefox visual-studio-code docker-desktop iterm2 \
+                    raycast google-chrome spotify slack zoom
+                ;;
+            --formula)
+                printf '%s\n' git ripgrep jq fzf \
+                    a-deliberately-long-formula-name-for-wrap-testing wget tree
+                ;;
+        esac
+        ;;
+esac
+exit 0
+STUB
+chmod +x "${BREW_BIN}/"*
+
+BREW_REPORT="${TEST_HOME}/brew-inventory-report.txt"
+rm -f "${BREW_REPORT}"
+BREW_ENV=(env -u TM_EXCLUSIONS_SKIP_INVENTORY TM_EXCLUSIONS_SKIP_DU=1 PATH="${BREW_BIN}:${PATH}" TM_EXCLUSIONS_REPORT="${BREW_REPORT}")
+
+# Output goes to a file, not $(...): the sudo keepalive's orphaned sleep would
+# otherwise hold the capture pipe open for up to 55 s per run.
+BREW_OUT="${TEST_HOME}/brew-out.txt"
+BREW_RC=0
+"${BREW_ENV[@]}" bash "$TM_EXCLUSIONS" --verbose --dry-run > "${BREW_OUT}" 2>&1 || BREW_RC=$?
+assert_eq 0 "${BREW_RC}" "brew present: --verbose --dry-run exits 0 with inventory enabled"
+assert_file_contains "${BREW_OUT}" "Homebrew casks (9):" \
+    "brew present: casks listed with their count"
+assert_file_contains "${BREW_OUT}" "Homebrew formulas (7):" \
+    "brew present: formulae listed with their count"
+assert_file_contains "${BREW_OUT}" "a-deliberately-long-formula-name-for-wrap-testing" \
+    "brew present: formula names appear in output, not just counts"
+assert_file_contains "${BREW_OUT}" "firefox, visual-studio-code" \
+    "brew present: cask names are wrapped on comma-separated lines"
+
+assert_file_contains "${BREW_REPORT}" "Homebrew casks (9):" \
+    "brew present: saved report contains the cask list header"
+assert_file_contains "${BREW_REPORT}" "firefox" \
+    "brew present: saved report lists cask names"
+assert_file_contains "${BREW_REPORT}" "ripgrep" \
+    "brew present: saved report lists formula names"
+
+TESTS_RUN=$((TESTS_RUN + 1))
+if grep -qE ',$' "${BREW_REPORT}"; then
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '%b  FAIL%b wrapped inventory lines must not end with a trailing comma\n' "$RED" "$NC"
+    grep -nE ',$' "${BREW_REPORT}" >&2
+else
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    printf '%b  PASS%b no trailing comma on wrapped inventory lines\n' "$GREEN" "$NC"
+fi
+
+# brew absent from PATH: friendly notice, no list, exit unchanged.
+NOBREW_BIN="${TEST_HOME}/nobrew-bin"
+mkdir -p "${NOBREW_BIN}"
+cat > "${NOBREW_BIN}/tmutil" <<'STUB'
+#!/bin/sh
+if [ "$1" = isexcluded ]; then printf '[Included] %s\n' "$2"; fi
+exit 0
+STUB
+cat > "${NOBREW_BIN}/sudo" <<'STUB'
+#!/bin/sh
+# No host privilege operations in tests.
+case "$1" in
+    -n|-v) exit 0 ;;
+    tmutil) shift; exec tmutil "$@" ;;
+    *) exit 1 ;;
+esac
+STUB
+chmod +x "${NOBREW_BIN}/"*
+
+# Output goes to a file, not $(...): the sudo keepalive's orphaned sleep would
+# otherwise hold the capture pipe open for up to 55 s per run.
+NOBREW_OUT="${TEST_HOME}/nobrew-out.txt"
+NOBREW_RC=0
+env -u TM_EXCLUSIONS_SKIP_INVENTORY TM_EXCLUSIONS_SKIP_DU=1 HOME="${TEST_HOME}" PATH="${NOBREW_BIN}:/usr/bin:/bin" \
+    bash "$TM_EXCLUSIONS" --verbose --dry-run > "${NOBREW_OUT}" 2>&1 || NOBREW_RC=$?
+assert_eq 0 "${NOBREW_RC}" "brew absent: --verbose --dry-run exits 0"
+assert_file_contains "${NOBREW_OUT}" "brew not found in PATH" \
+    "brew absent: friendly notice is shown"
+assert_file_lacks_regex "${NOBREW_OUT}" "Homebrew casks \(" \
+    "brew absent: no cask list is produced"
+
+# TM_EXCLUSIONS_SKIP_INVENTORY=1 still wins when brew is present.
+SKIPINV_OUT="${TEST_HOME}/skipinv-out.txt"
+env TM_EXCLUSIONS_SKIP_DU=1 PATH="${BREW_BIN}:${PATH}" \
+    bash "$TM_EXCLUSIONS" --verbose --dry-run > "${SKIPINV_OUT}" 2>&1 || true
+assert_file_contains "${SKIPINV_OUT}" "(skipped: TM_EXCLUSIONS_SKIP_INVENTORY=1)" \
+    "skip flag: inventory skipped even with brew present"
+assert_file_lacks_regex "${SKIPINV_OUT}" "Homebrew casks \(" \
+    "skip flag: no cask list when inventory is skipped"
+
+# Unit: the wrapper never splits a name nor leaves a trailing comma.
+# shellcheck disable=SC2016
+assert_exit_code 0 "wrap_name_list wraps to width without trailing commas or split names" \
+    bash -c '
+set -euo pipefail
+source <(sed "/^main /d" "$1")
+names="$(for ((i = 1; i <= 25; i++)); do printf "package-name-%s\n" "$i"; done)"
+printf -v names "%s\n%s" "$names" "an-extremely-long-package-name-that-exceeds-the-wrap-width-on-purpose"
+out="$(printf "%s\n" "$names" | wrap_name_list 40)"
+[[ "$(printf "%s\n" "$out" | wc -l | tr -d " ")" -gt 1 ]]
+while IFS= read -r line; do
+    [[ "$line" != *, ]]
+    if [[ "${#line}" -gt 40 ]]; then
+        [[ "$line" = "an-extremely-long-package-name-that-exceeds-the-wrap-width-on-purpose" ]]
+    fi
+done <<< "$out"
+for ((i = 1; i <= 25; i++)); do
+    [[ "$out" == *"package-name-$i"* ]]
+done
+[[ "$out" == *"an-extremely-long-package-name-that-exceeds-the-wrap-width-on-purpose"* ]]
+' _ "$TM_EXCLUSIONS"
+
+# Unit: interactive runs print the inventory body under a localized header.
+# shellcheck disable=SC2016
+assert_exit_code 0 "ui_print_inventory shows the inventory body inline" \
+    bash -c '
+set -euo pipefail
+source <(sed "/^main /d" "$1")
+source "$2/locales/en.sh"
+declare_i18n_en
+UI=1
+UI_CYAN=""; UI_RESET=""; UI_DIM=""
+inv="$(printf "=== Inventory (informational) ===\nHomebrew casks (2):\n  firefox, iterm2")"
+ui_print_inventory "$inv" > "$3/inv-ui"
+grep -q "Inventory" "$3/inv-ui"
+grep -q "  Homebrew casks (2):" "$3/inv-ui"
+grep -q "  firefox, iterm2" "$3/inv-ui"
+if grep -q "^=== Inventory" "$3/inv-ui"; then exit 1; fi
+source "$2/locales/fr.sh"
+declare_i18n_fr
+ui_print_inventory "$inv" > "$3/inv-ui-fr"
+grep -q "Inventaire" "$3/inv-ui-fr"
+' _ "$TM_EXCLUSIONS" "$SCRIPT_DIR" "$TEST_HOME"
+
 # ---- Quiet mode ----
 echo ""
 echo "--- Quiet mode ---"

@@ -57,9 +57,11 @@ path is missing or unreadable), and the summary ends with a cumulative
 `Usage disque total :` line. During cache and disk-image discovery, the
 current directory updates (when `setting|scan_images|true` is enabled) on a single line (long paths show their tail).
 Progress counts completed static rules and
-completed scan patterns, not elapsed time. The full inventory, disk usage and
-per-path details remain in the saved report, whose location is printed at the end,
-with the detail lines grouped under `── Category ──` subheadings.
+completed scan patterns, not elapsed time. The inventory (including installed
+Homebrew casks and CLI formulae, listed by name in wrapped blocks) is also shown
+inline; disk usage and per-path details remain in the saved report, whose
+location is printed at the end, with the detail lines grouped under `── Category ──`
+subheadings.
 
 ```text
   🛡️  tm-exclusions  v1.3.0

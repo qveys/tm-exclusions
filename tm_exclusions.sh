@@ -1805,6 +1805,96 @@ desktop_report_enabled() {
 }
 
 # ---------------------------------------------------------------------------
+# Inventory (informational)
+# ---------------------------------------------------------------------------
+# Width used to wrap the inventory lists: terminal width when stdout is a
+# terminal, otherwise the standard report width.
+report_columns() {
+    local cols=80
+    if [[ -t 1 ]]; then
+        cols="$(tput cols 2>/dev/null || printf '80')"
+    fi
+    case "$cols" in
+        ''|*[!0-9]*) cols=80 ;;
+    esac
+    if [[ "$cols" -lt 20 ]]; then cols=80; fi
+    printf '%s' "$cols"
+}
+
+# Wrap newline-separated names (stdin) into comma-separated lines no wider
+# than $1. Names are never split and the last item of each line carries no
+# trailing comma.
+wrap_name_list() {
+    awk -v width="$1" '
+        NF { names[++n] = $0 }
+        END {
+            line = ""
+            for (i = 1; i <= n; i++) {
+                if (line == "") {
+                    line = names[i]
+                } else if (length(line) + 2 + length(names[i]) <= width) {
+                    line = line ", " names[i]
+                } else {
+                    print line
+                    line = names[i]
+                }
+            }
+            if (line != "") print line
+        }
+    '
+}
+
+# One wrapped inventory block: "<label> (<count>):" followed by the names,
+# indented and wrapped to $3. $1 is the brew list flag (--cask / --formula).
+brew_list_block() {
+    local names count
+    names="$(brew list "$1" 2>/dev/null || true)"
+    count="$(printf '%s\n' "$names" | awk 'NF { n++ } END { print n + 0 }')"
+    printf '%s (%s):' "$2" "$count"
+    if [[ "$count" -gt 0 ]]; then
+        printf '\n%s\n' "$(printf '%s\n' "$names" | wrap_name_list "$3" | sed 's/^/  /')"
+    fi
+}
+
+build_inventory_section() {
+    local width path_total path_dirs p oifs
+    printf '=== Inventory (informational) ===\n'
+    if [[ "${TM_EXCLUSIONS_SKIP_INVENTORY:-}" = "1" ]]; then
+        printf '(skipped: TM_EXCLUSIONS_SKIP_INVENTORY=1)\n'
+        return 0
+    fi
+    if [[ -d /Applications ]]; then
+        printf '/Applications (top-level): %s\n' \
+            "$(find /Applications -maxdepth 1 -mindepth 1 2>/dev/null | wc -l | tr -d '[:space:]' || true)"
+    fi
+    if command -v brew >/dev/null 2>&1; then
+        width="$(report_columns)"
+        printf '%s\n' "$(brew_list_block --cask 'Homebrew casks' "$width")"
+        printf '%s\n' "$(brew_list_block --formula 'Homebrew formulas' "$width")"
+    else
+        printf 'Homebrew: not installed (brew not found in PATH), cask/formula lists skipped.\n'
+    fi
+    path_total="$(printf '%s' "${PATH:-}" | awk -F: '{print NF}')"
+    path_dirs=0
+    oifs="${IFS}"
+    IFS=':'
+    for p in ${PATH:-}; do
+        [[ -d "$p" ]] && path_dirs=$((path_dirs + 1))
+    done
+    IFS="${oifs}"
+    printf 'PATH: %s existing directories (of %s colon-separated entries)\n' "$path_dirs" "$path_total"
+}
+
+# Interactive runs get the inventory inline (first line of $1 is the report
+# header, skipped here in favour of the localized section title).
+ui_print_inventory() {
+    ui_section "🍺" "${MSG_UI_INVENTORY}"
+    printf '%s\n' "$1" | tail -n +2 | while IFS= read -r line; do
+        printf '  %s\n' "$line"
+    done
+}
+
+# ---------------------------------------------------------------------------
 # Report
 # ---------------------------------------------------------------------------
 # Details lines grouped under `── Category ──` subheadings, categories in order
@@ -1835,45 +1925,22 @@ group_report_details() {
 generate_report() {
     RULE_CONTEXT=""
     RULE_CATEGORY=""
-    if [[ "${UI}" -eq 1 ]]; then ui_section "📝" "$MSG_UI_REPORT"; fi
     local report="" console_report=""
     local dry_run_note=""
     local excluded_label="${MSG_REPORT_EXCLUDED}"
     local inv du_sec size_total_line size_total_disp tm_list out_path path_total path_dirs p szk sh total_k desk_copy raw_list tm_list_rc
+
+    inv="$(build_inventory_section)"
+    if [[ "${UI}" -eq 1 ]]; then
+        ui_print_inventory "$inv"
+        ui_section "📝" "$MSG_UI_REPORT"
+    fi
 
     if [ "${DRY_RUN}" -eq 1 ]; then
         dry_run_note=" (dry-run)"
         excluded_label="${MSG_REPORT_WOULD_EXCLUDE}"
     elif [[ "${MODE}" = "report-only" ]]; then
         excluded_label="${MSG_REPORT_NEED_EXCLUSION}"
-    fi
-
-    inv="
-=== Inventory (informational) ==="
-    if [[ "${TM_EXCLUSIONS_SKIP_INVENTORY:-}" = "1" ]]; then
-        inv="${inv}
-(skipped: TM_EXCLUSIONS_SKIP_INVENTORY=1)"
-    else
-        if [[ -d /Applications ]]; then
-            inv="${inv}
-/Applications (top-level): $(find /Applications -maxdepth 1 -mindepth 1 2>/dev/null | wc -l | tr -d '[:space:]' || true)"
-        fi
-        if command -v brew >/dev/null 2>&1; then
-            inv="${inv}
-Homebrew formulas: $(brew list --formula 2>/dev/null | wc -l | tr -d '[:space:]' || true)"
-            inv="${inv}
-Homebrew casks: $(brew list --cask 2>/dev/null | wc -l | tr -d '[:space:]' || true)"
-        fi
-        path_total="$(printf '%s' "${PATH:-}" | awk -F: '{print NF}')"
-        path_dirs=0
-        local oifs="${IFS}"
-        IFS=':'
-        for p in ${PATH:-}; do
-            [[ -d "$p" ]] && path_dirs=$((path_dirs + 1))
-        done
-        IFS="${oifs}"
-        inv="${inv}
-PATH: ${path_dirs} existing directories (of ${path_total} colon-separated entries)"
     fi
 
     du_sec=""
@@ -1944,6 +2011,7 @@ ${MSG_REPORT_REMOVED} ${TOTAL_REMOVED}"
     console_report="$report"
 
     report="${report}
+
 ${inv}"
 
     if [[ -n "${du_sec}" ]]; then

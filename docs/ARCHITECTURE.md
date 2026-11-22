@@ -136,7 +136,9 @@ this buffer and remain individually visible on stderr.
 
 Default output shows these groups and final counters, including when redirected.
 `-v` / `--verbose` restores individual status lines and the plain full report.
-Interactive runs retain their compact final summary. `--quiet` takes precedence:
+Interactive runs retain their compact final summary; the informational inventory
+(Homebrew cask/formula names included) is the exception and is also printed inline.
+`--quiet` takes precedence:
 no status lines, and the full report on stdout, as before. All modes save the same
 complete report; if writing fails, compact output falls back to the full report.
 Debug FD 5 receives undecorated console messages.
@@ -157,7 +159,7 @@ summary (`ui_summary()`) and the report counters gain a cumulative
 After processing all paths, a human-readable report is saved; stdout receives a compact summary by default or the full plain report with `--verbose` / `--quiet`. The default file is `~/.config/tm_exclusions/last_report.txt`. The report includes:
 - Hostname, user, program version, timestamp, and mode
 - Counts: checked, newly excluded, already excluded, skipped, errors
-- **Inventory** (optional): `/Applications` item count, Homebrew formula/cask counts when `brew` exists, PATH directory stats. Set **`TM_EXCLUSIONS_SKIP_INVENTORY=1`** to skip this block (faster smoke/CI; `brew list` can be slow).
+- **Inventory** (optional): `/Applications` item count, installed Homebrew casks and CLI formulae **listed by name** in blocks wrapped to the terminal width (report standard 80 otherwise, no trailing commas) when `brew` exists — a friendly notice is shown when it does not — plus PATH directory stats. Set **`TM_EXCLUSIONS_SKIP_INVENTORY=1`** to skip this block (faster smoke/CI; `brew list` can be slow).
 - **Disk usage**: `du -sk` per path touched in the run (existing paths only), formatted for display, and an approximate total in KiB. Sizes are measured once per path while it is processed (`path_size_column()` → `DU_SIZES`) and looked up again here (`du_size_lookup()`), so the report does not re-walk trees; only an unrecorded path falls back to a fresh `du`. `du_track_path()` removes nested entries when a parent is present, regardless of insertion order. Hard links and APFS clones can still affect estimates. `du_size_kb()` captures `du` independently of any pipeline so a non-zero exit from unreadable children (e.g. `/private/var/folders`) cannot trip `set -euo pipefail`. A cumulative formatted total (`MSG_REPORT_SIZE_TOTAL`, via `du_total_kb()`) is added to the counters block (#45).
 - Per-path detail lines with source file/line, rule target and reason (including expanded path globs), or discovery origin
 - A compact summary grouped by rule context, plus separate counts for missing paths and paths blocked by unavailable privileges
@@ -245,7 +247,7 @@ Smoke and safety tests inject fake `tmutil`, `brew` and `sudo` commands and use 
 Possible follow-ups:
 - **tmux split-pane** or richer agent-oriented debug UX around `TM_EXCLUSIONS_DEBUG_FIFO`
 - **Watch mode**: detect new regenerable directories and re-apply
-- **Heavier inventory** (full app listings, full `brew list`, deep PATH enumeration) — intentionally capped today for speed
+- **Heavier inventory** (full app listings, deep PATH enumeration) — intentionally capped today for speed
 
 The current architecture (config-driven, function-based) supports these additions without major restructuring.
 

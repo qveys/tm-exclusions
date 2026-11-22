@@ -9,6 +9,7 @@ declare_i18n_en() {
     MSG_UI_BREW="Locating the Homebrew cache…"
     MSG_UI_DISCOVERY="Discovering caches and disk images…"
     MSG_UI_REPORT="Preparing the detailed report…"
+    MSG_UI_INVENTORY="Inventory"
     MSG_HELP_USAGE="Usage: ${PROGRAM_NAME} [OPTIONS]"
     MSG_HELP_DESC="macOS Time Machine exclusion manager for developer machines."
     MSG_HELP_MODES="Modes:"
