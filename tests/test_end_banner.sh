@@ -371,6 +371,34 @@ tip_roundtrip "c/-dash dir" "leading-dash component"
 tip_roundtrip "c/new"$'\n'"line" "newline (single-line \$'...' form)"
 assert_eq 1 "$(grep -c 'Verify an exclusion with' "$TEST_HOME/out-tip")" "the tip stays on one line even for a newline name"
 
+echo ""
+echo "--- Trailing newline in a name never aliases the neighbouring directory ---"
+# A link (and a real dir) named "sz92<LF>" next to a measured "sz92": normalize_path
+# captures with $(...) and would drop the trailing newline, so the name used to
+# collapse onto "sz92" and show its 92K. Raw-name check first: unmeasured, no du.
+mkdir_paths c/sz92 c/emptytarget c/sz93 c/sz93-neighbour
+NLT_LINK="c/sz92"$'\n'
+ln -s "$B_HOME/c/emptytarget" "$B_HOME/$NLT_LINK"
+banner_run "$TEST_HOME/out-nl-link" apply 0 0 en "$NLT_LINK"
+OUT="$TEST_HOME/out-nl-link"
+assert_file_lacks_regex "$OUT" '92K' "link 'sz92<LF>' does not show the neighbour's 92K"
+assert_file_contains "$OUT" "Space excluded: unknown (sizes could not be read)" "link 'sz92<LF>' is counted unmeasured"
+assert_eq 0 "$(grep -c 'c/sz92' "$B_DU_CALLS" || true)" "du is never called on the neighbour 'sz92' for the link"
+assert_eq 0 "$(wc -l < "$B_DU_CALLS" | tr -d ' ')" "no du call at all for a trailing-newline name"
+assert_file_lacks_regex "$B_HOME/report.txt" 'Disk usage total:|Total \(sum of du' \
+    "report has no disk-usage figure borrowed from the neighbour"
+NLT_DIR="c/sz93"$'\n'
+mkdir -p "$B_HOME/$NLT_DIR"
+banner_run "$TEST_HOME/out-nl-dir" apply 0 0 en "$NLT_DIR"
+assert_file_lacks_regex "$TEST_HOME/out-nl-dir" '93K' "real dir 'sz93<LF>' does not show the neighbour's 93K"
+assert_file_contains "$TEST_HOME/out-nl-dir" "Space excluded: unknown (sizes could not be read)" "real dir 'sz93<LF>' is counted unmeasured"
+assert_eq 0 "$(wc -l < "$B_DU_CALLS" | tr -d ' ')" "no du call for the trailing-newline real dir"
+# Both spellings processed: the neighbour is measured once, the newline name is unmeasured, no key confusion.
+banner_run "$TEST_HOME/out-nl-both" apply 0 0 en c/sz92 "$NLT_LINK"
+assert_file_contains "$TEST_HOME/out-nl-both" "Space excluded: ≥ 92K (partial, unmeasured paths: 1)" \
+    "neighbour counted once, the newline-named link counted unmeasured"
+assert_eq 1 "$(grep -Fxc "$B_PHYS/c/sz92" "$B_DU_CALLS")" "neighbour measured exactly once (no cache key confusion)"
+
 if [[ "$TESTS_RUN" -eq 0 ]]; then
     echo "FAIL: no assertion was executed" >&2
     exit 1

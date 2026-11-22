@@ -94,7 +94,7 @@ counted once), the saved report path and a copy-pasteable `tmutil isexcluded '<f
 `--dry-run` the banner says the run is **simulated** (no exclusion added or removed — only the read-only `tmutil isexcluded` / `listexclusions` status lookups run — projected values); `--report`
 labels the figure "space needing exclusion". If some sizes cannot be read (or `du` exits non-zero on unreadable children, so its total is partial) the figure is shown as
 a lower bound (truncated, never rounded up) (`≥ 1.0M (partial, unmeasured paths: 1)`), or `unknown` when none could be read — never a false
-total. Interactive terminals only: `--quiet`, pipes and `NO_COLOR` runs print no banner (`--quiet` stdout is unchanged;
+total. Interactive terminals only: `--quiet`, pipes and `NO_COLOR` runs print no banner (`--quiet` stdout gains no line — the space line stays in the saved report — but it benefits from the size-formatting fix at unit boundaries, e.g. `1048575K` now prints `1.0G` instead of `1024.0M`;
 the figure is in the saved report and, for non-quiet plain runs, in the printed counters), and `TM_EXCLUSIONS_SKIP_DU=1` hides the size figures.
 
 Try `bash tm_exclusions.sh --dry-run --lang fr` in your terminal.

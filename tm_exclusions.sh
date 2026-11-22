@@ -493,6 +493,13 @@ du_track_path() {
 # Shared by DU_PATHS (every path touched) and EXCL_PATHS (newly excluded, #44).
 path_set_add() {
     local set="$1" p="$2" entry normalized retained=""
+    # Checked on the RAW name, before normalize_path: its $(...) capture strips
+    # trailing newlines, so a path named "small<LF>" would otherwise collapse onto
+    # the neighbouring "small" and be measured as that directory (#44 review).
+    # The set is newline-delimited and cannot hold such names anyway.
+    case "$p" in
+        *$'\n'*) printf '%s' "$set"; return 0 ;;
+    esac
     if ! p="$(normalize_path "$p")"; then
         printf '%s' "$set"
         return 0
