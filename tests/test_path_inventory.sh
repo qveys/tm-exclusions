@@ -27,6 +27,11 @@ export TOOL_CALLS_ALL="$TEST_DIR/tool_calls_all"   # never truncated
 unset TM_EXCLUSIONS_SKIP_INVENTORY TM_EXCLUSIONS_EXTRA_CONF TM_EXCLUSIONS_REPORT_DESKTOP
 unset TM_EXCLUSIONS_LOCALES_DIR TM_EXCLUSIONS_DEFAULT_CONF
 mkdir -p "$HOME/.config/tm_exclusions" "$TEST_DIR/bin"
+# ~/Applications fixture: the inventory only walks an applications root that
+# exists, and /Applications does not exist on Linux. With this directory the
+# walk always reaches the find stub below (never a real application tree), on
+# macOS and Linux alike.
+mkdir -p "$HOME/Applications"
 : > "$TOOL_CALLS"
 : > "$TOOL_CALLS_ALL"
 
