@@ -613,6 +613,36 @@ assert_file_lacks_regex "$TEST_HOME/out-redir" '92K' "redirected alias never sho
 assert_eq 0 "$(grep -c 'c/sz92x' "$B_DU_CALLS" || true)" "du never called on the neighbour after the redirect"
 
 echo ""
+echo "--- Nesting by file identity: link / case spellings of one directory count once ---"
+# (1) Portable (case-sensitive GNU/Linux CI included): a link spelling and the
+# real spelling of the same directory, in every order. Total = the directory once.
+mkdir -p "$B_HOME/c/sz100id/sz20id"
+ln -sfn sz100id "$B_HOME/c/Link100"
+banner_run "$TEST_HOME/out-id-fwd" apply 1 0 en c/Link100 c/sz100id/sz20id
+assert_file_contains "$TEST_HOME/out-id-fwd" "Space that would be excluded (simulated): 100K" "link spelling then child: directory counted once (100K)"
+banner_run "$TEST_HOME/out-id-rev" apply 1 0 en c/sz100id/sz20id c/Link100
+assert_file_contains "$TEST_HOME/out-id-rev" "Space that would be excluded (simulated): 100K" "child then link spelling: directory counted once (100K)"
+banner_run "$TEST_HOME/out-id-same" apply 1 0 en c/Link100 c/sz100id
+assert_file_contains "$TEST_HOME/out-id-same" "Space that would be excluded (simulated): 100K" "one directory through two spellings: counted once (100K)"
+banner_run "$TEST_HOME/out-id-two" apply 1 0 en c/sz100id c/sz1024
+assert_file_contains "$TEST_HOME/out-id-two" "Space that would be excluded (simulated): 1.1M" "control: two unrelated directories still add up (100K + 1024K)"
+banner_run "$TEST_HOME/out-id-gone" apply 1 0 en c/sz100id c/does-not-exist
+assert_file_contains "$TEST_HOME/out-id-gone" "Space that would be excluded (simulated): 100K" "a missing path is ignored (no crash, no size)"
+# (2) Case-insensitive file systems (default APFS on macOS): "sz100CS" and "sz100cs" are one directory.
+mkdir -p "$B_HOME/c/CaseProbe"
+if [[ -d "$B_HOME/c/caseprobe" ]]; then
+    mkdir -p "$B_HOME/c/sz100cs/sz20cs"
+    banner_run "$TEST_HOME/out-ci-fwd" apply 1 0 en c/sz100CS c/sz100cs/sz20cs
+    assert_file_contains "$TEST_HOME/out-ci-fwd" "Space that would be excluded (simulated): 100K" "case-insensitive FS: 'sz100CS' then 'sz100cs/sz20cs' counted once (100K)"
+    banner_run "$TEST_HOME/out-ci-rev" apply 1 0 en c/sz100cs/sz20cs c/sz100CS
+    assert_file_contains "$TEST_HOME/out-ci-rev" "Space that would be excluded (simulated): 100K" "case-insensitive FS: child then 'sz100CS' counted once (100K)"
+    banner_run "$TEST_HOME/out-ci-same" apply 1 0 en c/sz100CS c/sz100cs
+    assert_file_contains "$TEST_HOME/out-ci-same" "Space that would be excluded (simulated): 100K" "case-insensitive FS: 'sz100CS' and 'sz100cs' are one directory (100K)"
+else
+    echo "  INFO case-sensitive file system: the case-spelling check is covered by the link-spelling tests above"
+fi
+
+echo ""
 echo "--- Cost: cd -P resolutions vs master (frozen reference), deterministic count ---"
 # Master's size bookkeeping per processed path is ref_du_track_path + the one
 # normalize_path of path_size_column; with no keep and a path under HOME nothing

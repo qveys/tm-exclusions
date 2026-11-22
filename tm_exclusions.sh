@@ -603,10 +603,29 @@ EXCL_UNTRACKED=0
 EXCL_FIRST_PATH=""
 TIP_PATH=""
 
+# True when $2 or one of its ancestors is the SAME FILE as $1 (same device and
+# inode, `-ef`: builtin, no subshell, follows links). Used only to nest the
+# excluded-paths list of the space figure: string comparison (path_under) is
+# case-sensitive, so on case-insensitive APFS "Cache" and "cache/Child" would
+# be counted twice (#44 review). Missing paths are never `-ef` anything.
+path_id_covers() {
+    local anc="$2"
+    while :; do
+        if [[ "$anc" -ef "$1" ]]; then return 0; fi
+        case "$anc" in
+            ''|/) return 1 ;;
+            */*) ;;
+            *) return 1 ;;
+        esac
+        anc="${anc%/*}"
+        if [[ -z "$anc" ]]; then anc="/"; fi
+    done
+}
+
 # Records $1 for the space figure, reusing the normalized path that
 # path_size_column already computed for its size cache key (PATH_SIZE_NP): no
-# second normalization, so no extra cd -P per path. Entries are stored
-# normalized, so nesting is decided with path_under only (builtins). A path
+# second normalization, so no extra cd -P per path. Nesting is decided with
+# path_under and file identity (path_id_covers): builtins only, no cd. A path
 # whose name is unsafe to measure, or that has no normalized form, is counted
 # as unmeasured instead (never a wrong or silently dropped size).
 excl_track_path() {
@@ -620,9 +639,14 @@ excl_track_path() {
     fi
     while IFS= read -r entry; do
         [[ -z "$entry" ]] && continue
-        if path_under "$PATH_SIZE_NP" "$entry"; then return 0; fi
-        if ! path_under "$entry" "$PATH_SIZE_NP"; then retained="${retained}${entry}
-"; fi
+        # String test first (cheap), then file identity for case/link spellings.
+        if path_under "$PATH_SIZE_NP" "$entry" || path_id_covers "$entry" "$PATH_SIZE_NP"; then
+            return 0
+        fi
+        if ! { path_under "$entry" "$PATH_SIZE_NP" || path_id_covers "$PATH_SIZE_NP" "$entry"; }; then
+            retained="${retained}${entry}
+"
+        fi
     done <<EOF
 ${EXCL_PATHS}
 EOF
