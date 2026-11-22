@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>tm-exclusions — exclusions Time Machine pour postes de développement</title>
+  <meta name="description" content="tm-exclusions : outil en ligne de commande Bash qui exclut automatiquement des sauvegardes Time Machine les caches et dépendances régénérables d’un Mac de développeur, avec simulation, protections et rapport détaillé.">
+  <meta name="color-scheme" content="light dark">
+  <link rel="canonical" href="https://qveys.github.io/tm-exclusions/">
+  <meta property="og:type" content="website">
+  <meta property="og:locale" content="fr_FR">
+  <meta property="og:title" content="tm-exclusions — exclusions Time Machine pour postes de développement">
+  <meta property="og:description" content="Un outil Bash, piloté par configuration et testé, qui allège les sauvegardes macOS des données régénérables tout en protégeant les données uniques.">
+  <meta property="og:url" content="https://qveys.github.io/tm-exclusions/">
+  <meta name="referrer" content="no-referrer">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip" href="#contenu">Aller au contenu</a>
+
+  <header class="hero">
+    <div class="wrap">
+      <p class="eyebrow">Projet open source · outil en ligne de commande macOS</p>
+      <h1>tm-exclusions</h1>
+      <p class="lead">Des sauvegardes Time Machine qui ne contiennent que ce qui compte&nbsp;: l’outil écarte automatiquement les caches, dépendances et artefacts de compilation qu’un développeur peut régénérer, et protège explicitement les données uniques.</p>
+      <ul class="tags" aria-label="Technologies">
+        <li>Bash 3.2+</li>
+        <li>macOS / tmutil</li>
+        <li>ShellCheck</li>
+        <li>GitHub Actions</li>
+        <li>Homebrew</li>
+        <li>Licence MIT</li>
+      </ul>
+      <div class="cta">
+        <a href="https://github.com/qveys/tm-exclusions">Code source sur GitHub</a>
+        <a href="#architecture">Voir l’architecture</a>
+      </div>
+    </div>
+  </header>
+
+  <nav class="toc" aria-label="Sommaire">
+    <div class="wrap">
+      <ul>
+        <li><a href="#probleme">Problème</a></li>
+        <li><a href="#architecture">Architecture</a></li>
+        <li><a href="#choix">Choix techniques</a></li>
+        <li><a href="#competences">Compétences</a></li>
+        <li><a href="#resultats">Résultats</a></li>
+        <li><a href="#limites">Limites</a></li>
+        <li><a href="#credits">Crédits</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <main id="contenu">
+    <section id="probleme" aria-labelledby="t-probleme">
+      <div class="wrap">
+        <h2 id="t-probleme">Le problème résolu</h2>
+        <p>Sur un Mac de développeur, une part importante de l’espace sauvegardé n’a aucune valeur&nbsp;: dossiers <code>node_modules</code>, environnements virtuels Python, caches de compilateurs, données dérivées de Xcode, modèles téléchargés… Tout cela se retélécharge ou se reconstruit. Le sauvegarder ralentit Time Machine, remplit le disque de sauvegarde et noie les fichiers réellement importants.</p>
+        <p>Exclure ces dossiers à la main est fastidieux et risqué&nbsp;: ils réapparaissent dans chaque nouveau projet, et une exclusion trop large peut faire perdre des données uniques (machines virtuelles, bases de données locales, sessions d’outils). tm-exclusions automatise ce tri de façon <strong>prévisible, réversible et vérifiable</strong>.</p>
+        <div class="grid">
+          <div class="card">
+            <h3>Prévisualiser</h3>
+            <p>Le mode simulation montre ce qui serait exclu, sans rien modifier.</p>
+          </div>
+          <div class="card">
+            <h3>Appliquer sans risque</h3>
+            <p>Idempotent&nbsp;: une exécution répétée ne refait que le nécessaire.</p>
+          </div>
+          <div class="card">
+            <h3>Protéger</h3>
+            <p>Une règle de protection empêche toute exclusion d’un chemin, même par un dossier parent.</p>
+          </div>
+          <div class="card">
+            <h3>Revenir en arrière</h3>
+            <p>Le mode désinstallation retire les exclusions correspondant aux règles configurées.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="architecture" aria-labelledby="t-architecture">
+      <div class="wrap">
+        <h2 id="t-architecture">Architecture</h2>
+        <p>Un script unique, organisé en étapes successives. Les règles sont décrites dans des fichiers texte simples au format <code>type|cible|raison</code>&nbsp;; le code ne contient aucune liste de chemins en dur.</p>
+        <figure class="diagram">
+          <svg viewBox="0 0 320 590" role="img" aria-labelledby="svg-titre svg-desc" xmlns="http://www.w3.org/2000/svg">
+            <title id="svg-titre">Flux d’exécution de tm-exclusions</title>
+            <desc id="svg-desc">Sept étapes verticales : ligne de commande, chargement de la configuration, contrôle des protections, règles statiques, scan dynamique, couche d’accès à Time Machine, puis génération du rapport.</desc>
+            <defs>
+              <marker id="fleche" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+                <path class="d-head" d="M0 0 L10 5 L0 10 z"/>
+              </marker>
+            </defs>
+
+            <rect class="d-node" x="10" y="10" width="300" height="60" rx="10"/>
+            <text class="d-title" x="24" y="35">1. Ligne de commande</text>
+            <text class="d-sub" x="24" y="56">appliquer · simuler · auditer · retirer</text>
+            <line class="d-arrow" x1="160" y1="72" x2="160" y2="88" marker-end="url(#fleche)"/>
+
+            <rect class="d-node" x="10" y="94" width="300" height="60" rx="10"/>
+            <text class="d-title" x="24" y="119">2. Chargement de la configuration</text>
+            <text class="d-sub" x="24" y="140">règles fournies → utilisateur → option</text>
+            <line class="d-arrow" x1="160" y1="156" x2="160" y2="172" marker-end="url(#fleche)"/>
+
+            <rect class="d-node" x="10" y="178" width="300" height="60" rx="10"/>
+            <text class="d-title" x="24" y="203">3. Contrôle des protections</text>
+            <text class="d-sub" x="24" y="224">chemins protégés, conflits signalés</text>
+            <line class="d-arrow" x1="160" y1="240" x2="160" y2="256" marker-end="url(#fleche)"/>
+
+            <rect class="d-node" x="10" y="262" width="300" height="60" rx="10"/>
+            <text class="d-title" x="24" y="287">4. Règles statiques</text>
+            <text class="d-sub" x="24" y="308">chemins connus, motifs génériques étendus</text>
+            <line class="d-arrow" x1="160" y1="324" x2="160" y2="340" marker-end="url(#fleche)"/>
+
+            <rect class="d-node" x="10" y="346" width="300" height="60" rx="10"/>
+            <text class="d-title" x="24" y="371">5. Scan dynamique</text>
+            <text class="d-sub" x="24" y="392">recherche par nom, profondeur 6, filtres</text>
+            <line class="d-arrow" x1="160" y1="408" x2="160" y2="424" marker-end="url(#fleche)"/>
+
+            <rect class="d-node-accent" x="10" y="430" width="300" height="60" rx="10"/>
+            <text class="d-title" x="24" y="455">6. Accès à Time Machine</text>
+            <text class="d-sub" x="24" y="476">vérifier, puis ajouter ou retirer</text>
+            <line class="d-arrow" x1="160" y1="492" x2="160" y2="508" marker-end="url(#fleche)"/>
+
+            <rect class="d-node" x="10" y="514" width="300" height="60" rx="10"/>
+            <text class="d-title" x="24" y="539">7. Rapport</text>
+            <text class="d-sub" x="24" y="560">compteurs, tailles, détail par catégorie</text>
+          </svg>
+          <figcaption>Flux d’une exécution. Toutes les opérations Time Machine passent par l’étape 6, simulée hors macOS pour les tests.</figcaption>
+        </figure>
+        <ul class="plain">
+          <li><strong>Configuration fusionnée</strong>&nbsp;: catalogue fourni avec l’outil, puis règles personnelles, puis fichier additionnel facultatif. Les préférences suivent la règle «&nbsp;la dernière valeur l’emporte&nbsp;», les règles s’additionnent, et une protection l’emporte toujours.</li>
+          <li><strong>Cinq types de règles</strong>&nbsp;: <code>path</code> (chemin précis), <code>pattern</code> (nom de dossier recherché dans le dossier personnel), <code>prune</code> (zone dont les résultats de scan sont ignorés), <code>keep</code> (protection) et <code>setting</code> (préférence).</li>
+          <li><strong>Scan en deux phases</strong>&nbsp;: collecte de toutes les correspondances, puis tri et traitement, pour un résultat déterministe et un affichage regroupé.</li>
+          <li><strong>Double stratégie d’exclusion</strong>&nbsp;: exclusion attachée au dossier pour les chemins utilisateur, exclusion par chemin fixe avec élévation de privilèges pour les chemins système.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="choix" aria-labelledby="t-choix">
+      <div class="wrap">
+        <h2 id="t-choix">Choix techniques et pourquoi</h2>
+        <div class="grid">
+          <div class="card">
+            <h3>Bash 3.2, sans dépendance</h3>
+            <p>C’est le shell livré avec macOS&nbsp;: l’outil fonctionne sur une machine neuve, sans rien installer. Contrepartie assumée&nbsp;: aucune fonctionnalité de Bash&nbsp;4 (tableaux associatifs, etc.).</p>
+          </div>
+          <div class="card">
+            <h3>Configuration plutôt que code</h3>
+            <p>Ajouter un écosystème revient à ajouter une ligne commentée. Un validateur de syntaxe dédié vérifie les fichiers de règles en intégration continue.</p>
+          </div>
+          <div class="card">
+            <h3>Prudence par défaut</h3>
+            <p>Les dossiers mixtes (données Docker, machines virtuelles, archives, sessions d’agents) sont livrés désactivés&nbsp;: l’utilisateur doit les activer explicitement.</p>
+          </div>
+          <div class="card">
+            <h3>Couche d’abstraction de tmutil</h3>
+            <p>Trois fonctions encapsulent tous les appels à Time Machine. Hors macOS, elles simulent le comportement&nbsp;: la suite de tests tourne sous Linux sans toucher à aucune sauvegarde.</p>
+          </div>
+          <div class="card">
+            <h3>Échec explicite</h3>
+            <p>Un statut d’exclusion inconnu n’autorise jamais d’ajout ni de retrait. Toute erreur, scan incomplet ou conflit de protection produit un code de sortie non nul.</p>
+          </div>
+          <div class="card">
+            <h3>Bilingue français / anglais</h3>
+            <p>Les messages vivent dans des tables de traduction séparées, dont la parité des clés est contrôlée automatiquement.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="competences" aria-labelledby="t-competences">
+      <div class="wrap">
+        <h2 id="t-competences">Compétences démontrées</h2>
+        <ul class="plain">
+          <li><strong>Scripting shell robuste et portable</strong>&nbsp;: mode strict, guillemets systématiques, gestion des signaux et nettoyage des fichiers temporaires, analyse statique ShellCheck.</li>
+          <li><strong>Conception orientée sécurité des données</strong>&nbsp;: protections prioritaires, résolution des liens symboliques, refus des chemins ambigus, rapports traçables jusqu’à la ligne de configuration source.</li>
+          <li><strong>Tests automatisés</strong>&nbsp;: plusieurs suites (comportement de bout en bout, sécurité, logique de publication, validateurs, catégories) exécutées à chaque modification.</li>
+          <li><strong>Intégration et livraison continues</strong>&nbsp;: GitHub Actions avec actions épinglées par SHA, revue des dépendances, publication de versions et mise à jour automatique d’une formule Homebrew.</li>
+          <li><strong>Outillage et qualité du dépôt</strong>&nbsp;: hooks Git imposant des messages de commit conventionnels, étiquetage et tri automatiques des tickets, journal des modifications tenu à jour.</li>
+          <li><strong>Expérience utilisateur en terminal</strong>&nbsp;: affichage regroupé, barres de progression, couleurs désactivées automatiquement hors terminal interactif, mode silencieux pour l’exécution planifiée.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="resultats" aria-labelledby="t-resultats">
+      <div class="wrap">
+        <h2 id="t-resultats">Résultats mesurables</h2>
+        <ul class="stats">
+          <li><strong>454</strong><span>vérifications automatisées réussies, réparties en 6 suites</span></li>
+          <li><strong>115</strong><span>règles actives dans le catalogue fourni</span></li>
+          <li><strong>17</strong><span>catégories documentées (Node.js, Python, Rust, Xcode…)</span></li>
+          <li><strong>3</strong><span>versions publiées (1.0.0, 1.2.0, 1.3.0)</span></li>
+        </ul>
+        <p class="note">Sources&nbsp;: dernière exécution de l’intégration continue sur la branche principale (commit <code>4f7def9</code>, 0&nbsp;échec)&nbsp;; décompte des lignes <code>path</code>, <code>pattern</code> et <code>prune</code> non commentées de <code>config/default.conf</code>&nbsp;; catégories listées dans le README&nbsp;; étiquettes de version du dépôt. Le gain d’espace dépend de chaque machine et n’est pas chiffré ici.</p>
+      </div>
+    </section>
+
+    <section id="limites" aria-labelledby="t-limites">
+      <div class="wrap">
+        <h2 id="t-limites">Limites connues</h2>
+        <ul class="plain limits">
+          <li>Réservé à macOS&nbsp;: ailleurs, les opérations sont seulement simulées.</li>
+          <li>Le scan dynamique est volontairement limité à une profondeur de 6 dossiers&nbsp;; les zones ignorées filtrent les résultats mais ne raccourcissent pas le parcours.</li>
+          <li>Les tailles affichées sont des estimations d’occupation disque, pas une garantie d’économie de sauvegarde (liens physiques, clones APFS).</li>
+          <li>Une protection ajoutée après coup ne supprime pas une exclusion existante&nbsp;: le conflit est signalé et doit être levé manuellement.</li>
+          <li>Les chemins système exigent des droits administrateur&nbsp;; sans eux, ils sont comptés comme bloqués et l’exécution se termine en erreur.</li>
+          <li>La plupart des exclusions n’apparaissent pas dans les Réglages Système&nbsp;; on les vérifie en ligne de commande.</li>
+          <li>La découverte d’images disque est désactivée par défaut et plafonnée à 50 éléments par exécution.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="credits" aria-labelledby="t-credits">
+      <div class="wrap">
+        <h2 id="t-credits">Crédits</h2>
+        <ul class="plain">
+          <li><a href="https://support.apple.com/fr-fr/104984">Time Machine</a> et son utilitaire en ligne de commande <code>tmutil</code>, fournis par Apple avec macOS.</li>
+          <li><a href="https://www.shellcheck.net/">ShellCheck</a>, analyseur statique utilisé en intégration continue.</li>
+          <li><a href="https://brew.sh/">Homebrew</a> pour la distribution, <a href="https://shields.io/">Shields.io</a> pour les badges et <a href="https://icons8.com/">Icons8</a> pour l’icône du README.</li>
+        </ul>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <p>tm-exclusions est distribué sous licence MIT. <a href="https://github.com/qveys/tm-exclusions">Code source, documentation et historique sur GitHub</a>.</p>
+      <p>Page statique, sans script ni traceur.</p>
+    </div>
+  </footer>
+</body>
+</html>
