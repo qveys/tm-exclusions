@@ -479,10 +479,88 @@ EOF
     RULE_SUMMARY="$new_summary"
 }
 
+# Size measurement only (never called by keep/exclusion/uninstall guards).
+# True (0) when measuring $1 could hit the WRONG directory because its raw or
+# resolved name holds a newline: `$(...)` strips a trailing newline, so an alias
+# to "small<LF>" resolves (in normalize_path) to the neighbouring "small" and its
+# size would be shown instead (#44 review). Such paths are never measured and
+# count as unmeasured. Returns 1 (safe) otherwise, including when resolution
+# fails (the caller then keeps its pre-existing fallback to the raw path).
+#
+# Cheap by construction: a path without newline, without "." / ".." component
+# and with no symlink among its prefixes (the usual case) is decided with shell
+# builtins only — no subshell. Only otherwise are the components resolved, once,
+# with an "x" sentinel and a separately tested `cd -P && pwd -P`. The last
+# answer is memoized: process_path asks about the same path three times.
+# Must not run inside $(...) (the memo would be lost, not wrong).
+SIZE_UNSAFE_PATH=""
+SIZE_UNSAFE_SET=0
+SIZE_UNSAFE_RC=1
+size_path_unsafe() {
+    local p="$1" rest part prefix="" slow=0 normalized="" physical out rc=1
+    if [[ "$SIZE_UNSAFE_SET" -eq 1 && "$p" = "$SIZE_UNSAFE_PATH" ]]; then
+        return "$SIZE_UNSAFE_RC"
+    fi
+    case "$p" in
+        *$'\n'*) rc=0 ;;
+        *)
+            [[ "$p" = /* ]] || slow=1
+            rest="$p"
+            while [[ "$slow" -eq 0 ]]; do
+                part="${rest%%/*}"
+                case "$part" in
+                    ''|.) ;;
+                    ..) slow=1 ;;
+                    *)
+                        prefix="${prefix}/${part}"
+                        [[ -L "$prefix" ]] && slow=1
+                        ;;
+                esac
+                case "$rest" in
+                    */*) rest="${rest#*/}" ;;
+                    *) break ;;
+                esac
+            done
+            if [[ "$slow" -eq 1 ]]; then
+                rest="$p"
+                while :; do
+                    part="${rest%%/*}"
+                    case "$part" in
+                        ''|.) ;;
+                        ..) normalized="${normalized%/*}" ;;
+                        *) normalized="${normalized}/$part" ;;
+                    esac
+                    if [[ -d "${normalized:-/}" ]]; then
+                        # cd and pwd failures are propagated, not masked by the sentinel.
+                        out="$(cd -P -- "${normalized:-/}" 2>/dev/null && pwd -P && printf x)" || break
+                        physical="${out%x}"
+                        physical="${physical%$'\n'}"
+                        case "$physical" in
+                            *$'\n'*) rc=0; break ;;
+                        esac
+                        normalized="${physical%/}"
+                    fi
+                    case "$rest" in
+                        */*) rest="${rest#*/}" ;;
+                        *) break ;;
+                    esac
+                done
+            fi
+            ;;
+    esac
+    SIZE_UNSAFE_PATH="$p"
+    SIZE_UNSAFE_SET=1
+    SIZE_UNSAFE_RC="$rc"
+    return "$rc"
+}
+
 # Track paths for optional du summary (dedupe; Bash 3.2 — no associative arrays)
 du_track_path() {
     local p="$1"
     [[ -z "$p" || ! -e "$p" ]] && return 0
+    # Size bookkeeping only: never record a name whose measurement would hit the
+    # wrong directory (#44).
+    if size_path_unsafe "$p"; then return 0; fi
     DU_PATHS="$(path_set_add "$DU_PATHS" "$p")"
 }
 
@@ -490,16 +568,11 @@ du_track_path() {
 # spellings: symlinked and `..`-relative duplicates must not inflate a total,
 # and stored entries are normalized on the way in too. A path already covered
 # by a stored ancestor is not added; stored descendants of $2 are dropped.
-# Shared by DU_PATHS (every path touched) and EXCL_PATHS (newly excluded, #44).
+# Shared by DU_PATHS (every path touched) and EXCL_PATHS (newly excluded, #44);
+# same logic as the former inline du_track_path. It makes no newline decision:
+# callers skip unsafe names first (size_path_unsafe).
 path_set_add() {
     local set="$1" p="$2" entry normalized retained=""
-    # The set is newline-delimited and cannot hold a name with a newline: reject
-    # it on the raw AND the resolved path (an alias to "small<LF>" must not
-    # collapse onto the neighbouring "small", #44 review).
-    if path_resolves_with_newline "$p"; then
-        printf '%s' "$set"
-        return 0
-    fi
     if ! p="$(normalize_path "$p")"; then
         printf '%s' "$set"
         return 0
@@ -544,7 +617,7 @@ excl_track_path() {
     du_enabled || return 0
     # The path set is newline-delimited, so a name containing a newline cannot be
     # stored: count it as unmeasured rather than silently dropping its size.
-    if path_resolves_with_newline "$p"; then
+    if size_path_unsafe "$p"; then
         EXCL_UNTRACKED=$((EXCL_UNTRACKED + 1))
         return 0
     fi
@@ -744,7 +817,7 @@ path_size_column() {
     local p="$1" np="" szk=""
     # A newline in the name cannot live in the newline-delimited cache: report
     # it as unmeasured without running du at all (#44 review).
-    if path_resolves_with_newline "$p"; then
+    if size_path_unsafe "$p"; then
         PATH_SIZE_COL="-"
         return 0
     fi
@@ -1468,60 +1541,22 @@ EOF
 }
 
 # Normalize dot components and existing symlink prefixes without requiring realpath.
-#
-# normalize_path_into sets NORMALIZED_PATH (no subshell, so newlines survive) and
-# is newline-exact: components are split with parameter expansion (`read` would
-# stop at the first newline of the name) and the physical path of each existing
-# directory is captured with an "x" sentinel, so a trailing newline in a name
-# (e.g. a link target "small<LF>") is not stripped by $(...) and cannot collapse
-# onto the neighbouring "small" (#44 review; same family as physical_dir, #89).
-# Only the newline appended by pwd is removed. Names without a newline resolve
-# exactly as before.
-NORMALIZED_PATH=""
-normalize_path_into() {
-    local rest="$1" part normalized="" physical
-    while :; do
-        part="${rest%%/*}"
+normalize_path() {
+    local path="$1" part normalized="" physical
+    local -a parts
+    IFS='/' read -r -a parts <<< "$path"
+    for part in "${parts[@]}"; do
         case "$part" in
             ''|.) ;;
             ..) normalized="${normalized%/*}" ;;
             *) normalized="${normalized}/$part" ;;
         esac
         if [[ -d "${normalized:-/}" ]]; then
-            physical="$(cd -P -- "${normalized:-/}" 2>/dev/null && { pwd -P; printf x; })" || return 1
-            physical="${physical%x}"
-            physical="${physical%$'\n'}"
+            physical="$(cd -P "${normalized:-/}" 2>/dev/null && pwd)" || return 1
             normalized="${physical%/}"
         fi
-        case "$rest" in
-            */*) rest="${rest#*/}" ;;
-            *) break ;;
-        esac
     done
-    NORMALIZED_PATH="${normalized:-/}"
-}
-
-# Normalized path on stdout. Callers capture it with $(...), which strips any
-# trailing newline of the OUTPUT: paths that may contain a newline must use
-# normalize_path_into / path_resolves_with_newline instead.
-normalize_path() {
-    normalize_path_into "$1" || return 1
-    printf '%s\n' "$NORMALIZED_PATH"
-}
-
-# True when $1 — raw or once links and dot components are resolved — contains a
-# newline. Such paths cannot be stored in the newline-delimited size caches and
-# are never measured (#44): checking only the raw name misses an alias whose
-# target name ends in a newline.
-path_resolves_with_newline() {
-    case "$1" in
-        *$'\n'*) return 0 ;;
-    esac
-    normalize_path_into "$1" || return 1
-    case "$NORMALIZED_PATH" in
-        *$'\n'*) return 0 ;;
-    esac
-    return 1
+    printf '%s\n' "${normalized:-/}"
 }
 
 # Reject both descendants and ancestors: excluding a parent would defeat keep.

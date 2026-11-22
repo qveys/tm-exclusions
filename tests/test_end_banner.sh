@@ -432,16 +432,163 @@ nl_alias_case c/alias-mid "alias to a target with a newline in the middle ('sz95
 banner_run "$TEST_HOME/out-nla-ctl" apply 1 0 en c/sz95
 assert_file_contains "$TEST_HOME/out-nla-ctl" "Space that would be excluded (simulated): 95K" "control: the real neighbour is measured"
 
-# normalize_path_into is newline-exact (and plain names resolve as before).
-nl_norm() {
-    bash -c 'source "$1"; normalize_path_into "$2"; printf "%s" "$NORMALIZED_PATH"' _ "$B_FUNCS" "$1"
+# child of an alias to a newline-named directory (prefix resolution loses the newline)
+mkdir -p "$B_HOME/$NLA_TARGET/inner"
+nl_alias_case c/alias-abs/inner "child 'inner' of an alias to 'sz92x<LF>'"
+
+echo ""
+echo "--- size_path_unsafe: decided per path, no false positives ---"
+unsafe_rc() {
+    bash -c 'source "$1"; if size_path_unsafe "$2"; then echo unsafe; else echo safe; fi' _ "$B_FUNCS" "$1"
 }
-# Sentinel "x": $(...) would strip the very newline under test.
-assert_eq "$B_PHYS/c/sz92x"$'\n'"x" "$(nl_norm "$B_HOME/c/alias-chain"; printf x)" \
-    "normalize_path_into keeps the trailing newline of a resolved link target"
-assert_eq "$B_PHYS/c/sz95"$'\n'"b" "$(nl_norm "$B_HOME/c/alias-mid")" \
-    "normalize_path_into keeps a newline in the middle of a name (no truncation at the first line)"
-assert_eq "$B_PHYS/c/sz95" "$(nl_norm "$B_HOME/c/../c/./sz95/")" "plain names (dots, trailing slash) resolve as before"
+ln -s "$B_PHYS/c/sz1024" "$B_HOME/c/plain-link"
+assert_eq safe "$(unsafe_rc "$B_PHYS/c/sz1024")" "ordinary physical path is safe"
+assert_eq safe "$(unsafe_rc "$B_HOME/c/plain-link")" "link to an ordinary directory is safe"
+assert_eq safe "$(unsafe_rc "$B_HOME/c/../c/sz1024")" "path with .. resolving to an ordinary directory is safe"
+assert_eq safe "$(unsafe_rc "$B_HOME/c/does-not-exist")" "missing path is safe (nothing to alias)"
+assert_eq unsafe "$(unsafe_rc "$B_HOME/c/sz92"$'\n')" "raw name ending in a newline is unsafe"
+assert_eq unsafe "$(unsafe_rc "$B_HOME/c/alias-abs")" "alias to 'sz92x<LF>' is unsafe"
+assert_eq unsafe "$(unsafe_rc "$B_HOME/c/alias-rel")" "relative alias to 'sz92x<LF>' is unsafe"
+assert_eq unsafe "$(unsafe_rc "$B_HOME/c/alias-chain")" "alias of an alias is unsafe"
+assert_eq unsafe "$(unsafe_rc "$B_HOME/c/alias-mid")" "alias to 'sz95<LF>b' is unsafe"
+assert_eq unsafe "$(unsafe_rc "$B_HOME/c/alias-abs/inner")" "child of an alias to a newline name is unsafe"
+
+echo ""
+echo "--- Non-regression: normalize_path and path sets behave exactly as on master ---"
+# Frozen verbatim copies of origin/master's normalize_path and du_track_path
+# (641ae3d), renamed ref_*: the production functions must give the same output
+# AND exit status on a battery of inputs. Committed copies: no git needed in CI.
+B_REF="$TEST_HOME/ref.sh"
+cat > "$B_REF" <<'REFEOF'
+ref_normalize_path() {
+    local path="$1" part normalized="" physical
+    local -a parts
+    IFS='/' read -r -a parts <<< "$path"
+    for part in "${parts[@]}"; do
+        case "$part" in
+            ''|.) ;;
+            ..) normalized="${normalized%/*}" ;;
+            *) normalized="${normalized}/$part" ;;
+        esac
+        if [[ -d "${normalized:-/}" ]]; then
+            physical="$(cd -P "${normalized:-/}" 2>/dev/null && pwd)" || return 1
+            normalized="${physical%/}"
+        fi
+    done
+    printf '%s\n' "${normalized:-/}"
+}
+
+ref_du_track_path() {
+    local p="$1" entry normalized retained=""
+    [[ -z "$p" || ! -e "$p" ]] && return 0
+    # Compare physical spellings: symlinked and `..`-relative duplicates must not
+    # inflate the total, and stored entries are normalized on the way in too.
+    if ! p="$(ref_normalize_path "$p")"; then
+        return 0
+    fi
+    while IFS= read -r entry; do
+        [[ -z "$entry" ]] && continue
+        normalized="$entry"
+        if [[ -e "$entry" ]]; then
+            normalized="$(ref_normalize_path "$entry")" || normalized="$entry"
+        fi
+        path_under "$p" "$normalized" && return 0
+        if ! path_under "$normalized" "$p"; then retained="${retained}${normalized}
+"; fi
+    done <<EOF
+${DU_PATHS}
+EOF
+    DU_PATHS="${retained}${p}"
+}
+REFEOF
+mkdir -p "$B_HOME/c/target-dir/sub" "$B_HOME/c/with space"
+ln -sf "$B_HOME/c/target-dir" "$B_HOME/c/lnk"
+ln -sf "$B_HOME/c/nowhere" "$B_HOME/c/broken"
+mkdir -p "$B_HOME/c/gl1" "$B_HOME/c/-x"
+battery_run() {
+    # $1 = function name; prints "rc|output" for each input, one per line (newlines escaped)
+    ( cd "$B_HOME" && bash -c '
+        source "$1"; source "$2"; fn="$3"; shift 3
+        for x in "$@"; do
+            rc=0; out="$("$fn" "$x" 2>/dev/null)" || rc=$?
+            printf "%s|%q\n" "$rc" "$out"
+        done' _ "$B_FUNCS" "$B_REF" "$1" \
+        "$B_HOME/c/sz1024" "c/sz1024" "$B_HOME/c/../c/sz1024" "./c" "$B_HOME//c///sz1024" "$B_HOME/c/sz1024/" \
+        "$B_HOME/c/lnk" "$B_HOME/c/lnk/sub" "$B_HOME/c/lnk/../sz1024" "$B_HOME/c/broken" "$B_HOME/c/missing/x" \
+        "" "~" "$B_HOME/c/with space" "$B_HOME/c/gl*" "-x" "c/-x" "/" "/." "/.." "$B_HOME/c/alias-abs" \
+        "$B_HOME/c/alias-rel" "$B_HOME/c/alias-chain" "$B_HOME/c/alias-mid" "$B_HOME/c/sz92"$'\n' )
+}
+battery_run ref_normalize_path > "$TEST_HOME/battery-ref"
+battery_run normalize_path > "$TEST_HOME/battery-pr"
+assert_true "normalize_path output and exit status match master on every battery input" \
+    cmp -s "$TEST_HOME/battery-ref" "$TEST_HOME/battery-pr"
+assert_true "the battery actually ran (25 inputs, incl. empty, ~, glob, -x, newline names)" \
+    test "$(wc -l < "$TEST_HOME/battery-pr" | tr -d ' ')" -eq 25
+# pwd -P failure must surface as exit 1 (never masked)
+pwdfail_rc() {
+    bash -c 'source "$1"; source "$2"; pwd() { return 1; }; rc=0; "$3" "$4" >/dev/null 2>&1 || rc=$?; echo $rc' _ "$B_FUNCS" "$B_REF" "$1" "$B_PHYS/c/sz1024"
+}
+assert_eq 1 "$(pwdfail_rc ref_normalize_path)" "reference: failing pwd -> exit 1"
+assert_eq 1 "$(pwdfail_rc normalize_path)" "normalize_path: failing pwd -> exit 1 (like master)"
+# DU_PATHS bookkeeping: same set as master's du_track_path for ordinary paths
+du_paths_run() {
+    bash -c '
+        source "$1"; source "$2"; fn="$3"; shift 3; DU_PATHS=""
+        for x in "$@"; do "$fn" "$x"; done
+        printf "%q\n" "$DU_PATHS"' _ "$B_FUNCS" "$B_REF" "$1" \
+        "$B_HOME/c/sz100/sz50" "$B_HOME/c/sz100" "$B_HOME/c/lnk" "$B_HOME/c/target-dir/sub" "$B_HOME/c/with space" \
+        "$B_HOME/c/missing" "$B_HOME/c/sz1024" "$B_HOME/c/../c/sz1024"
+}
+assert_eq "$(du_paths_run ref_du_track_path)" "$(du_paths_run du_track_path)" "du_track_path keeps master's DU_PATHS set for ordinary paths"
+
+echo ""
+echo "--- Security: keep protects an alias to a newline-named directory (as master) ---"
+mkdir -p "$B_HOME/c/protect"$'\n'"/saved" "$B_HOME/c/protect/saved"
+ln -sfn "$B_HOME/c/protect"$'\n' "$B_HOME/c/kalias"
+KEEP_RULES="$B_HOME/keep-rules"
+# shellcheck disable=SC2016
+printf 'keep|$HOME/c/kalias/saved|protected\npath|$HOME/c/kalias/saved|same target\n' > "$KEEP_RULES"
+keep_cli() {
+    local out="$1"
+    shift
+    : > "$B_CALLS"
+    # shellcheck disable=SC2031
+    env HOME="$B_HOME" PATH="$B_BIN:$PATH" TM_EXCLUSIONS_DEFAULT_CONF="$KEEP_RULES" \
+        TM_EXCLUSIONS_REPORT="$B_HOME/keep-report.txt" TM_EXCLUSIONS_SKIP_DU=1 \
+        bash "$TM_EXCLUSIONS" "$@" > "$out" 2>/dev/null || true
+}
+keep_cli "$TEST_HOME/keep-apply" --dry-run
+assert_eq 0 "$(wc -l < "$B_CALLS" | tr -d ' ')" "keep via alias: no mutation call"
+assert_file_lacks_regex "$B_HOME/keep-report.txt" '^(WOULD|ADD|NEED) .*c/(kalias|protect)' "keep via alias: the protected path is never planned for exclusion"
+assert_file_contains "$B_HOME/keep-report.txt" "KEEP  " "keep via alias: the protected path is reported as kept"
+keep_cli "$TEST_HOME/keep-apply-real"
+assert_eq 0 "$(grep -c '^addexclusion' "$B_CALLS" || true)" "keep via alias: apply mode never calls addexclusion"
+keep_cli "$TEST_HOME/keep-uninstall" --uninstall --force --dry-run
+assert_file_lacks_regex "$B_HOME/keep-report.txt" '^(WOULD_REMOVE|REMOVE) .*c/(kalias|protect)' "keep via alias: forced simulated uninstall removes nothing under the protected path"
+assert_file_contains "$B_HOME/keep-report.txt" "KEEP  " "keep via alias: uninstall still reports the path as kept"
+assert_eq 0 "$(wc -l < "$B_CALLS" | tr -d ' ')" "keep via alias: uninstall makes no mutation call"
+
+echo ""
+echo "--- Cost: the size guard adds no subshell/cd for ordinary paths ---"
+cd_count() {
+    local mode="$1" cnt="$TEST_HOME/cd.count"
+    : > "$cnt"
+    bash -c '
+        source "$1"; source "$2/locales/en.sh"; declare_i18n_en
+        if [ "$3" = noguard ]; then size_path_unsafe() { return 1; }; fi
+        CD_LOG="$4"
+        cd() { echo x >> "$CD_LOG"; builtin cd "$@"; }
+        MODE=apply; DRY_RUN=1; QUIET=1; UI=0; HAS_TMUTIL=1
+        process_path "$5"' _ "$B_FUNCS" "$ROOT" "$mode" "$cnt" "$B_PHYS/c/sz1024" >/dev/null 2>&1 || true
+    wc -l < "$cnt" | tr -d ' '
+}
+# shellcheck disable=SC2031
+HOME="$B_PHYS" PATH="$B_BIN:$PATH" cd_count guard > "$TEST_HOME/cd-guard"
+# shellcheck disable=SC2031
+HOME="$B_PHYS" PATH="$B_BIN:$PATH" cd_count noguard > "$TEST_HOME/cd-noguard"
+assert_true "baseline sanity: process_path resolves prefixes (cd calls > 0)" test "$(cat "$TEST_HOME/cd-noguard")" -gt 0
+assert_eq "$(cat "$TEST_HOME/cd-noguard")" "$(cat "$TEST_HOME/cd-guard")" \
+    "ordinary path: same number of cd -P resolutions with and without the size guard"
 
 if [[ "$TESTS_RUN" -eq 0 ]]; then
     echo "FAIL: no assertion was executed" >&2
