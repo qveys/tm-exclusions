@@ -1881,10 +1881,10 @@ report_columns() {
 
 # Wrap newline-separated names (stdin) into comma-separated lines no wider
 # than $1. Names are never split and the last item of each line carries no
-# trailing comma.
+# trailing comma. Only empty lines are dropped: a name made of blanks is kept.
 wrap_name_list() {
     awk -v width="$1" '
-        NF { names[++n] = $0 }
+        length($0) { names[++n] = $0 }
         END {
             line = ""
             for (i = 1; i <= n; i++) {
@@ -2014,6 +2014,113 @@ build_apps_inventory() {
     '
 }
 
+# Physical path of existing directory $1 (symbolic links, "..", "//" and
+# trailing slashes resolved): the identity of a directory, whatever its
+# spelling. Printed followed by a literal "x" sentinel, which the caller must
+# strip (phys="${phys%x}") after its command substitution: $(...) removes
+# trailing newlines, which would merge "dir" and a sibling named "dir<LF>".
+# One subshell per call.
+physical_dir() {
+    local out
+    out="$(cd -P -- "$1" 2>/dev/null && pwd -P && printf x)" || return 1
+    printf '%sx' "${out%$'\n'x}"
+}
+
+# Colon-separated PATH string ($1) as NUL-separated "<entry>" "<physical path>"
+# pairs of usable directories. Duplicates are dropped on the PHYSICAL
+# directory, so a symbolic link, "//dir" or "a/../dir" to an already listed
+# directory counts once; the first occurrence (and its PATH spelling, minus
+# trailing slashes) is kept, in PATH order. Skipped entries are empty (the
+# current directory), relative (they depend on the working directory) and not
+# an existing directory. NUL-separated so a name with a newline survives.
+list_path_dirs() {
+    local -a seen=()
+    local entry phys i dup
+    while IFS= read -r -d ':' entry; do
+        [[ "$entry" = /* ]] || continue
+        while [[ "$entry" = ?*/ ]]; do entry="${entry%/}"; done
+        phys="$(physical_dir "$entry")" || continue
+        phys="${phys%x}"
+        dup=0
+        i=0
+        while [[ "$i" -lt "${#seen[@]}" ]]; do
+            if [[ "${seen[$i]}" = "$phys" ]]; then dup=1; break; fi
+            i=$((i + 1))
+        done
+        [[ "$dup" -eq 1 ]] && continue
+        seen[${#seen[@]}]="$phys"
+        printf '%s\0%s\0' "$entry" "$phys"
+    done < <(printf '%s:' "$1")
+}
+
+# Executable files directly inside directory $1, one name per line, sorted.
+# One pass of shell tests over a glob (no find/ls, no fork per file): a
+# directory of thousands of tools stays fast. `-f` and `-x` follow symbolic
+# links, so a link to an executable (Homebrew's bin/) counts while a broken
+# link, a link to a directory or a non-executable file does not. A newline in a
+# name is written as \n so every name stays on one line.
+list_dir_executables() {
+    local f name
+    local -a names=()
+    for f in "$1"/* "$1"/.[!.]* "$1"/..?*; do
+        [[ -f "$f" && -x "$f" ]] || continue
+        name="${f##*/}"
+        names[${#names[@]}]="${name//$'\n'/\\n}"
+    done
+    [[ "${#names[@]}" -gt 0 ]] || return 0
+    printf '%s\n' "${names[@]}" | LC_ALL=C sort
+}
+
+# Survey of the command-line tools installed in the PATH directories.
+# $1 is the width of the wrapped lists. Standard system directories
+# (TM_EXCLUSIONS_SYSTEM_PATHS, default /bin:/sbin:/usr/bin:/usr/sbin) only get
+# their binary count: "[sys] <dir> (<n> binaries — omitted)". Every other
+# directory is a toolchain one and gets "[dev] <dir> (<n> binaries):" followed
+# by the tool names, wrapped like the Homebrew lists.
+build_path_tools_inventory() {
+    local width="${1:-80}" sys_dirs dir phys names count word wrap_width found=0
+    local s sp is_sys shown
+    local -a sys_phys=()
+    sys_dirs="${TM_EXCLUSIONS_SYSTEM_PATHS:-/bin:/sbin:/usr/bin:/usr/sbin}"
+    # System directories by physical identity, resolved once: an alias of one
+    # (symbolic link, "//", "..") is a system directory too.
+    while IFS= read -r -d ':' s; do
+        [[ "$s" = /* ]] || continue
+        sp="$(physical_dir "$s")" || continue
+        sp="${sp%x}"
+        sys_phys[${#sys_phys[@]}]="$sp"
+    done < <(printf '%s:' "$sys_dirs")
+    wrap_width=$(( width - 4 ))
+    [[ "$wrap_width" -lt 10 ]] && wrap_width=10
+    printf '%s:\n' "${MSG_INVENTORY_PATH}"
+    while IFS= read -r -d '' dir && IFS= read -r -d '' phys; do
+        found=1
+        # A newline in the directory name is written as \n (one line each).
+        shown="${dir//$'\n'/\\n}"
+        names="$(list_dir_executables "$dir")"
+        count="$(printf '%s\n' "$names" | awk 'length($0) { n++ } END { print n + 0 }')"
+        word="${MSG_INVENTORY_PATH_BINARIES}"
+        [[ "$count" -eq 1 ]] && word="${MSG_INVENTORY_PATH_BINARY}"
+        is_sys=0
+        for s in ${sys_phys[@]+"${sys_phys[@]}"}; do
+            if [[ "$s" = "$phys" ]]; then is_sys=1; break; fi
+        done
+        if [[ "$is_sys" -eq 1 ]]; then
+            printf '[sys] %s (%s %s — %s)\n' "$shown" "$count" "$word" "${MSG_INVENTORY_PATH_OMITTED}"
+        else
+            printf '[dev] %s (%s %s)' "$shown" "$count" "$word"
+            if [[ "$count" -gt 0 ]]; then
+                printf ':\n%s\n' "$(printf '%s\n' "$names" | wrap_name_list "$wrap_width" | sed 's/^/  /')"
+            else
+                printf '\n'
+            fi
+        fi
+    done < <(list_path_dirs "${PATH:-}")
+    if [[ "$found" -eq 0 ]]; then
+        printf '  %s\n' "${MSG_INVENTORY_PATH_NONE}"
+    fi
+}
+
 build_inventory_section() {
     local stdout_tty="${1:-0}" width path_total path_dirs p oifs
     printf '=== Inventory (informational) ===\n'
@@ -2042,6 +2149,9 @@ build_inventory_section() {
     done
     IFS="${oifs}"
     printf 'PATH: %s existing directories (of %s colon-separated entries)\n' "$path_dirs" "$path_total"
+    if [[ "${QUIET}" -eq 0 ]]; then
+        build_path_tools_inventory "$(report_columns "$stdout_tty")"
+    fi
 }
 
 # Interactive runs get the inventory inline (first line of $1 is the report

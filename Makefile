@@ -106,6 +106,8 @@ test: ## Run smoke tests
 	@bash tests/test_summary.sh
 	@echo "Running apps inventory tests..."
 	@bash tests/test_apps_inventory.sh
+	@echo "Running PATH tools inventory tests..."
+	@bash tests/test_path_inventory.sh
 
 test-summary: ## Run all test suites quietly; print totals and only the failures (nonzero on failure)
 	@bash scripts/test-summary.sh
@@ -144,6 +146,7 @@ lint: ## Run ShellCheck on all shell scripts and syntax-check locale tables
 	@shellcheck -x -s bash tests/test_scan_single_find.sh
 	@shellcheck -x -s bash tests/test_summary.sh
 	@shellcheck -x -s bash tests/test_apps_inventory.sh
+	@shellcheck -x -s bash tests/test_path_inventory.sh
 	@shellcheck -x -s bash scripts/test-summary.sh
 	@echo "ShellCheck passed."
 

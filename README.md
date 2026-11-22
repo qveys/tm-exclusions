@@ -449,7 +449,8 @@ launchctl load ~/Library/LaunchAgents/com.tm-exclusions.weekly.plist
 | `TM_EXCLUSIONS_EXTRA_CONF` | Load an additional config file after default + custom (opt-in cloud-sync prunes, see [Power users](#power-users-cloud-sync-prune-opt-in)) |
 | `TM_EXCLUSIONS_REPORT` | Override report output path (overrides `setting|report_path`) |
 | `TM_EXCLUSIONS_REPORT_DESKTOP=1` | Also write a report copy to `~/Desktop` (opt-in; equivalent to `--desktop-report`; overrides `setting|desktop_report`) |
-| `TM_EXCLUSIONS_SKIP_INVENTORY=1` | Skip inventory block (installed apps with sizes, Homebrew, PATH) in report |
+| `TM_EXCLUSIONS_SKIP_INVENTORY=1` | Skip inventory block (installed apps with sizes, Homebrew, PATH and its CLI tools survey) in report |
+| `TM_EXCLUSIONS_SYSTEM_PATHS` | Colon-separated PATH directories treated as system (count only) in the PATH tools survey; default `/bin:/sbin:/usr/bin:/usr/sbin` |
 | `TM_EXCLUSIONS_SKIP_DU=1` | Skip the per-path `du` size column and the disk-usage section in the report |
 | `TM_EXCLUSIONS_DEBUG_FIFO` | Mirror `log_info` output to FD 5 |
 
