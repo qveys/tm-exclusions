@@ -105,7 +105,7 @@ test: ## Run smoke tests
 	@echo "Running test-summary runner tests..."
 	@bash tests/test_summary.sh
 
-test-summary: ## Run all test suites quietly; print totals and only the failures (exit 0/1)
+test-summary: ## Run all test suites quietly; print totals and only the failures (nonzero on failure)
 	@bash scripts/test-summary.sh
 
 check-conf: ## Validate the syntax of the repository config/*.conf files

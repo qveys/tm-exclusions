@@ -11,8 +11,11 @@
 # exits non-zero without printing any FAIL line (crash under `set -e`, syntax
 # error, ...) is reported as failed with the tail of its output.
 #
-# Exit status: 0 when every suite passed, 1 otherwise (including when no suite
-# was found: nothing verified is not a pass).
+# Exit status of this script: 0 when every suite passed, 1 otherwise (including
+# when no suite was found: nothing verified is not a pass). Through `make`, a
+# failure shows as a nonzero status (GNU make reports 2 for a failed recipe).
+# Counts come from each suite's own "Tests run: N  Passed: N  Failed: N" line
+# when present, else from its `  PASS` / `  FAIL` result lines.
 # Bash 3.2 compatible.
 
 set -uo pipefail
@@ -25,6 +28,8 @@ if [[ $# -gt 0 ]]; then
     suites=("$@")
 else
     for f in "$ROOT"/tests/*.sh; do
+        # Without nullglob an empty tests/ leaves the pattern itself in $f.
+        [[ -f "$f" ]] || continue
         [[ "$(basename "$f")" = "test_helpers.sh" ]] && continue
         suites+=("$f")
     done
@@ -80,8 +85,19 @@ for suite in "${suites[@]}"; do
     rc=0
     bash "$suite" > "$log" 2>&1 || rc=$?
 
-    p=$(grep -c '^  PASS ' "$log" || true)
-    f=$(grep -c '^  FAIL ' "$log" || true)
+    # Prefer the suite's own totals line (test_summary in tests/test_helpers.sh,
+    # printed last): counting `  PASS`/`  FAIL` lines would also count one
+    # embedded in a multi-line value a helper printed. The log is never a TTY,
+    # so the line carries no colour codes. A suite that crashed or does not
+    # use test_summary has no such line: fall back to counting result lines.
+    totals=$(sed -n 's/^Tests run: \([0-9][0-9]*\)  Passed: \([0-9][0-9]*\)  Failed: \([0-9][0-9]*\)$/\2 \3/p' "$log" | tail -n 1)
+    if [[ -n "$totals" ]]; then
+        p=${totals% *}
+        f=${totals#* }
+    else
+        p=$(grep -c '^  PASS ' "$log" || true)
+        f=$(grep -c '^  FAIL ' "$log" || true)
+    fi
     total=$((total + p + f))
     passed=$((passed + p))
     failed=$((failed + f))

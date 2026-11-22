@@ -473,7 +473,7 @@ launchctl load ~/Library/LaunchAgents/com.tm-exclusions.weekly.plist
 
 ```bash
 make test     # Run TAP-format smoke tests (--dry-run, no tmutil calls)
-make test-summary  # Same suites, quiet: totals + only the failed assertions (exit 0/1)
+make test-summary  # Same suites, quiet: totals + only the failed assertions (nonzero on failure)
 make lint     # ShellCheck on all .sh files
 make check-conf  # Validate config/*.conf syntax (also part of make check)
 make check-i18n  # Verify en/fr locales define the same MSG_* keys (also part of make check)

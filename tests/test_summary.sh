@@ -140,4 +140,31 @@ assert_file_contains "$WORK/empty.out" "FAILED: 0 total, 0 passed, 0 failed (0 s
     "no suite: coherent 0/0/0 summary"
 assert_file_lacks_regex "$WORK/empty.out" "unbound" "no suite: no unbound-variable error"
 
+echo ""
+echo "--- tests/ with no .sh file at all ---"
+# Without nullglob the unmatched glob stays literal: it must not become a suite.
+rm "$WORK/empty/tests/test_helpers.sh"
+rc=0
+bash "$WORK/empty/scripts/test-summary.sh" > "$WORK/empty2.out" 2>&1 || rc=$?
+assert_eq "1" "$rc" "empty tests/: exit code 1"
+assert_file_contains "$WORK/empty2.out" "FAILED: 0 total, 0 passed, 0 failed (0 suites)" \
+    "empty tests/: 0/0/0 summary, the literal glob is not run as a suite"
+
+echo ""
+echo "--- PASS-looking line inside a multi-line value ---"
+# assert_eq prints the multi-line actual value on a FAIL line: its second line
+# looks like a result line but must not be counted.
+cat > "$WORK/embedded.sh" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+source "${ROOT}/tests/test_helpers.sh"
+assert_eq "x" \$'y\n  PASS embedded' "embedded-case"
+test_summary
+EOF
+rc=0
+run_runner "$WORK/embedded.out" "$WORK/embedded.sh" || rc=$?
+assert_eq "1" "$rc" "embedded PASS line: exit code 1"
+assert_file_contains "$WORK/embedded.out" "FAILED: 1 total, 0 passed, 1 failed (1 of 1 suites)" \
+    "embedded PASS line: counted from the suite totals (1 failure, not 2 results)"
+
 test_summary
