@@ -1531,26 +1531,74 @@ EOF
     register_tmp_file "$all_results"
 
     progress_start "${CONF_PATTERNS}"
+
+    # Single consolidated traversal (#50): build ONE find expression with every
+    # configured pattern OR-ed together — \( -name p1 -o -name p2 ... \) — so
+    # the tree is walked once instead of once per pattern. The positional
+    # parameters double as a Bash 3.2-safe argument vector. No -prune: the old
+    # per-pattern walks kept descending into matched directories (nested
+    # matches like node_modules/.pnpm/*/node_modules are required, notably in
+    # uninstall mode), so the traversal must visit the exact same set.
+    set --
     local pattern_name
     while IFS= read -r pattern_name; do
         [[ -z "$pattern_name" ]] && continue
-        local tmp_pattern
-        tmp_pattern="$(mktemp "${TMPDIR:-/tmp}/tm_exc.XXXXXX")"
-        register_tmp_file "$tmp_pattern"
-        if ! find "$scan_root" -maxdepth 6 -type d -name "$pattern_name" > "$tmp_pattern" 2>/dev/null; then
+        if [[ "$#" -eq 0 ]]; then
+            set -- "$scan_root" -maxdepth 6 -type d '(' -name "$pattern_name"
+        else
+            set -- "$@" -o -name "$pattern_name"
+        fi
+    done <<EOF
+${CONF_PATTERNS}
+EOF
+
+    local tmp_scan
+    tmp_scan="$(mktemp "${TMPDIR:-/tmp}/tm_exc.XXXXXX")"
+    register_tmp_file "$tmp_scan"
+    if [[ "$#" -gt 0 ]]; then
+        set -- "$@" ')'
+        if ! find "$@" > "$tmp_scan" 2>/dev/null; then
+            # One traversal covers every pattern; on failure, report once per
+            # pattern exactly like the old per-pattern loop did.
             RULE_CONTEXT=""
             RULE_CATEGORY=""
-            record_error "$MSG_SCAN_FAILED $scan_root ($pattern_name)"
+            local err_pattern
+            while IFS= read -r err_pattern; do
+                [[ -z "$err_pattern" ]] && continue
+                record_error "$MSG_SCAN_FAILED $scan_root ($err_pattern)"
+            done <<EOF
+${CONF_PATTERNS}
+EOF
         fi
-        # Tag each match with its pattern so pattern_match_allowed can re-check later.
-        # Tab-separated; pattern names never contain tabs in our config schema.
-        local found_dir
-        while IFS= read -r found_dir; do
-            [[ -z "$found_dir" ]] && continue
-            printf '%s\t%s\n' "$found_dir" "$pattern_name" >> "$all_results"
-        done < "$tmp_pattern"
-        rm -f "$tmp_pattern"
-        unregister_tmp_file "$tmp_pattern"
+    fi
+
+    # Tag each discovered directory with every configured pattern whose glob
+    # matches its basename — the same (dir, pattern) pairs the per-pattern
+    # `find -name <pattern>` calls produced, so pattern_match_allowed can
+    # re-check later. Tab-separated; pattern names never contain tabs in our
+    # config schema.
+    local found_dir base_name
+    while IFS= read -r found_dir; do
+        [[ -z "$found_dir" ]] && continue
+        base_name="${found_dir##*/}"
+        while IFS= read -r pattern_name; do
+            [[ -z "$pattern_name" ]] && continue
+            # Unquoted right-hand side on purpose: glob match on the basename,
+            # with the same * ? [ ] metacharacter semantics as `find -name`.
+            # shellcheck disable=SC2053
+            if [[ "$base_name" == $pattern_name ]]; then
+                printf '%s\t%s\n' "$found_dir" "$pattern_name" >> "$all_results"
+            fi
+        done <<EOF
+${CONF_PATTERNS}
+EOF
+    done < "$tmp_scan"
+    rm -f "$tmp_scan"
+    unregister_tmp_file "$tmp_scan"
+
+    # Keep the progress-bar contract: one step per configured pattern.
+    while IFS= read -r pattern_name; do
+        [[ -z "$pattern_name" ]] && continue
         progress_step
     done <<EOF
 ${CONF_PATTERNS}

@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Performance
+
+- **Single-pass dynamic scan** ([#50](https://github.com/qveys/tm-exclusions/issues/50)): `scan_dynamic_patterns()` now walks `$HOME` with one consolidated `find` — `find "$HOME" -maxdepth 6 -type d \( -name p1 -o -name p2 … \)` — instead of one full traversal per configured pattern, cutting repeated tree walks and I/O on large home directories. Each discovered directory is still tagged with every matching pattern, so results, ordering and post-filters (`pattern_match_allowed`, prune zones, kept-prefix pruning) are unchanged; no `-prune` is used, so nested matches (e.g. `node_modules/.pnpm/*/node_modules`, needed in uninstall mode) are still discovered. Covered by `tests/test_scan_single_find.sh` (`make test`), which compares the single pass against a per-pattern reference and counts `find` invocations (1 instead of N).
+
 ### Features
 
 - **Inventory**: installed Homebrew casks and CLI formulae are now listed by name in column-wrapped blocks (terminal width, no trailing commas), both in interactive output and in the saved report; a friendly notice is shown when `brew` is not installed, and `TM_EXCLUSIONS_SKIP_INVENTORY=1` still skips the block. ([#48](https://github.com/qveys/tm-exclusions/issues/48))
