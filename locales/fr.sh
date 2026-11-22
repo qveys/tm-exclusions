@@ -9,6 +9,7 @@ declare_i18n_fr() {
     MSG_UI_BREW="Localisation du cache Homebrew…"
     MSG_UI_DISCOVERY="Recherche des caches et images disque…"
     MSG_UI_REPORT="Préparation du rapport détaillé…"
+    MSG_UI_INVENTORY="Inventaire"
     MSG_HELP_USAGE="Utilisation : ${PROGRAM_NAME} [OPTIONS]"
     MSG_HELP_DESC="Gestionnaire d'exclusions Time Machine pour machines de développement macOS."
     MSG_HELP_MODES="Modes :"

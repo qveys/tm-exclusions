@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Features
+
+- **Inventory**: installed Homebrew casks and CLI formulae are now listed by name in column-wrapped blocks (terminal width, no trailing commas), both in interactive output and in the saved report; a friendly notice is shown when `brew` is not installed, and `TM_EXCLUSIONS_SKIP_INVENTORY=1` still skips the block. ([#48](https://github.com/qveys/tm-exclusions/issues/48))
+
 ### Build
 
 - **`make check-i18n` / `scripts/check-i18n.sh`**: locale parity checker, run as part of `make check`. It compares the `MSG_*` keys of `locales/en.sh` and `locales/fr.sh` and reports, with `file:line`, every key missing from the other locale (exit 1); it exits 0 when the keys are in 1:1 parity. Covered by `tests/test_check_i18n.sh`. ([#56](https://github.com/qveys/tm-exclusions/issues/56))
