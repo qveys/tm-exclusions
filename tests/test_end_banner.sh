@@ -42,10 +42,7 @@ case "\$1" in
             *already*) printf '[Excluded] %s\n' "\$2" ;;
             *) printf '[Included] %s\n' "\$2" ;;
         esac ;;
-    addexclusion|removeexclusion)
-        printf '%s %s\n' "\$1" "\$2" >> "$B_CALLS"
-        # Test hook: lets a scenario change the filesystem between two rules.
-        if [ "\$1" = addexclusion ] && [ -x "$B_HOME/.hook-add" ]; then "$B_HOME/.hook-add" "\$2"; fi ;;
+    addexclusion|removeexclusion) printf '%s %s\n' "\$1" "\$2" >> "$B_CALLS" ;;
 esac
 exit 0
 STUB
@@ -614,20 +611,6 @@ assert_file_contains "$TEST_HOME/out-redir" "Space that would be excluded (simul
     "second rule on the redirected alias is unmeasured, the first stays exact"
 assert_file_lacks_regex "$TEST_HOME/out-redir" '92K' "redirected alias never shows the neighbour's 92K"
 assert_eq 0 "$(grep -c 'c/sz92x' "$B_DU_CALLS" || true)" "du never called on the neighbour after the redirect"
-
-echo ""
-echo "--- slot -> real: a directory moved and re-linked between two rules is not counted twice ---"
-mkdir -p "$B_HOME/c/sz100slot/sz20sub"
-cat > "$B_HOME/.hook-add" <<HOOK
-#!/bin/sh
-rm -f "$B_HOME/.hook-add"
-mv "$B_HOME/c/sz100slot" "$B_HOME/c/sz100real" && ln -s sz100real "$B_HOME/c/sz100slot"
-HOOK
-chmod +x "$B_HOME/.hook-add"
-banner_run "$TEST_HOME/out-slot" apply 0 0 en c/sz100slot c/sz100real/sz20sub
-assert_file_contains "$TEST_HOME/out-slot" "Newly excluded: 2" "slot/real: both rules were applied"
-assert_file_contains "$TEST_HOME/out-slot" "Space excluded: 100K" "slot -> real then real/sub: the child is counted once (100K, not 120K)"
-rm -f "$B_HOME/.hook-add"
 
 echo ""
 echo "--- Cost: cd -P resolutions vs master (frozen reference), deterministic count ---"

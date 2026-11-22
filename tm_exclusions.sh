@@ -610,7 +610,7 @@ TIP_PATH=""
 # whose name is unsafe to measure, or that has no normalized form, is counted
 # as unmeasured instead (never a wrong or silently dropped size).
 excl_track_path() {
-    local p="$1" entry resolved retained=""
+    local p="$1" entry retained=""
     [[ -z "$p" || ! -e "$p" ]] && return 0
     if [[ -z "$EXCL_FIRST_PATH" ]]; then EXCL_FIRST_PATH="$p"; fi
     du_enabled || return 0
@@ -620,13 +620,6 @@ excl_track_path() {
     fi
     while IFS= read -r entry; do
         [[ -z "$entry" ]] && continue
-        # An entry stored as a real directory may have become a symlink since
-        # (moved and re-linked between two rules): re-resolve just that entry, so
-        # slot -> real and real/sub still nest (builtin -L test: no cd for ordinary
-        # entries).
-        if [[ -L "$entry" ]]; then
-            resolved="$(normalize_path "$entry")" && entry="$resolved"
-        fi
         if path_under "$PATH_SIZE_NP" "$entry"; then return 0; fi
         if ! path_under "$entry" "$PATH_SIZE_NP"; then retained="${retained}${entry}
 "; fi
