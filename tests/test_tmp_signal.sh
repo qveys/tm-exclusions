@@ -220,6 +220,25 @@ done
 assert_true "newline-named symlink targets: nothing left in any of them" \
     test -z "$(find "${WORK}/nlreal" "$NLREAL_END" "$NLREAL_MID" -mindepth 1 2>/dev/null)"
 
+# CDPATH=. with a relative TMPDIR: cd prints the directory it resolved, which
+# must not leak into the captured physical path (the run used to fall back to /tmp).
+mkdir -p "${WORK}/cdp/local"
+CDP_PHYS="$(cd "${WORK}/cdp/local" && pwd -P)"
+: > "${WORK}/mktemp.log"
+cdp_rc=0
+(
+    cd "${WORK}/cdp"
+    HOME="${HOME_DIR}" TMPDIR=local CDPATH=. PATH="${WORK}/bin:${PATH}" \
+        REAL_MKTEMP="$REAL_MKTEMP" HOLD_MARK="${WORK}" MKTEMP_LOG="${WORK}/mktemp.log" \
+        TM_EXCLUSIONS_DEFAULT_CONF="$CONF" \
+        "$BASH" "$TM_EXCLUSIONS" --dry-run --quiet >/dev/null 2>&1
+) || cdp_rc=$?
+assert_eq 0 "$cdp_rc" "CDPATH=. TMPDIR=local: the run succeeds"
+assert_eq "-d ${CDP_PHYS}/tm_exc_work.XXXXXX" "$(head -n 1 "${WORK}/mktemp.log")" \
+    "CDPATH=. TMPDIR=local: the relative TMPDIR is used (physical path), not /tmp"
+assert_true "CDPATH=. TMPDIR=local: nothing left in that directory" \
+    test -z "$(find "${WORK}/cdp/local" -mindepth 1 2>/dev/null)"
+
 # A TMPDIR holding a newline must never make the cleanup remove another
 # directory: the work directory path was once split at the newline, and the
 # first half (a decoy here, with a file in it) deleted recursively.
