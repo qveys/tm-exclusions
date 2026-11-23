@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Fixes
+
+- **No temporary file left by a signal between `mktemp` and its registration** ([#92](https://github.com/qveys/tm-exclusions/issues/92)): a SIGINT/SIGTERM/SIGHUP arriving after `mktemp` created a file but before `register_tmp_file` recorded it left a `tm_exc_*` file in `TMPDIR`. All temporary files (`kept`, `all`, `scan`, `sorted`, `disk` and the space journal) are now created through one helper, `make_tmp_file`, inside a single private work directory made once by `mktemp -d` (`ensure_tmp_dir`); `INT`/`TERM`/`HUP` are ignored across that one `mktemp -d` and its registration, then the previous traps are restored, and the directory is removed with everything in it by the existing cleanup. Works under Bash 3.2 and 5. Covered by `tests/test_tmp_signal.sh` (`make test`, `make lint`), which suspends `mktemp` right after it created its entry and sends SIGTERM, SIGINT and SIGHUP.
+
 ### Performance
 
 - **Single-pass dynamic scan** ([#50](https://github.com/qveys/tm-exclusions/issues/50)): `scan_dynamic_patterns()` now walks `$HOME` with one consolidated `find` — `find "$HOME" -maxdepth 6 -type d \( -name p1 -o -name p2 … \)` — instead of one full traversal per configured pattern, cutting repeated tree walks and I/O on large home directories. Each discovered directory is still tagged with every matching pattern, so results, ordering and post-filters (`pattern_match_allowed`, prune zones, kept-prefix pruning) are unchanged; no `-prune` is used, so nested matches (e.g. `node_modules/.pnpm/*/node_modules`, needed in uninstall mode) are still discovered. Covered by `tests/test_scan_single_find.sh` (`make test`), which compares the single pass against a per-pattern reference and counts `find` invocations (1 instead of N).
