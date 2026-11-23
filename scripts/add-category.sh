@@ -34,8 +34,9 @@ ENTRIES=""   # one "\ntype|target|reason" per rule
 DRY_RUN=0
 SKIP_TESTS=0
 LOCK=""      # lock directory, set only once this run owns it
+GUARD=""     # O_EXCL guard file serializing the lock mkdir, set only while this run owns it
 WORK=""      # temporary copy of the repository (a sibling of ROOT, see make_work_dir)
-BAK=""       # snapshot of the two files, taken under the lock; the edit is built from it
+BAK=""       # snapshot of the two files (a sibling of WORK, outside the copied tree)
 MAIN_PID=$$  # the main shell: cleanup must never act from a subshell
 INSTALLING=0 # 1 while the real files are being overwritten
 KEEP_WORK=0  # 1 when a restore failed: keep WORK, it holds the originals
@@ -69,8 +70,9 @@ always either both updated or both untouched. EXPECTED_CATEGORY_COUNT in
 $SMOKE_REL is bumped with the config.
 Limits: --root files must be regular files (symbolic links are refused). A
 signal in the few microseconds between creating the lock and recording it, or a
-second SIGKILL during the restore, can leave a stale .add-category.lock or an
-unrestored file: remove the lock by hand and check git status.
+second SIGKILL during the restore, can leave a stale .add-category.lock or
+.add-category.lock.guard, or an unrestored file: remove them by hand and check
+git status.
 Exit status: 0 ok, 1 refused/invalid, 2 usage error.
 EOF
 }
@@ -98,10 +100,12 @@ cleanup() {
     trap '' INT TERM HUP # a second signal must not cut the restore short
     restore_originals || KEEP_WORK=1
   fi
+  if [[ -n "$GUARD" ]]; then rm -f "$GUARD"; fi
   if [[ -n "$LOCK" ]]; then rmdir "$LOCK" 2>/dev/null || true; fi
-  case "$WORK" in
-    *.add-category.*) if [[ "$KEEP_WORK" -eq 0 ]]; then rm -rf "$WORK"; fi ;;
-  esac
+  if [[ "$KEEP_WORK" -eq 0 ]]; then
+    case "$WORK" in *.add-category.*) rm -rf "$WORK" ;; esac
+    case "$BAK" in *.add-category.*.snapshot) rm -rf "$BAK" ;; esac
+  fi
 }
 
 # Working copy: a sibling of the repository root, else under $HOME. Never under
@@ -236,14 +240,22 @@ ask() { # prompt -> REPLY
   IFS= read -r REPLY || die "input ended (EOF); nothing written"
 }
 
-# The EXIT/INT/TERM/HUP traps are installed before this runs. LOCK is set right
-# after a successful mkdir; a signal in the few microseconds in between would
-# leave the lock behind (documented limit: remove .add-category.lock by hand).
+# The lock is the directory .add-category.lock. Not every `mkdir` binary is
+# exclusive under a race (uutils coreutils treats EEXIST as success), so the mkdir
+# is serialized by a guard file created with noclobber (open with O_EXCL, done by
+# the shell itself) and removed right after the mkdir.
+# The EXIT/INT/TERM/HUP traps are installed before this runs. GUARD/LOCK are set
+# right after each successful creation; a signal in the few microseconds in
+# between would leave them behind (documented limit: remove the stale
+# .add-category.lock and .add-category.lock.guard by hand).
 acquire_lock() {
-  if ! mkdir "${ROOT}/.add-category.lock" 2>/dev/null; then
-    die "cannot take ${ROOT}/.add-category.lock: another add-category run is in progress (or remove a stale lock)"
-  fi
+  local msg="cannot take ${ROOT}/.add-category.lock: another add-category run is in progress (or remove a stale .add-category.lock / .add-category.lock.guard)"
+  if ! (set -C; : > "${ROOT}/.add-category.lock.guard") 2>/dev/null; then die "$msg"; fi
+  GUARD="${ROOT}/.add-category.lock.guard"
+  if ! mkdir "${ROOT}/.add-category.lock" 2>/dev/null; then die "$msg"; fi
   LOCK="${ROOT}/.add-category.lock"
+  rm -f "$GUARD"
+  GUARD=""
 }
 
 # Count lines of $2 that match the extended regex $1 (0 when none).
@@ -313,7 +325,7 @@ main() {
   acquire_lock
   [[ -r "$SMOKE" ]] || die "cannot read ${SMOKE}"
   make_work_dir
-  BAK="${WORK}/.snapshot"
+  BAK="${WORK}.snapshot"
   mkdir "$BAK"
   cp -p "$CONF" "${BAK}/default.conf"
   cp -p "$SMOKE" "${BAK}/smoke"
@@ -356,7 +368,7 @@ EOF
   # Build the edited files on a temporary copy of the whole repository.
   local e
   for e in "$ROOT"/* "$ROOT"/.[!.]*; do
-    case "$(basename "$e")" in .git|.add-category.lock) continue ;; esac
+    case "$(basename "$e")" in .git|.add-category.lock|.add-category.lock.guard) continue ;; esac
     if [[ -e "$e" ]]; then cp -R "$e" "$WORK/"; fi
   done
   local w_conf="${WORK}/config/default.conf" w_smoke="${WORK}/${SMOKE_REL}"

@@ -97,6 +97,7 @@ labels() { { grep -E '^#@' "$CONF" || true; } | sort -u | wc -l | tr -d ' '; }
 expected_count() { sed -n 's/^EXPECTED_CATEGORY_COUNT=\([0-9][0-9]*\) .*/\1/p' "$SMOKE"; }
 no_leftovers() {
     [[ ! -e "${REPO}/.add-category.lock" ]] &&
+        [[ ! -e "${REPO}/.add-category.lock.guard" ]] &&
         [[ -z "$(find "$REPO" -name '*.new.*' 2>/dev/null)" ]] &&
         [[ -z "$(find "$WORK" -maxdepth 1 -name 'repo.add-category.*' 2>/dev/null)" ]] &&
         [[ -z "$(find "$HOME" -mindepth 1 -maxdepth 1 -name '.add-category.*' 2>/dev/null)" ]]
@@ -268,6 +269,87 @@ assert_true "the stale run's category was not written" test "$(grep -c '^#@Stale
 assert_eq "$((base_count + 1))" "$(expected_count)" "constant bumped once (by the winner)"
 assert_eq "$(labels)" "$(expected_count)" "constant equals the label count"
 assert_true "no leftover after the stale run" no_leftovers
+
+# Lock must not depend on the host `mkdir` being exclusive: a `mkdir` shim that
+# behaves like uutils coreutils (stat, then mkdir, EEXIST treated as success, with a
+# pause in between to force the interleaving) is put first in PATH, and both runs are
+# stopped mid-work. Exactly one run may reach that point.
+mkdir -p "${WORK}/mkdirstub"
+cat > "${WORK}/mkdirstub/mkdir" <<'STUBEOF'
+#!/bin/sh
+for last; do :; done
+if [ ! -e "$last" ]; then
+    sleep 0.3
+    /bin/mkdir "$@" 2>/dev/null
+    exit 0
+fi
+exec /bin/mkdir "$@"
+STUBEOF
+chmod +x "${WORK}/mkdirstub/mkdir"
+start_race_run() { # name ready-file out-file -> sets RACE_PID
+    PATH="${WORK}/mkdirstub:${WORK}/holdstub:$PATH" STUB_HOLD=1 STUB_READY="$2" STUB_GO="${WORK}/go" \
+        bash "${REPO}/scripts/add-category.sh" --root "$REPO" --skip-tests --name "$1" --add path "\$HOME/.$1/cache" 'race' >"$3" 2>&1 </dev/null &
+    RACE_PID=$!
+}
+fresh_repo; base_count="$(expected_count)"
+rm -f "${WORK}/readyA" "${WORK}/readyB" "${WORK}/go"
+start_race_run RaceA "${WORK}/readyA" "${WORK}/raceA.out"; pidA=$RACE_PID
+start_race_run RaceB "${WORK}/readyB" "${WORK}/raceB.out"; pidB=$RACE_PID
+both_settled() { # a ready file exists, then give the other run time to reach it or exit
+    local n=0
+    while [[ ! -e "${WORK}/readyA" && ! -e "${WORK}/readyB" && "$n" -lt 300 ]]; do sleep 0.1; n=$((n + 1)); done
+    n=0
+    while [[ "$n" -lt 40 ]]; do
+        if [[ -e "${WORK}/readyA" && -e "${WORK}/readyB" ]]; then return 0; fi
+        if ! kill -0 "$pidA" 2>/dev/null || ! kill -0 "$pidB" 2>/dev/null; then return 0; fi
+        sleep 0.1; n=$((n + 1))
+    done
+}
+both_settled
+ready_count=0
+[[ -e "${WORK}/readyA" ]] && ready_count=$((ready_count + 1))
+[[ -e "${WORK}/readyB" ]] && ready_count=$((ready_count + 1))
+: > "${WORK}/go"
+ra=0; rb=0
+wait "$pidA" || ra=$?
+wait "$pidB" || rb=$?
+assert_eq 1 "$ready_count" "non-exclusive mkdir: only one of two concurrent runs gets the lock"
+assert_true "non-exclusive mkdir: exactly one run exits 0 and the other 1" test "$((ra + rb))" -eq 1
+assert_eq "$((base_count + 1))" "$(expected_count)" "non-exclusive mkdir: constant bumped once"
+assert_eq "$(labels)" "$(expected_count)" "non-exclusive mkdir: constant equals the label count"
+assert_true "non-exclusive mkdir: exactly one race category present" test "$(grep -c '^#@Race[AB]$' "$CONF")" -eq 1
+assert_true "non-exclusive mkdir: no lock, guard or work dir left" no_leftovers
+if [[ "$ready_count" -ne 1 ]]; then
+    printf -- '--- RaceA output (exit %s) ---\n' "$ra"; cat "${WORK}/raceA.out"
+    printf -- '--- RaceB output (exit %s) ---\n' "$rb"; cat "${WORK}/raceB.out"
+fi
+
+# A stale guard file blocks a run (exit 1) and is left alone.
+fresh_repo; snapshot
+: > "${REPO}/.add-category.lock.guard"
+run_add --name "Guarded" --add path '$HOME/.guarded/cache' 'x'
+assert_eq 1 "$RC" "stale guard file: run refused with exit 1"
+assert_true "stale guard: message names the lock" grep -Fq 'add-category.lock' <<<"$OUT"
+assert_true "stale guard: nothing modified" unchanged
+assert_true "stale guard file is left alone" test -e "${REPO}/.add-category.lock.guard"
+rm -f "${REPO}/.add-category.lock.guard"
+
+# A `.snapshot` file or directory at the repository root does not get in the way.
+fresh_repo
+: > "${REPO}/.snapshot"
+run_add --name "FileSnap" --add path '$HOME/.filesnap/cache' 'x'
+assert_eq 0 "$RC" "a .snapshot file at the repo root: exit 0"
+assert_file_contains "$CONF" '#@FileSnap' "a .snapshot file at the repo root: category written"
+fresh_repo
+mkdir -p "${REPO}/.snapshot"
+echo keep > "${REPO}/.snapshot/default.conf"
+run_add --dry-run --name "DirSnap" --add path '$HOME/.dirsnap/cache' 'x'
+assert_eq 0 "$RC" "a .snapshot directory at the repo root: dry run exit 0"
+run_add --name "DirSnap" --add path '$HOME/.dirsnap/cache' 'x'
+assert_eq 0 "$RC" "a .snapshot directory at the repo root: exit 0"
+assert_file_contains "$CONF" '#@DirSnap' "a .snapshot directory at the repo root: category written"
+assert_eq keep "$(cat "${REPO}/.snapshot/default.conf")" "the repo's own .snapshot content is untouched"
+assert_true "snapshot cases: no leftover" no_leftovers
 
 echo ""
 echo "--- Duplicates refused ---"
