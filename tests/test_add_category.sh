@@ -17,7 +17,13 @@ source "${ADD_TEST_DIR}/test_helpers.sh"
 
 ADD="${ROOT}/scripts/add-category.sh"
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+# A second private dir outside TMPDIR (and outside /var/folders on macOS), for the
+# "repository next to its work copy" case. Both are our own mktemp -d.
+SIB="$(mktemp -d /tmp/add-category-test.XXXXXX)"
+trap 'chmod -R u+rwx "$SIB" 2>/dev/null || true; rm -rf "$WORK" "$SIB"' EXIT
+# The tool falls back to $HOME when the repository is under TMPDIR: keep that inside WORK.
+export HOME="${WORK}/home"
+mkdir -p "$HOME"
 
 echo "add-category.sh tests"
 echo "========================================"
@@ -88,7 +94,8 @@ expected_count() { sed -n 's/^EXPECTED_CATEGORY_COUNT=\([0-9][0-9]*\) .*/\1/p' "
 no_leftovers() {
     [[ ! -e "${REPO}/.add-category.lock" ]] &&
         [[ -z "$(find "$REPO" -name '*.new.*' 2>/dev/null)" ]] &&
-        [[ -z "$(find "$WORK" -maxdepth 1 -name 'repo.add-category.*' 2>/dev/null)" ]]
+        [[ -z "$(find "$WORK" -maxdepth 1 -name 'repo.add-category.*' 2>/dev/null)" ]] &&
+        [[ -z "$(find "$HOME" -mindepth 1 -maxdepth 1 -name '.add-category.*' 2>/dev/null)" ]]
 }
 label_set() { { grep -E '^#@' "$CONF" || true; } | sort -u; }
 # Mode and inode of a file, e.g. "-rwxr-xr-x 12345".
@@ -333,6 +340,10 @@ echo "--- Install is all or nothing, modes preserved (review points 1, 2) ---"
 cat > "${STUB}/cp" <<'STUBEOF'
 #!/bin/sh
 for last; do :; done
+if [ -n "${STUB_CP_TERM_RESTORE:-}" ] && [ "$last" = "$STUB_CP_CONF" ] && [ "$1" = -p ] && [ ! -e "$STUB_CP_MARK2" ]; then
+    : > "$STUB_CP_MARK2"
+    kill -TERM "$PPID"
+fi
 if [ -n "${STUB_CP_DEST:-}" ] && [ "$last" = "$STUB_CP_DEST" ] && [ ! -e "$STUB_CP_MARK" ]; then
     : > "$STUB_CP_MARK"
     echo garbage > "$last"
@@ -347,7 +358,9 @@ run_add_cp_stub() { # mode, extra args...
     shift
     RC=0
     rm -f "${WORK}/cp.mark"
+    rm -f "${WORK}/cp.mark2"
     OUT="$(PATH="${STUB}:$PATH" STUB_CP_DEST="$SMOKE" STUB_CP_MARK="${WORK}/cp.mark" STUB_CP_MODE="$mode" \
+        STUB_CP_CONF="$CONF" STUB_CP_MARK2="${WORK}/cp.mark2" STUB_CP_TERM_RESTORE="${STUB_RESTORE_TERM:-}" \
         bash "${REPO}/scripts/add-category.sh" --root "$REPO" --skip-tests "$@" 2>&1 </dev/null)" || RC=$?
 }
 fresh_repo; snapshot
@@ -360,6 +373,12 @@ run_add_cp_stub term --name "Killed" --add path '$HOME/.killed/cache' 'x'
 assert_eq 143 "$RC" "SIGTERM during the install exits 143"
 assert_true "SIGTERM during the install: files identical to the original" unchanged
 assert_true "SIGTERM during the install: no leftover" no_leftovers
+fresh_repo; snapshot
+RC=0
+STUB_RESTORE_TERM=1 run_add_cp_stub fail --name "Twice" --add path '$HOME/.twice/cache' 'x'
+assert_eq 1 "$RC" "install failure followed by a SIGTERM during the restore still exits 1"
+assert_true "second signal during the restore: both files back to the original" unchanged
+assert_true "second signal during the restore: no leftover" no_leftovers
 fresh_repo
 chmod 755 "$SMOKE"; chmod 640 "$CONF"
 modes_before="$(mode_inode "$CONF") $(mode_inode "$SMOKE")"
@@ -369,31 +388,62 @@ assert_eq "$modes_before" "$(mode_inode "$CONF") $(mode_inode "$SMOKE")" "mode a
 assert_true "smoke test is still executable" test -x "$SMOKE"
 
 echo ""
-echo "--- Working copy is outside TMPDIR (review point 3) ---"
+echo "--- Working copy location (review points 2, 3) ---"
+# Repository under TMPDIR (the default in this test): work copy goes under $HOME.
 fresh_repo
-mkdir -p "${WORK}/excluded-tmp"
 RC=0
-OUT="$(TMPDIR="${WORK}/excluded-tmp" PATH="${STUB}:$PATH" bash "${REPO}/scripts/add-category.sh" --root "$REPO" \
-    --name "Tmpdir" --add path '$HOME/.tmpdir/cache' 'x' 2>&1 </dev/null)" || RC=$?
-assert_eq 0 "$RC" "run with TMPDIR pointing at an excluded-like path exits 0"
+OUT="$(PATH="${STUB}:$PATH" bash "${REPO}/scripts/add-category.sh" --root "$REPO" \
+    --name "UnderTmp" --add path '$HOME/.undertmp/cache' 'x' 2>&1 </dev/null)" || RC=$?
+assert_eq 0 "$RC" "repository under TMPDIR: exit 0"
 assert_eq 1 "$(make_calls)" "make ran once"
-assert_true "make did not run under TMPDIR" not grep -Fq -- "${WORK}/excluded-tmp" "$MAKE_LOG"
-assert_true "make ran in a sibling of the repo root" grep -Fq -- "-C ${REPO}.add-category." "$MAKE_LOG"
-assert_true "work dir cleaned up" no_leftovers
+assert_true "repository under TMPDIR: make ran under \$HOME, not next to the repo" grep -Fq -- "-C ${HOME}/.add-category." "$MAKE_LOG"
+assert_true "repository under TMPDIR: work dir cleaned up" no_leftovers
+# Repository outside TMPDIR: work copy is its sibling.
+rm -rf "${SIB}/sib"
+mkdir -p "${SIB}/sib/tests"
+cp -R "${ROOT}/config" "${ROOT}/locales" "${ROOT}/scripts" "${SIB}/sib/"
+cp "${ROOT}/tests/smoke.bats-like.sh" "${SIB}/sib/tests/"
+rm -f "$MAKE_LOG"
+RC=0
+OUT="$(TMPDIR="${WORK}" PATH="${STUB}:$PATH" bash "${SIB}/sib/scripts/add-category.sh" --root "${SIB}/sib" \
+    --name "Sibling" --add path '$HOME/.sibling/cache' 'x' 2>&1 </dev/null)" || RC=$?
+assert_eq 0 "$RC" "repository outside TMPDIR: exit 0"
+assert_true "repository outside TMPDIR: make ran in a sibling of the root" grep -Fq -- "-C ${SIB}/sib.add-category." "$MAKE_LOG"
+assert_true "sibling work dir cleaned up" test -z "$(find "$SIB" -maxdepth 1 -name 'sib.add-category.*')"
 if [[ "$(id -u)" -ne 0 ]]; then
-    fresh_repo
-    mkdir -p "${WORK}/ro" "${WORK}/home"
-    mv "$REPO" "${WORK}/ro/repo"
-    chmod 555 "${WORK}/ro"
+    mkdir -p "${SIB}/ro"
+    mv "${SIB}/sib" "${SIB}/ro/repo"
+    chmod 555 "${SIB}/ro"
+    rm -f "$MAKE_LOG"
     RC=0
-    OUT="$(HOME="${WORK}/home" PATH="${STUB}:$PATH" bash "${WORK}/ro/repo/scripts/add-category.sh" --root "${WORK}/ro/repo" \
+    OUT="$(TMPDIR="${WORK}" PATH="${STUB}:$PATH" bash "${SIB}/ro/repo/scripts/add-category.sh" --root "${SIB}/ro/repo" \
         --name "Fallback" --add path '$HOME/.fallback/cache' 'x' 2>&1 </dev/null)" || RC=$?
-    chmod 755 "${WORK}/ro"
-    assert_eq 0 "$RC" "unwritable parent: falls back to a work dir under \$HOME"
-    assert_true "fallback make ran under \$HOME" grep -Fq -- "-C ${WORK}/home/.add-category." "$MAKE_LOG"
-    assert_true "fallback work dir cleaned up" test -z "$(find "${WORK}/home" -mindepth 1 2>/dev/null)"
-    rm -rf "${WORK}/ro"
+    chmod 755 "${SIB}/ro"
+    assert_eq 0 "$RC" "unwritable parent: exit 0"
+    assert_true "unwritable parent: falls back to a work dir under \$HOME" grep -Fq -- "-C ${HOME}/.add-category." "$MAKE_LOG"
 fi
+
+echo ""
+echo "--- Symbolic links are refused (review point 4) ---"
+fresh_repo
+mv "$CONF" "${WORK}/real-default.conf"
+ln -s "${WORK}/real-default.conf" "$CONF"
+cp "${WORK}/real-default.conf" "${WORK}/real-default.before"
+RC=0
+OUT="$(bash "${REPO}/scripts/add-category.sh" --root "$REPO" --skip-tests --name "Link" --add path '$HOME/.link/cache' 'x' 2>&1 </dev/null)" || RC=$?
+assert_eq 1 "$RC" "config is a symbolic link: exit 1"
+assert_true "message mentions symbolic links" grep -Fq 'symbolic link' <<<"$OUT"
+assert_true "the link target is untouched" cmp -s "${WORK}/real-default.conf" "${WORK}/real-default.before"
+assert_true "the link itself is still a link" test -L "$CONF"
+fresh_repo
+mv "$SMOKE" "${WORK}/real-smoke.sh"
+ln -s "${WORK}/real-smoke.sh" "$SMOKE"
+cp "${WORK}/real-smoke.sh" "${WORK}/real-smoke.before"
+RC=0
+OUT="$(bash "${REPO}/scripts/add-category.sh" --root "$REPO" --skip-tests --name "Link" --add path '$HOME/.link/cache' 'x' 2>&1 </dev/null)" || RC=$?
+assert_eq 1 "$RC" "smoke test is a symbolic link: exit 1"
+assert_true "smoke link target untouched" cmp -s "${WORK}/real-smoke.sh" "${WORK}/real-smoke.before"
+assert_true "symlink refusals leave no lock or work dir" no_leftovers
 
 echo ""
 echo "--- Duplicates compare normalized forms on both sides (review point 5) ---"
@@ -429,9 +479,22 @@ assert_exit_code 1 "verify_added_lines: one missing line fails" \
     bash -c 'source "$1"; shift; verify_added_lines "$@"' _ "$ADD" "${WORK}/verify.txt" one three
 assert_exit_code 1 "verify_added_lines: a substring is not a line" \
     bash -c 'source "$1"; shift; verify_added_lines "$@"' _ "$ADD" "${WORK}/verify.txt" on
+# Fault injection lives here, not in the tool: an `awk` shim (first in PATH) drops
+# one line from the output of the generation pass (the one run with B_STATIC set).
+mkdir -p "${WORK}/dropstub"
+cat > "${WORK}/dropstub/awk" <<'STUBEOF'
+#!/bin/sh
+if [ -n "${B_STATIC+x}" ] && [ -n "${STUB_DROP:-}" ]; then
+    /usr/bin/awk "$@" | grep -vFx -- "$STUB_DROP"
+    exit 0
+fi
+exec /usr/bin/awk "$@"
+STUBEOF
+chmod +x "${WORK}/dropstub/awk"
+assert_eq 0 "$(grep -c 'TEST_DROP' "$ADD")" "no fault-injection hook in the production script"
 fresh_repo; snapshot
 RC=0
-OUT="$(ADD_CATEGORY_TEST_DROP_LINE='path|$HOME/.lost/cache|x' bash "${REPO}/scripts/add-category.sh" --root "$REPO" --skip-tests \
+OUT="$(PATH="${WORK}/dropstub:$PATH" STUB_DROP='path|$HOME/.lost/cache|x' bash "${REPO}/scripts/add-category.sh" --root "$REPO" --skip-tests \
     --name "Lost" --add path '$HOME/.lost/cache' 'x' 2>&1 </dev/null)" || RC=$?
 assert_eq 1 "$RC" "a rule lost during generation: exit 1"
 assert_true "lost rule: message says a line is missing" grep -Fq 'line is missing' <<<"$OUT"

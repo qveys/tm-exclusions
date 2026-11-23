@@ -66,6 +66,10 @@ check-conf, check-i18n, make check. The real files are then overwritten in place
 (mode kept) after a backup, and restored on any failure or signal, so they are
 always either both updated or both untouched. EXPECTED_CATEGORY_COUNT in
 $SMOKE_REL is bumped with the config.
+Limits: --root files must be regular files (symbolic links are refused). A
+signal in the few microseconds between creating the lock and recording it, or a
+second SIGKILL during the restore, can leave a stale .add-category.lock or an
+unrestored file: remove the lock by hand and check git status.
 Exit status: 0 ok, 1 refused/invalid, 2 usage error.
 EOF
 }
@@ -89,6 +93,7 @@ restore_originals() {
 cleanup() {
   trap - EXIT
   if [[ "$INSTALLING" -eq 1 ]]; then
+    trap '' INT TERM HUP # a second signal must not cut the restore short
     restore_originals || KEEP_WORK=1
   fi
   if [[ -n "$LOCK" ]]; then rmdir "$LOCK" 2>/dev/null || true; fi
@@ -97,11 +102,19 @@ cleanup() {
   esac
 }
 
-# Working copy: a sibling of the repository root (else under $HOME), never under
-# TMPDIR: the catalog excludes /private/var/folders and the smoke test would
-# fail there on a valid copy.
+# Working copy: a sibling of the repository root, else under $HOME. Never under
+# TMPDIR, /var/folders or /private/var/folders: the catalog excludes
+# /private/var/folders and the smoke test would fail there on a valid copy.
 make_work_dir() {
-  if ! WORK="$(mktemp -d "${ROOT%/}.add-category.XXXXXX" 2>/dev/null)"; then
+  local real tmp=""
+  WORK=""
+  real="$(cd "$(dirname "${ROOT%/}")" 2>/dev/null && pwd -P)" || real=""
+  if [[ -n "${TMPDIR:-}" ]]; then tmp="$(cd "$TMPDIR" 2>/dev/null && pwd -P)" || tmp=""; fi
+  if [[ -n "$real" && "${real}/" != /var/folders/* && "${real}/" != /private/var/folders/* &&
+    ( -z "$tmp" || "${real}/" != "${tmp}/"* ) ]]; then
+    WORK="$(mktemp -d "${ROOT%/}.add-category.XXXXXX" 2>/dev/null)" || WORK=""
+  fi
+  if [[ -z "$WORK" ]]; then
     WORK="$(mktemp -d "${HOME:-/nonexistent}/.add-category.XXXXXX" 2>/dev/null)" || WORK=""
   fi
   [[ -n "$WORK" ]] || die "cannot create a working directory next to ${ROOT} or under \$HOME"
@@ -221,6 +234,9 @@ ask() { # prompt -> REPLY
   IFS= read -r REPLY || die "input ended (EOF); nothing written"
 }
 
+# The EXIT/INT/TERM/HUP traps are installed before this runs. LOCK is set right
+# after a successful mkdir; a signal in the few microseconds in between would
+# leave the lock behind (documented limit: remove .add-category.lock by hand).
 acquire_lock() {
   if ! mkdir "${ROOT}/.add-category.lock" 2>/dev/null; then
     die "cannot take ${ROOT}/.add-category.lock: another add-category run is in progress (or remove a stale lock)"
@@ -264,6 +280,9 @@ main() {
   CONF="${ROOT}/config/default.conf"
   SMOKE="${ROOT}/${SMOKE_REL}"
   [[ -r "$CONF" ]] || die "cannot read ${CONF}"
+  if [[ -L "$CONF" || -L "$SMOKE" ]]; then
+    die "${CONF} and ${SMOKE} must be regular files, not symbolic links (the install writes in place); nothing written"
+  fi
 
   # ADD_CATEGORY_ASSUME_TTY=1 is a test hook: prompt even when stdin is a pipe.
   if [[ -t 0 || "${ADD_CATEGORY_ASSUME_TTY:-}" = 1 ]]; then
@@ -338,12 +357,6 @@ EOF
   ' "$CONF" > "${w_conf}.new"
   printf '%s' "$b_prune" >> "${w_conf}.new"
   mv "${w_conf}.new" "$w_conf"
-  # Test hook (harmless): removes this exact line from the generated config, to
-  # prove that verify_added_lines catches a rule lost during generation.
-  if [[ -n "${ADD_CATEGORY_TEST_DROP_LINE:-}" ]]; then
-    grep -vFx -- "$ADD_CATEGORY_TEST_DROP_LINE" "$w_conf" > "${w_conf}.new" || true
-    mv "${w_conf}.new" "$w_conf"
-  fi
   awk '
     /^EXPECTED_CATEGORY_COUNT=[0-9]+ # add-category: expected category count$/ {
       split($0, a, /[= ]/)
