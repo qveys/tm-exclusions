@@ -1020,7 +1020,9 @@ ensure_tmp_dir() {
     # where it was really created.
     # The sentinel keeps $(...) from eating trailing newlines of the path; a
     # physical path holding a control character falls back to /tmp like a raw one.
-    if phys="$(cd -- "$base" 2>/dev/null && pwd -P && printf x)"; then
+    # CDPATH is emptied for this cd: with CDPATH=. a relative TMPDIR makes cd print
+    # the resolved path itself, which would corrupt the captured output.
+    if phys="$(CDPATH='' cd -P -- "$base" >/dev/null 2>&1 && pwd -P && printf x)"; then
         phys="${phys%x}"
         phys="${phys%$'\n'}"
         case "$phys" in *[[:cntrl:]]*) base=/tmp ;; *) base="$phys" ;; esac
