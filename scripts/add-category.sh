@@ -34,7 +34,10 @@ ENTRIES=""   # one "\ntype|target|reason" per rule
 DRY_RUN=0
 SKIP_TESTS=0
 LOCK=""      # lock directory, set only once this run owns it
-WORK=""      # temporary copy of the repository
+WORK=""      # temporary copy of the repository (a sibling of ROOT, see make_work_dir)
+BAK=""       # originals of the two edited files, kept until the install is done
+INSTALLING=0 # 1 while the real files are being overwritten
+KEEP_WORK=0  # 1 when a restore failed: keep WORK, it holds the originals
 
 usage() {
   cat <<EOF
@@ -57,9 +60,12 @@ Add a new category section to config/default.conf and validate it.
 Missing name/rules are prompted for when stdin is a terminal (end of input
 aborts). '|', control characters and newlines are refused in every field. An
 existing category or rule is refused, and only one run may edit a tree at a
-time (lock directory .add-category.lock). The edit is validated on a temporary
-copy (check-conf, check-i18n, make check); the real files are replaced only if
-that passes, and EXPECTED_CATEGORY_COUNT in $SMOKE_REL is bumped with the config.
+time (lock directory .add-category.lock). The edit is validated on a copy of the
+repository placed next to --root (else under $HOME, never under TMPDIR):
+check-conf, check-i18n, make check. The real files are then overwritten in place
+(mode kept) after a backup, and restored on any failure or signal, so they are
+always either both updated or both untouched. EXPECTED_CATEGORY_COUNT in
+$SMOKE_REL is bumped with the config.
 Exit status: 0 ok, 1 refused/invalid, 2 usage error.
 EOF
 }
@@ -67,9 +73,50 @@ EOF
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
 usage_error() { printf 'error: %s\n' "$1" >&2; usage >&2; exit 2; }
 
+# Put both real files back from the backup (best effort, each one).
+restore_originals() {
+  local rc=0
+  cp -p "${BAK}/default.conf" "$CONF" || rc=1
+  cp -p "${BAK}/smoke" "$SMOKE" || rc=1
+  if [[ "$rc" -ne 0 ]]; then
+    printf 'error: could not restore the original files; they are saved in %s\n' "$BAK" >&2
+  fi
+  return "$rc"
+}
+
+# Runs on every exit and on INT/TERM/HUP: the real files end up either fully
+# installed or fully restored, never half and half.
 cleanup() {
+  trap - EXIT
+  if [[ "$INSTALLING" -eq 1 ]]; then
+    restore_originals || KEEP_WORK=1
+  fi
   if [[ -n "$LOCK" ]]; then rmdir "$LOCK" 2>/dev/null || true; fi
-  if [[ -n "$WORK" ]]; then rm -rf "$WORK"; fi
+  case "$WORK" in
+    *.add-category.*) if [[ "$KEEP_WORK" -eq 0 ]]; then rm -rf "$WORK"; fi ;;
+  esac
+}
+
+# Working copy: a sibling of the repository root (else under $HOME), never under
+# TMPDIR: the catalog excludes /private/var/folders and the smoke test would
+# fail there on a valid copy.
+make_work_dir() {
+  if ! WORK="$(mktemp -d "${ROOT%/}.add-category.XXXXXX" 2>/dev/null)"; then
+    WORK="$(mktemp -d "${HOME:-/nonexistent}/.add-category.XXXXXX" 2>/dev/null)" || WORK=""
+  fi
+  [[ -n "$WORK" ]] || die "cannot create a working directory next to ${ROOT} or under \$HOME"
+}
+
+# Every line given after FILE must be present, as a whole line, in FILE.
+verify_added_lines() { # file line...
+  local f="$1" l
+  shift
+  for l in "$@"; do
+    if ! grep -Fxq -- "$l" "$f"; then
+      printf 'error: expected line missing from %s: %s\n' "$f" "$l" >&2
+      return 1
+    fi
+  done
 }
 
 # Refuse empty values, '|' (field delimiter) and control characters (newline...).
@@ -142,16 +189,36 @@ category_exists() {
   return 1
 }
 
-# True when "type|target|" starts an active or commented-out (opt-in) rule.
-entry_exists() {
-  K="$1" awk 'BEGIN { k = ENVIRON["K"] }
-    index($0, k) == 1 || index($0, "# " k) == 1 { f = 1 }
+# True when an active or commented-out (opt-in) rule of this type and target
+# (normalized like norm_target, on both sides) is already in the catalog.
+entry_exists() { # type normalized-target
+  T="$1" V="$2" awk '
+    function norm(t) {
+      if (t == "~") t = "$HOME"
+      else if (substr(t, 1, 2) == "~/") t = "$HOME/" substr(t, 3)
+      while (length(t) > 1 && substr(t, length(t)) == "/") t = substr(t, 1, length(t) - 1)
+      return t
+    }
+    BEGIN { type = ENVIRON["T"]; want = ENVIRON["V"] }
+    {
+      line = $0
+      if (substr(line, 1, 2) == "# ") line = substr(line, 3)
+      i = index(line, "|")
+      if (i == 0 || substr(line, 1, i - 1) != type) next
+      rest = substr(line, i + 1)
+      j = index(rest, "|")
+      t = (j > 0) ? substr(rest, 1, j - 1) : rest
+      if (type != "pattern") t = norm(t)
+      if (t == want) f = 1
+    }
     END { exit !f }' "$CONF"
 }
 
-ask() { # prompt -> REPLY; end of input aborts the whole run
+# The only reader of prompts. Any read failure is an abort: at end of input
+# `read` fails even when it filled REPLY with a partial line, which is ignored.
+ask() { # prompt -> REPLY
   printf '%s' "$1" >&2
-  IFS= read -r REPLY || [[ -n "$REPLY" ]] || die "input ended (EOF); nothing written"
+  IFS= read -r REPLY || die "input ended (EOF); nothing written"
 }
 
 acquire_lock() {
@@ -168,6 +235,7 @@ main() {
   trap cleanup EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
+  trap 'exit 129' HUP
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -223,9 +291,10 @@ main() {
 
   category_exists "$NAME" && die "category already exists: ${NAME}"
   local type target reason b_static="" b_dynamic="" b_prune="" n=0
+  local added=("#@${NAME}")
   while IFS='|' read -r type target reason; do
     [[ -n "$type" ]] || continue
-    if entry_exists "${type}|${target}|"; then
+    if entry_exists "$type" "$target"; then
       die "rule already exists: ${type}|${target}"
     fi
     case "$type" in
@@ -233,6 +302,7 @@ main() {
       prune) b_prune="${b_prune}${type}|${target}|${reason}${LF}" ;;
       *) b_static="${b_static}${type}|${target}|${reason}${LF}" ;;
     esac
+    added+=("${type}|${target}|${reason}")
     n=$((n + 1))
   done <<EOF
 ${ENTRIES}
@@ -254,7 +324,7 @@ EOF
   fi
 
   # Build the edited files on a temporary copy of the whole repository.
-  WORK="$(mktemp -d)"
+  make_work_dir
   local e
   for e in "$ROOT"/* "$ROOT"/.[!.]*; do
     case "$(basename "$e")" in .git|.add-category.lock) continue ;; esac
@@ -268,6 +338,12 @@ EOF
   ' "$CONF" > "${w_conf}.new"
   printf '%s' "$b_prune" >> "${w_conf}.new"
   mv "${w_conf}.new" "$w_conf"
+  # Test hook (harmless): removes this exact line from the generated config, to
+  # prove that verify_added_lines catches a rule lost during generation.
+  if [[ -n "${ADD_CATEGORY_TEST_DROP_LINE:-}" ]]; then
+    grep -vFx -- "$ADD_CATEGORY_TEST_DROP_LINE" "$w_conf" > "${w_conf}.new" || true
+    mv "${w_conf}.new" "$w_conf"
+  fi
   awk '
     /^EXPECTED_CATEGORY_COUNT=[0-9]+ # add-category: expected category count$/ {
       split($0, a, /[= ]/)
@@ -279,13 +355,7 @@ EOF
   mv "${w_smoke}.new" "$w_smoke"
 
   # The rules must really be in the new file, and the catalog must agree with the guard.
-  local line
-  while IFS= read -r line; do
-    [[ -n "$line" ]] || continue
-    grep -Fxq -- "$line" "$w_conf" || die "internal error: '${line}' missing after the edit; nothing written"
-  done <<EOF
-${b_static}${b_dynamic}${b_prune}
-EOF
+  verify_added_lines "$w_conf" "${added[@]}" || die "internal error: an added line is missing after the edit; nothing written"
   if cmp -s "$CONF" "$w_conf"; then die "internal error: config unchanged after the edit; nothing written"; fi
   local labels expected
   labels="$({ grep -E '^#@' "$w_conf" || true; } | sort -u | wc -l | tr -d ' ')"
@@ -308,17 +378,27 @@ EOF
   fi
   if [[ "$SKIP_TESTS" -eq 0 ]]; then
     echo "Running make check on a temporary copy (use --skip-tests to skip)..."
-    make -C "$WORK" check || die "make check failed on the copy; nothing written"
+    # The ceiling keeps git from finding a repository above the copy (the Makefile sets core.hooksPath).
+    GIT_CEILING_DIRECTORIES="$(dirname "$WORK")" make -C "$WORK" check || die "make check failed on the copy; nothing written"
   fi
 
-  cp -p "$w_conf" "${CONF}.new.$$"
-  cp -p "$w_smoke" "${SMOKE}.new.$$"
-  mv "${CONF}.new.$$" "$CONF"
-  mv "${SMOKE}.new.$$" "$SMOKE"
+  # Install: back up the originals, then write INTO the existing files (mode and
+  # inode are kept). Any failure or signal restores both from the backup (cleanup).
+  BAK="${WORK}/.backup"
+  mkdir "$BAK"
+  cp -p "$CONF" "${BAK}/default.conf"
+  cp -p "$SMOKE" "${BAK}/smoke"
+  INSTALLING=1
+  cp "$w_conf" "$CONF" || die "could not write ${CONF}; originals restored"
+  cp "$w_smoke" "$SMOKE" || die "could not write ${SMOKE}; originals restored"
+  INSTALLING=0
   printf 'Added category "%s" (%d rule(s)) to %s and bumped EXPECTED_CATEGORY_COUNT to %s.\n' "$NAME" "$n" "$CONF" "$expected"
   if [[ "$SKIP_TESTS" -eq 1 ]]; then
     printf 'Lint and tests were skipped: run "make check" before committing.\n'
   fi
 }
 
-main "$@"
+# Run only when executed, so tests can source the helpers above from a file.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

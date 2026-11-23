@@ -87,8 +87,13 @@ labels() { { grep -E '^#@' "$CONF" || true; } | sort -u | wc -l | tr -d ' '; }
 expected_count() { sed -n 's/^EXPECTED_CATEGORY_COUNT=\([0-9][0-9]*\) .*/\1/p' "$SMOKE"; }
 no_leftovers() {
     [[ ! -e "${REPO}/.add-category.lock" ]] &&
-        [[ -z "$(find "$REPO" -name '*.new.*' 2>/dev/null)" ]]
+        [[ -z "$(find "$REPO" -name '*.new.*' 2>/dev/null)" ]] &&
+        [[ -z "$(find "$WORK" -maxdepth 1 -name 'repo.add-category.*' 2>/dev/null)" ]]
 }
+label_set() { { grep -E '^#@' "$CONF" || true; } | sort -u; }
+# Mode and inode of a file, e.g. "-rwxr-xr-x 12345".
+# shellcheck disable=SC2012
+mode_inode() { printf '%s %s' "$(ls -l "$1" | cut -c1-10)" "$(ls -i "$1" | awk '{print $1}')"; }
 
 echo ""
 echo "--- Valid addition ---"
@@ -162,6 +167,7 @@ assert_true "held lock: nothing modified" unchanged
 assert_true "the other run's lock is left alone" test -d "${REPO}/.add-category.lock"
 rmdir "${REPO}/.add-category.lock"
 fresh_repo; base_count="$(expected_count)"
+label_set > "${WORK}/labels.before"
 ra=0; rb=0
 bash "${REPO}/scripts/add-category.sh" --root "$REPO" --skip-tests --name "Alpha" --add path '$HOME/.alpha/cache' 'a' >"${WORK}/a.out" 2>&1 </dev/null &
 pa=$!
@@ -172,10 +178,11 @@ wait "$pb" || rb=$?
 ok=0
 [[ "$ra" -eq 0 ]] && ok=$((ok + 1))
 [[ "$rb" -eq 0 ]] && ok=$((ok + 1))
-present="$(grep -c '^#@\(Alpha\|Beta\)$' "$CONF")"
+label_set > "${WORK}/labels.after"
+present="$(comm -13 "${WORK}/labels.before" "${WORK}/labels.after" | wc -l | tr -d ' ')"
 assert_true "at least one concurrent run succeeded" test "$ok" -ge 1
 assert_true "a run that failed did so with exit 1" test "$ra" -le 1 -a "$rb" -le 1
-assert_eq "$ok" "$present" "every successful run is present in the config (no silent loss)"
+assert_eq "$ok" "$present" "categories added == successful runs (set before/after, no silent loss)"
 assert_eq "$((base_count + ok))" "$(expected_count)" "constant matches the number of categories added"
 assert_eq "$(labels)" "$(expected_count)" "constant equals the label count after concurrent runs"
 assert_true "no lock left after concurrent runs" no_leftovers
@@ -318,6 +325,118 @@ run_add --name "  Données Édition  " --add path '$HOME/Library/Données Éditi
 assert_eq 0 "$RC" "spaces and accents accepted"
 assert_file_contains "$CONF" '#@Données Édition' "name trimmed and written verbatim"
 assert_file_contains "$CONF" 'path|$HOME/Library/Données Édition/cache|Cache — régénérable' "accented rule written"
+
+echo ""
+echo "--- Install is all or nothing, modes preserved (review points 1, 2) ---"
+# `cp` stub: the first copy whose destination is $STUB_CP_DEST writes garbage
+# there, then fails (mode fail) or sends SIGTERM to the tool (mode term).
+cat > "${STUB}/cp" <<'STUBEOF'
+#!/bin/sh
+for last; do :; done
+if [ -n "${STUB_CP_DEST:-}" ] && [ "$last" = "$STUB_CP_DEST" ] && [ ! -e "$STUB_CP_MARK" ]; then
+    : > "$STUB_CP_MARK"
+    echo garbage > "$last"
+    if [ "${STUB_CP_MODE:-fail}" = term ]; then kill -TERM "$PPID"; exit 0; fi
+    exit 1
+fi
+exec /bin/cp "$@"
+STUBEOF
+chmod +x "${STUB}/cp"
+run_add_cp_stub() { # mode, extra args...
+    local mode="$1"
+    shift
+    RC=0
+    rm -f "${WORK}/cp.mark"
+    OUT="$(PATH="${STUB}:$PATH" STUB_CP_DEST="$SMOKE" STUB_CP_MARK="${WORK}/cp.mark" STUB_CP_MODE="$mode" \
+        bash "${REPO}/scripts/add-category.sh" --root "$REPO" --skip-tests "$@" 2>&1 </dev/null)" || RC=$?
+}
+fresh_repo; snapshot
+run_add_cp_stub fail --name "Half" --add path '$HOME/.half/cache' 'x'
+assert_eq 1 "$RC" "failing second install exits 1"
+assert_true "second install failed: config AND smoke test identical to the original" unchanged
+assert_true "second install failed: no leftover (lock, .new, work dir)" no_leftovers
+fresh_repo; snapshot
+run_add_cp_stub term --name "Killed" --add path '$HOME/.killed/cache' 'x'
+assert_eq 143 "$RC" "SIGTERM during the install exits 143"
+assert_true "SIGTERM during the install: files identical to the original" unchanged
+assert_true "SIGTERM during the install: no leftover" no_leftovers
+fresh_repo
+chmod 755 "$SMOKE"; chmod 640 "$CONF"
+modes_before="$(mode_inode "$CONF") $(mode_inode "$SMOKE")"
+run_add --name "Modes" --add path '$HOME/.modes/cache' 'x'
+assert_eq 0 "$RC" "addition on files with distinct modes exits 0"
+assert_eq "$modes_before" "$(mode_inode "$CONF") $(mode_inode "$SMOKE")" "mode and inode of default.conf and smoke test preserved"
+assert_true "smoke test is still executable" test -x "$SMOKE"
+
+echo ""
+echo "--- Working copy is outside TMPDIR (review point 3) ---"
+fresh_repo
+mkdir -p "${WORK}/excluded-tmp"
+RC=0
+OUT="$(TMPDIR="${WORK}/excluded-tmp" PATH="${STUB}:$PATH" bash "${REPO}/scripts/add-category.sh" --root "$REPO" \
+    --name "Tmpdir" --add path '$HOME/.tmpdir/cache' 'x' 2>&1 </dev/null)" || RC=$?
+assert_eq 0 "$RC" "run with TMPDIR pointing at an excluded-like path exits 0"
+assert_eq 1 "$(make_calls)" "make ran once"
+assert_true "make did not run under TMPDIR" not grep -Fq -- "${WORK}/excluded-tmp" "$MAKE_LOG"
+assert_true "make ran in a sibling of the repo root" grep -Fq -- "-C ${REPO}.add-category." "$MAKE_LOG"
+assert_true "work dir cleaned up" no_leftovers
+if [[ "$(id -u)" -ne 0 ]]; then
+    fresh_repo
+    mkdir -p "${WORK}/ro" "${WORK}/home"
+    mv "$REPO" "${WORK}/ro/repo"
+    chmod 555 "${WORK}/ro"
+    RC=0
+    OUT="$(HOME="${WORK}/home" PATH="${STUB}:$PATH" bash "${WORK}/ro/repo/scripts/add-category.sh" --root "${WORK}/ro/repo" \
+        --name "Fallback" --add path '$HOME/.fallback/cache' 'x' 2>&1 </dev/null)" || RC=$?
+    chmod 755 "${WORK}/ro"
+    assert_eq 0 "$RC" "unwritable parent: falls back to a work dir under \$HOME"
+    assert_true "fallback make ran under \$HOME" grep -Fq -- "-C ${WORK}/home/.add-category." "$MAKE_LOG"
+    assert_true "fallback work dir cleaned up" test -z "$(find "${WORK}/home" -mindepth 1 2>/dev/null)"
+    rm -rf "${WORK}/ro"
+fi
+
+echo ""
+echo "--- Duplicates compare normalized forms on both sides (review point 5) ---"
+fresh_repo
+printf 'path|$HOME/.ex1/|existing with trailing slash\npath|~/.ex2|existing with tilde\n' >> "$CONF"
+snapshot
+run_add --name "Norm" --add path '~/.ex1' 'new with tilde'
+assert_eq 1 "$RC" "existing \$HOME/x/ vs new ~/x refused"
+run_add --name "Norm" --add path '$HOME/.ex2/' 'new with trailing slash'
+assert_eq 1 "$RC" "existing ~/x vs new \$HOME/x/ refused"
+assert_true "normalized duplicates: nothing modified" unchanged
+
+echo ""
+echo "--- End of input at any prompt aborts (review point 6) ---"
+fresh_repo; snapshot
+run_add_stdin 'NoNewline' --add path '$HOME/.eof/cache' 'x'
+assert_eq 1 "$RC" "name without newline then EOF (--add given): exit 1"
+assert_true "partial name + EOF: nothing written" unchanged
+run_add_stdin 'Name\n'
+assert_eq 1 "$RC" "literal partial input then EOF at the name prompt: exit 1"
+run_add_stdin $'Named\npath\n$HOME/.eof/cache\npartial reason'
+assert_eq 1 "$RC" "partial reason then EOF: exit 1"
+run_add_stdin $'Named\npath\n$HOME/.eof/cache\nreason\npat'
+assert_eq 1 "$RC" "partial type then EOF: exit 1"
+assert_true "partial input anywhere: nothing written" unchanged
+
+echo ""
+echo "--- Added lines are verified (review point 7) ---"
+printf 'one\ntwo\n' > "${WORK}/verify.txt"
+assert_exit_code 0 "verify_added_lines: all lines present" \
+    bash -c 'source "$1"; shift; verify_added_lines "$@"' _ "$ADD" "${WORK}/verify.txt" one two
+assert_exit_code 1 "verify_added_lines: one missing line fails" \
+    bash -c 'source "$1"; shift; verify_added_lines "$@"' _ "$ADD" "${WORK}/verify.txt" one three
+assert_exit_code 1 "verify_added_lines: a substring is not a line" \
+    bash -c 'source "$1"; shift; verify_added_lines "$@"' _ "$ADD" "${WORK}/verify.txt" on
+fresh_repo; snapshot
+RC=0
+OUT="$(ADD_CATEGORY_TEST_DROP_LINE='path|$HOME/.lost/cache|x' bash "${REPO}/scripts/add-category.sh" --root "$REPO" --skip-tests \
+    --name "Lost" --add path '$HOME/.lost/cache' 'x' 2>&1 </dev/null)" || RC=$?
+assert_eq 1 "$RC" "a rule lost during generation: exit 1"
+assert_true "lost rule: message says a line is missing" grep -Fq 'line is missing' <<<"$OUT"
+assert_true "lost rule: no file modified" unchanged
+assert_true "lost rule: no leftover" no_leftovers
 
 if [[ "$TESTS_RUN" -eq 0 ]]; then
     echo "no assertion ran" >&2
