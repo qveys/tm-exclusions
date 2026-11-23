@@ -116,10 +116,11 @@ assert_eq 50 "$(grep -c '^WOULD .*sparsebundle' "$TM_EXCLUSIONS_REPORT")" \
     "image discovery is capped at 50 candidates"
 
 # Hypervisor bundles are candidates whole (contents pruned, no size gate); flat
-# images are size-gated; a .vbox file stands for its VM folder; cloud trees stay pruned.
+# images are size-gated; a .vbox file is excluded alone unless it sits in a folder
+# named after it (<name>/<name>.vbox), which then stands for the VM; cloud trees stay pruned.
 rm -rf "$HOME/disks"
 mkdir -p "$HOME/vms/a.utm/Data" "$HOME/vms/b.vmwarevm" "$HOME/vms/c.parallels" "$HOME/vms/d.pvm" \
-    "$HOME/vms/a.utm/nested.vmwarevm" "$HOME/VirtualBox VMs/box" \
+    "$HOME/vms/a.utm/nested.vmwarevm" "$HOME/VirtualBox VMs/box" "$HOME/Documents" \
     "$HOME/Library/CloudStorage/Drive/e.utm" \
     "$HOME/Library/Mobile Documents/f.vmwarevm"
 for big in "$HOME/vms/big.iso" "$HOME/vms/big.ova" "$HOME/Library/CloudStorage/Drive/big.iso"; do
@@ -129,20 +130,62 @@ done
 : > "$HOME/vms/small.ova"
 : > "$HOME/VirtualBox VMs/box/box.vbox"
 : > "$HOME/stray.vbox"
+: > "$HOME/Documents/loose.vbox"
 run 0 --dry-run
 for found in vms/a.utm vms/b.vmwarevm vms/c.parallels vms/d.pvm vms/big.iso vms/big.ova \
-    "VirtualBox VMs/box"; do
+    "VirtualBox VMs/box" Documents/loose.vbox stray.vbox; do
     assert_file_contains "$TM_EXCLUSIONS_REPORT" "WOULD $HOME/$found " \
         "VM discovery reports $found"
 done
-for missing in small.iso small.ova nested.vmwarevm stray.vbox CloudStorage 'Mobile Documents' \
+for missing in small.iso small.ova nested.vmwarevm CloudStorage 'Mobile Documents' \
     'box/box.vbox'; do
     assert_file_lacks_regex "$TM_EXCLUSIONS_REPORT" "^WOULD .*$missing" \
         "VM discovery skips $missing"
 done
-assert_eq 7 "$(grep '^WOULD ' "$TM_EXCLUSIONS_REPORT" | grep -vc 'brew-cache')" \
+assert_eq 9 "$(grep '^WOULD ' "$TM_EXCLUSIONS_REPORT" | grep -vc 'brew-cache')" \
     "VM discovery plans exactly the expected paths"
-rm -rf "$HOME/vms" "$HOME/VirtualBox VMs" "$HOME/stray.vbox" "$HOME/Library"
+assert_true "a loose .vbox does not exclude its whole folder" \
+    not grep -Fq "WOULD $HOME/Documents " "$TM_EXCLUSIONS_REPORT"
+rm -rf "$HOME/vms" "$HOME/VirtualBox VMs" "$HOME/stray.vbox" "$HOME/Library" "$HOME/Documents"
+
+# A folder named after its .vbox is never $HOME, with or without a trailing slash.
+HOME_PLAIN="$HOME"
+: > "$HOME/home.vbox"
+for HOME in "$HOME_PLAIN" "$HOME_PLAIN/"; do
+    export HOME
+    run 0 --dry-run
+    assert_file_contains "$TM_EXCLUSIONS_REPORT" "home.vbox " \
+        "a .vbox named like HOME is excluded as a file (HOME=$HOME)"
+    assert_true "HOME is never proposed (HOME=$HOME)" \
+        not grep -Eq "^WOULD ${HOME_PLAIN}/* " "$TM_EXCLUSIONS_REPORT"
+done
+HOME="$HOME_PLAIN"
+export HOME
+rm -f "$HOME/home.vbox"
+
+# Exact duplicates and covered descendants never use up the 50 slots; real overflow still does.
+make_vms() {
+    local n i
+    for ((i = 0; i < $1; i++)); do
+        n="$HOME/many/vm$i"
+        mkdir -p "$n"
+        : > "$n/vm$i.vbox"
+        dd if=/dev/zero of="$n/disk.vmdk" bs=1 count=0 seek=537919488 2>/dev/null
+    done
+}
+make_vms 26
+run 0 --dry-run
+assert_eq 26 "$(grep -c '^WOULD .*many/vm[0-9]* ' "$TM_EXCLUSIONS_REPORT")" \
+    "26 VM folders (vbox + large vmdk) are all planned once"
+assert_true "26 VM folders do not trigger LIMIT" \
+    not grep -Fq 'LIMIT' "$TM_EXCLUSIONS_REPORT"
+make_vms 51
+run 0 --dry-run
+assert_file_contains "$TM_EXCLUSIONS_REPORT" 'LIMIT Image discovery limited to 50' \
+    "51 distinct VM folders still disclose LIMIT"
+assert_eq 50 "$(grep -c '^WOULD .*many/vm[0-9]* ' "$TM_EXCLUSIONS_REPORT")" \
+    "51 distinct VM folders are capped at 50"
+rm -rf "$HOME/many"
 mkdir -p "$HOME/disks/private.sparsebundle"
 
 # A failed or unrecognized status must not be treated as Included in any mode.

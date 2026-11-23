@@ -2119,10 +2119,10 @@ collect_post_scan_paths() {
     # VM/disk bundle directories (sparsebundle, UTM, VMware, Parallels) are
     # candidates as a whole, whatever their size, and their contents stay pruned:
     # multi-part disks inside never fall under the size gate. Flat image files are
-    # size-gated. A VirtualBox VM is a plain folder holding a small .vbox file plus
-    # its disks, so a .vbox match stands for its containing folder (never $HOME
-    # itself). Cloud-synced trees (iCloud, File Provider CloudStorage) are pruned
-    # so nothing is downloaded.
+    # size-gated. A .vbox file is a candidate itself; when it sits in a folder
+    # named after it (VirtualBox's <name>/<name>.vbox layout) that folder holds the
+    # VM's disks and becomes the candidate instead, unless it is $HOME. Cloud-synced
+    # trees (iCloud, File Provider CloudStorage) are pruned so nothing is downloaded.
     show_scan_path "$HOME"
     if ! find "$HOME" \( -path '*/Mobile Documents/*' -o -path '*/Library/Mobile Documents/*' \
             -o -path '*/Library/CloudStorage/*' \) -prune -o \
@@ -2132,7 +2132,8 @@ collect_post_scan_paths() {
             -o -name '*.iso' -o -name '*.ova' \) -size +512M -print0 \) -o \
         \( -type f -name '*.vbox' -print0 \) \
         2>/dev/null | {
-            local candidate count=0
+            local candidate vbox_dir home_dir="$HOME"
+            while [[ "$home_dir" = */ ]]; do home_dir="${home_dir%/}"; done
             while IFS= read -r -d '' candidate; do
                 # The find stream is NUL-delimited but the candidate batch file is
                 # newline-delimited (Bash 3.2); a path containing a newline would
@@ -2141,9 +2142,13 @@ collect_post_scan_paths() {
                     record_error "$MSG_SCAN_NEWLINE_PATH"
                     continue
                 fi
-                if [[ "$candidate" = *.vbox && ! -d "$candidate" ]]; then
-                    candidate="${candidate%/*}"
-                    [[ -z "$candidate" || "$candidate" = "$HOME" ]] && continue
+                if [[ "$candidate" = *.vbox ]]; then
+                    vbox_dir="${candidate%/*}"
+                    while [[ "$vbox_dir" = */ ]]; do vbox_dir="${vbox_dir%/}"; done
+                    if [[ -n "$vbox_dir" && "$vbox_dir" != "$home_dir" \
+                        && "${vbox_dir##*/}.vbox" = "${candidate##*/}" ]]; then
+                        candidate="$vbox_dir"
+                    fi
                 elif [[ -d "$candidate" ]]; then
                     show_scan_path "$candidate"
                     case "$candidate" in
@@ -2151,24 +2156,38 @@ collect_post_scan_paths() {
                         *) continue ;;
                     esac
                 fi
-                count=$((count + 1))
-                if [[ "$count" -le 51 ]]; then printf '%s\n' "$candidate" >> "$tmp"; fi
+                printf '%s\n' "$candidate" >> "$tmp"
             done
         }; then
         record_error "$MSG_SCAN_FAILED $HOME"
     fi
     clear_progress
-    if [[ "$(wc -l < "$tmp")" -gt 50 ]]; then
-        add_report_line "LIMIT $MSG_IMAGE_LIMIT"
-    fi
-    local image_count=0
-
+    # Cap after dedup: drop exact duplicates and any candidate under another
+    # candidate (already covered), so such entries never use up the 50 slots.
+    local -a cands=()
     while IFS= read -r line || [[ -n "$line" ]]; do
         [[ -z "$line" ]] && continue
-        image_count=$((image_count + 1))
-        [[ "$image_count" -gt 50 ]] && break
-        extra_paths_append "$line"
+        cands[${#cands[@]}]="$line"
     done < "$tmp"
+    local i j total=${#cands[@]} kept=0 covered
+    for ((i = 0; i < total; i++)); do
+        covered=0
+        for ((j = 0; j < total; j++)); do
+            [[ "$i" -eq "$j" ]] && continue
+            if [[ "${cands[$i]}" = "${cands[$j]}" ]]; then
+                [[ "$j" -lt "$i" ]] && covered=1
+            elif [[ "${cands[$i]}" = "${cands[$j]%/}"/* ]]; then
+                covered=1
+            fi
+            [[ "$covered" -eq 1 ]] && break
+        done
+        [[ "$covered" -eq 1 ]] && continue
+        kept=$((kept + 1))
+        if [[ "$kept" -le 50 ]]; then extra_paths_append "${cands[$i]}"; fi
+    done
+    if [[ "$kept" -gt 50 ]]; then
+        add_report_line "LIMIT $MSG_IMAGE_LIMIT"
+    fi
     rm -f "$tmp"
     unregister_tmp_file "$tmp"
 }
