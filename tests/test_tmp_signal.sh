@@ -239,6 +239,25 @@ assert_eq "-d ${CDP_PHYS}/tm_exc_work.XXXXXX" "$(head -n 1 "${WORK}/mktemp.log")
 assert_true "CDPATH=. TMPDIR=local: nothing left in that directory" \
     test -z "$(find "${WORK}/cdp/local" -mindepth 1 2>/dev/null)"
 
+# TMPDIR=- with an existing ./- directory: `cd -- -` means $OLDPWD in Bash 5, so
+# the work directory must still be created under ./- and never under OLDPWD.
+mkdir -p "${WORK}/dash/-" "${WORK}/oldpwd"
+DASH_PHYS="$(cd "${WORK}/dash/-" && pwd -P)"
+: > "${WORK}/mktemp.log"
+dash_rc=0
+(
+    cd "${WORK}/dash"
+    HOME="${HOME_DIR}" TMPDIR=- OLDPWD="${WORK}/oldpwd" PATH="${WORK}/bin:${PATH}" \
+        REAL_MKTEMP="$REAL_MKTEMP" HOLD_MARK="${WORK}" MKTEMP_LOG="${WORK}/mktemp.log" \
+        TM_EXCLUSIONS_DEFAULT_CONF="$CONF" \
+        "$BASH" "$TM_EXCLUSIONS" --dry-run --quiet >/dev/null 2>&1
+) || dash_rc=$?
+assert_eq 0 "$dash_rc" "TMPDIR=- with ./-: the run succeeds"
+assert_eq "-d ${DASH_PHYS}/tm_exc_work.XXXXXX" "$(head -n 1 "${WORK}/mktemp.log")" \
+    "TMPDIR=- with ./-: created under ./-, not under OLDPWD"
+assert_true "TMPDIR=- with ./-: nothing left in OLDPWD or ./-" \
+    test -z "$(find "${WORK}/oldpwd" "${WORK}/dash/-" -mindepth 1 2>/dev/null)"
+
 # A TMPDIR holding a newline must never make the cleanup remove another
 # directory: the work directory path was once split at the newline, and the
 # first half (a decoy here, with a file in it) deleted recursively.
