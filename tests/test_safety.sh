@@ -358,8 +358,12 @@ assert_file_contains "$TM_EXCLUSIONS_REPORT" 'preserve state' \
     "the added keep rule survives a localized run"
 
 # Literal keeps support root and symlink/dot spellings; nested du entries count once.
-# shellcheck disable=SC1090
-source <(sed '/^main /d' "$ROOT/tm_exclusions.sh")
+# Temp file (removed with TEST_DIR by the EXIT trap), never `source <(...)`:
+# that defines nothing under Bash 3.2.
+write_functions_file "$TEST_DIR/tm_exclusions_functions.sh"
+# shellcheck disable=SC1091
+source "$TEST_DIR/tm_exclusions_functions.sh"
+require_functions normalize_path du_track_path keep_blocks parse_config_file
 # du accounting stores physical spellings, so expectations are normalized too
 # (/var is a symlink to /private/var on macOS).
 PHYSICAL_PROJECT="$(normalize_path "$HOME/project")"

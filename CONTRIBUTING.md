@@ -19,6 +19,7 @@ See [`AGENTS.md`](AGENTS.md) for the full architecture, build commands, and Bash
 - **No external runtime dependencies.** The CLI must work on a stock macOS install.
 - **`--dry-run` first.** Any change to `tmutil` calls must be testable in dry-run mode.
 - **Keep tests deterministic.** `tests/smoke.bats-like.sh` runs against `--dry-run`; it must not require sudo or real `tmutil` state.
+- **Never load a script with `source <(…)` in tests** (silent false green under Bash 3.2: it returns 0 without defining anything). Write it to a temporary file with `write_functions_file`, `source` that file, then call `require_functions` (both in `tests/test_helpers.sh`); `test_summary` fails a suite that ran no assertion.
 
 ## Pre-commit checks
 
