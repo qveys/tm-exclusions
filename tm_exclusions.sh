@@ -2142,7 +2142,7 @@ collect_post_scan_paths() {
                     record_error "$MSG_SCAN_NEWLINE_PATH"
                     continue
                 fi
-                if [[ "$candidate" = *.vbox ]]; then
+                if [[ "$candidate" = *.vbox && -f "$candidate" ]]; then
                     vbox_dir="${candidate%/*}"
                     while [[ "$vbox_dir" = */ ]]; do vbox_dir="${vbox_dir%/}"; done
                     if [[ -n "$vbox_dir" && "$vbox_dir" != "$home_dir" \
@@ -2156,35 +2156,33 @@ collect_post_scan_paths() {
                         *) continue ;;
                     esac
                 fi
-                printf '%s\n' "$candidate" >> "$tmp"
+                # Trailing slash: sorted, a candidate is followed by its descendants.
+                printf '%s/\n' "$candidate" >> "$tmp"
             done
         }; then
         record_error "$MSG_SCAN_FAILED $HOME"
     fi
     clear_progress
-    # Cap after dedup: drop exact duplicates and any candidate under another
-    # candidate (already covered), so such entries never use up the 50 slots.
-    local -a cands=()
+    # Cap after dedup: sort -u drops exact duplicates and puts each candidate right
+    # before its descendants, which one pass then drops as already covered, unless
+    # the ancestor is protected by keep (then it is not excluded and they stay).
+    if ! LC_ALL=C sort -u -o "$tmp" "$tmp"; then
+        record_error "$MSG_SCAN_FAILED $HOME"
+    fi
+    local kept=0 prev="" prev_checked=0 prev_blocked=0
     while IFS= read -r line || [[ -n "$line" ]]; do
         [[ -z "$line" ]] && continue
-        cands[${#cands[@]}]="$line"
-    done < "$tmp"
-    local i j total=${#cands[@]} kept=0 covered
-    for ((i = 0; i < total; i++)); do
-        covered=0
-        for ((j = 0; j < total; j++)); do
-            [[ "$i" -eq "$j" ]] && continue
-            if [[ "${cands[$i]}" = "${cands[$j]}" ]]; then
-                [[ "$j" -lt "$i" ]] && covered=1
-            elif [[ "${cands[$i]}" = "${cands[$j]%/}"/* ]]; then
-                covered=1
+        if [[ -n "$prev" && "$line" = "$prev"* ]]; then
+            if [[ "$prev_checked" -eq 0 ]]; then
+                prev_checked=1
+                if keep_blocks "${prev%/}"; then prev_blocked=1; fi
             fi
-            [[ "$covered" -eq 1 ]] && break
-        done
-        [[ "$covered" -eq 1 ]] && continue
+            [[ "$prev_blocked" -eq 0 ]] && continue
+        fi
+        prev="$line" prev_checked=0 prev_blocked=0
         kept=$((kept + 1))
-        if [[ "$kept" -le 50 ]]; then extra_paths_append "${cands[$i]}"; fi
-    done
+        if [[ "$kept" -le 50 ]]; then extra_paths_append "${line%/}"; fi
+    done < "$tmp"
     if [[ "$kept" -gt 50 ]]; then
         add_report_line "LIMIT $MSG_IMAGE_LIMIT"
     fi

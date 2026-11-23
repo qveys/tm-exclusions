@@ -120,7 +120,7 @@ assert_eq 50 "$(grep -c '^WOULD .*sparsebundle' "$TM_EXCLUSIONS_REPORT")" \
 # named after it (<name>/<name>.vbox), which then stands for the VM; cloud trees stay pruned.
 rm -rf "$HOME/disks"
 mkdir -p "$HOME/vms/a.utm/Data" "$HOME/vms/b.vmwarevm" "$HOME/vms/c.parallels" "$HOME/vms/d.pvm" \
-    "$HOME/vms/a.utm/nested.vmwarevm" "$HOME/VirtualBox VMs/box" "$HOME/Documents" \
+    "$HOME/vms/a.utm/nested.vmwarevm" "$HOME/VirtualBox VMs/box" "$HOME/Documents/Documents.vbox" \
     "$HOME/Library/CloudStorage/Drive/e.utm" \
     "$HOME/Library/Mobile Documents/f.vmwarevm"
 for big in "$HOME/vms/big.iso" "$HOME/vms/big.ova" "$HOME/Library/CloudStorage/Drive/big.iso"; do
@@ -146,6 +146,8 @@ assert_eq 9 "$(grep '^WOULD ' "$TM_EXCLUSIONS_REPORT" | grep -vc 'brew-cache')" 
     "VM discovery plans exactly the expected paths"
 assert_true "a loose .vbox does not exclude its whole folder" \
     not grep -Fq "WOULD $HOME/Documents " "$TM_EXCLUSIONS_REPORT"
+assert_true "a directory named like its parent plus .vbox is not a candidate" \
+    not grep -Fq "WOULD $HOME/Documents/Documents.vbox " "$TM_EXCLUSIONS_REPORT"
 rm -rf "$HOME/vms" "$HOME/VirtualBox VMs" "$HOME/stray.vbox" "$HOME/Library" "$HOME/Documents"
 
 # A folder named after its .vbox is never $HOME, with or without a trailing slash.
@@ -185,6 +187,42 @@ assert_file_contains "$TM_EXCLUSIONS_REPORT" 'LIMIT Image discovery limited to 5
     "51 distinct VM folders still disclose LIMIT"
 assert_eq 50 "$(grep -c '^WOULD .*many/vm[0-9]* ' "$TM_EXCLUSIONS_REPORT")" \
     "51 distinct VM folders are capped at 50"
+rm -rf "$HOME/many"
+
+# A keep inside a VM folder protects the folder, so its descendants stay candidates;
+# without keep they are covered by the folder. Sorted order must not hide descendants
+# behind look-alike siblings (v, v-b, v.x) across ~200 raw candidates.
+mkdir -p "$HOME/VMs/Box/saved" "$HOME/VMs/Free"
+for name in Box Free; do
+    : > "$HOME/VMs/$name/$name.vbox"
+    dd if=/dev/zero of="$HOME/VMs/$name/disk.vmdk" bs=1 count=0 seek=537919488 2>/dev/null
+done
+printf '%s\n' 'keep|~/VMs/Box/saved|precious state' > "$HOME/.config/tm_exclusions/custom.conf"
+run 0 --dry-run
+assert_file_contains "$TM_EXCLUSIONS_REPORT" "KEEP  $HOME/VMs/Box (" \
+    "a keep inside a VM folder protects the folder"
+assert_file_contains "$TM_EXCLUSIONS_REPORT" "WOULD $HOME/VMs/Box/disk.vmdk " \
+    "the disk of a protected VM folder stays a candidate"
+assert_file_contains "$TM_EXCLUSIONS_REPORT" "WOULD $HOME/VMs/Free " \
+    "an unprotected VM folder is excluded as a whole"
+assert_true "an unprotected VM folder covers its disk" \
+    not grep -Fq "WOULD $HOME/VMs/Free/disk.vmdk " "$TM_EXCLUSIONS_REPORT"
+: > "$HOME/.config/tm_exclusions/custom.conf"
+rm -rf "$HOME/VMs"
+for name in $(seq 0 39) v v-b v.x; do
+    mkdir -p "$HOME/many/vm$name"
+    : > "$HOME/many/vm$name/vm$name.vbox"
+    for k in 1 2 3 4; do
+        dd if=/dev/zero of="$HOME/many/vm$name/disk$k.vmdk" bs=1 count=0 seek=537919488 2>/dev/null
+    done
+done
+run 0 --dry-run
+assert_eq 43 "$(grep -c '^WOULD .*many/vm[0-9a-z.-]* ' "$TM_EXCLUSIONS_REPORT")" \
+    "200+ raw candidates collapse to one entry per VM folder"
+assert_true "collapsed VM folders do not trigger LIMIT" \
+    not grep -Fq 'LIMIT' "$TM_EXCLUSIONS_REPORT"
+assert_file_lacks_regex "$TM_EXCLUSIONS_REPORT" '^WOULD .*\.vmdk ' \
+    "covered disks are not planned on their own"
 rm -rf "$HOME/many"
 mkdir -p "$HOME/disks/private.sparsebundle"
 

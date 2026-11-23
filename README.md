@@ -299,7 +299,7 @@ Image discovery is off by default. With `scan_images=true`, it considers at most
 `.raw`/`.img`/`.iso`/`.ova` files larger than 512 MiB; and `.vbox` files (the
 whole folder when it is named after the file, as in `<name>/<name>.vbox`, never
 `$HOME` itself). Duplicates and candidates already inside another candidate are
-dropped before the cap. iCloud `Mobile Documents` and
+dropped before the cap (unless that candidate is protected by a `keep`). iCloud `Mobile Documents` and
 `Library/CloudStorage` trees are skipped so nothing is downloaded. Discovered paths
 appear in the report as `Discovery: …`. Extra candidates are disclosed as `LIMIT` in the report. This is a cap
 on processed images, not traversal time. `scan_images=false` disables it again.
