@@ -1007,13 +1007,20 @@ $f"
 # terminal Ctrl-C cannot kill it half-way), then the caller's own handlers are
 # put back and the recorded signal is replayed to them (cleanup, exit 128+n).
 # Files inside the directory get fixed names and go with it. A TMPDIR holding a
-# control character (newline) falls back to /tmp, and only the exact path
-# returned by mktemp, with the expected name, is ever kept or removed.
+# control character (newline) falls back to /tmp, TMPDIR is resolved once to its
+# physical path, and only the exact path returned by mktemp, with the expected
+# name, is ever kept or removed.
 TMP_PENDING_SIG=""
 ensure_tmp_dir() {
     [[ -n "${TMP_DIR}" ]] && return 0
-    local base="${TMPDIR:-/tmp}" d="" s saved_int saved_term saved_hup
+    local base="${TMPDIR:-/tmp}" phys="" d="" s saved_int saved_term saved_hup
     case "$base" in *[[:cntrl:]]*) base=/tmp ;; esac
+    # Resolve TMPDIR once to its physical path: if it is a symbolic link that is
+    # retargeted while mktemp runs, the directory is still found (and removed)
+    # where it was really created.
+    if phys="$(cd -- "$base" 2>/dev/null && pwd -P)"; then
+        case "$phys" in *[[:cntrl:]]*) ;; *) base="$phys" ;; esac
+    fi
     saved_int="$(trap -p INT)"
     saved_term="$(trap -p TERM)"
     saved_hup="$(trap -p HUP)"
