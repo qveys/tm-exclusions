@@ -2116,11 +2116,21 @@ collect_post_scan_paths() {
     tmp="$(mktemp "${TMPDIR:-/tmp}/tm_exc_disk.XXXXXX")"
     register_tmp_file "$tmp"
     # Stream directories and matching images from the same walk, NUL-delimited.
-    # Sparsebundles are reported as candidates but their contents stay pruned.
+    # VM/disk bundle directories (sparsebundle, UTM, VMware, Parallels) are
+    # candidates as a whole, whatever their size, and their contents stay pruned:
+    # multi-part disks inside never fall under the size gate. Flat image files are
+    # size-gated. A VirtualBox VM is a plain folder holding a small .vbox file plus
+    # its disks, so a .vbox match stands for its containing folder (never $HOME
+    # itself). Cloud-synced trees (iCloud, File Provider CloudStorage) are pruned
+    # so nothing is downloaded.
     show_scan_path "$HOME"
-    if ! find "$HOME" \( -path '*/Mobile Documents/*' -o -path '*/Library/Mobile Documents/*' \) -prune -o \
-        \( -type d -print0 \( -name '*.sparsebundle' -prune \) \) -o \
-        \( -type f \( -name '*.vmdk' -o -name '*.qcow2' -o -name '*.raw' -o -name '*.img' \) -size +512M -print0 \) \
+    if ! find "$HOME" \( -path '*/Mobile Documents/*' -o -path '*/Library/Mobile Documents/*' \
+            -o -path '*/Library/CloudStorage/*' \) -prune -o \
+        \( -type d -print0 \( \( -name '*.sparsebundle' -o -name '*.utm' -o -name '*.vmwarevm' \
+            -o -name '*.parallels' -o -name '*.pvm' \) -prune \) \) -o \
+        \( -type f \( -name '*.vmdk' -o -name '*.qcow2' -o -name '*.raw' -o -name '*.img' \
+            -o -name '*.iso' -o -name '*.ova' \) -size +512M -print0 \) -o \
+        \( -type f -name '*.vbox' -print0 \) \
         2>/dev/null | {
             local candidate count=0
             while IFS= read -r -d '' candidate; do
@@ -2131,9 +2141,15 @@ collect_post_scan_paths() {
                     record_error "$MSG_SCAN_NEWLINE_PATH"
                     continue
                 fi
-                if [[ -d "$candidate" ]]; then
+                if [[ "$candidate" = *.vbox && ! -d "$candidate" ]]; then
+                    candidate="${candidate%/*}"
+                    [[ -z "$candidate" || "$candidate" = "$HOME" ]] && continue
+                elif [[ -d "$candidate" ]]; then
                     show_scan_path "$candidate"
-                    [[ "$candidate" = *.sparsebundle ]] || continue
+                    case "$candidate" in
+                        *.sparsebundle|*.utm|*.vmwarevm|*.parallels|*.pvm) ;;
+                        *) continue ;;
+                    esac
                 fi
                 count=$((count + 1))
                 if [[ "$count" -le 51 ]]; then printf '%s\n' "$candidate" >> "$tmp"; fi

@@ -115,6 +115,36 @@ assert_file_contains "$TM_EXCLUSIONS_REPORT" 'LIMIT Image discovery limited to 5
 assert_eq 50 "$(grep -c '^WOULD .*sparsebundle' "$TM_EXCLUSIONS_REPORT")" \
     "image discovery is capped at 50 candidates"
 
+# Hypervisor bundles are candidates whole (contents pruned, no size gate); flat
+# images are size-gated; a .vbox file stands for its VM folder; cloud trees stay pruned.
+rm -rf "$HOME/disks"
+mkdir -p "$HOME/vms/a.utm/Data" "$HOME/vms/b.vmwarevm" "$HOME/vms/c.parallels" "$HOME/vms/d.pvm" \
+    "$HOME/vms/a.utm/nested.vmwarevm" "$HOME/VirtualBox VMs/box" \
+    "$HOME/Library/CloudStorage/Drive/e.utm" \
+    "$HOME/Library/Mobile Documents/f.vmwarevm"
+for big in "$HOME/vms/big.iso" "$HOME/vms/big.ova" "$HOME/Library/CloudStorage/Drive/big.iso"; do
+    dd if=/dev/zero of="$big" bs=1 count=0 seek=537919488 2>/dev/null
+done
+: > "$HOME/vms/small.iso"
+: > "$HOME/vms/small.ova"
+: > "$HOME/VirtualBox VMs/box/box.vbox"
+: > "$HOME/stray.vbox"
+run 0 --dry-run
+for found in vms/a.utm vms/b.vmwarevm vms/c.parallels vms/d.pvm vms/big.iso vms/big.ova \
+    "VirtualBox VMs/box"; do
+    assert_file_contains "$TM_EXCLUSIONS_REPORT" "WOULD $HOME/$found " \
+        "VM discovery reports $found"
+done
+for missing in small.iso small.ova nested.vmwarevm stray.vbox CloudStorage 'Mobile Documents' \
+    'box/box.vbox'; do
+    assert_file_lacks_regex "$TM_EXCLUSIONS_REPORT" "^WOULD .*$missing" \
+        "VM discovery skips $missing"
+done
+assert_eq 7 "$(grep '^WOULD ' "$TM_EXCLUSIONS_REPORT" | grep -vc 'brew-cache')" \
+    "VM discovery plans exactly the expected paths"
+rm -rf "$HOME/vms" "$HOME/VirtualBox VMs" "$HOME/stray.vbox" "$HOME/Library"
+mkdir -p "$HOME/disks/private.sparsebundle"
+
 # A failed or unrecognized status must not be treated as Included in any mode.
 # Literal placeholder is expanded by the CLI.
 # shellcheck disable=SC2016

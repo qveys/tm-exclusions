@@ -109,7 +109,7 @@ declare_i18n_en() {
     MSG_SCAN_FAILED="Incomplete scan:"
     MSG_ADD_FAILED="Error excluding:"
     MSG_REMOVE_FAILED="Error removing exclusion:"
-    MSG_DISCOVERED="Discovery: brew cache or opted-in disk image"
+    MSG_DISCOVERED="Discovery: brew cache, opted-in VM or disk image"
     MSG_IMAGE_LIMIT="Image discovery limited to 50 candidates; additional images were omitted."
     MSG_SCAN_NEWLINE_PATH="Skipped discovered path containing a newline (unsupported in newline-delimited candidate lists):"
 }
