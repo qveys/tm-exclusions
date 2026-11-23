@@ -66,6 +66,7 @@ if [ ! -e "$HOLD_MARK" ]; then
         n=$((n + 1))
     done
 fi
+if [ -n "${MKTEMP_LOG:-}" ]; then printf '%s\n' "$*" >> "$MKTEMP_LOG"; fi
 if [ -n "${RETARGET_LINK:-}" ]; then ln -sfn "$RETARGET_TO" "$RETARGET_LINK"; fi
 printf '%s\n' "$out"
 STUB
@@ -196,6 +197,28 @@ assert_true "TMPDIR symlink retargeted during mktemp: nothing left in the first 
     test -z "$(find "$LNK_A" -mindepth 1 2>/dev/null)"
 assert_true "TMPDIR symlink retargeted during mktemp: nothing left in the new target" \
     test -z "$(find "$LNK_B" -mindepth 1 2>/dev/null)"
+
+# A TMPDIR symbolic link whose physical path ends with, or contains, a newline
+# must fall back to /tmp: the trailing newline used to be eaten (the path became
+# that of the neighbouring directory) and a middle one kept the raw link.
+NLREAL_END="${WORK}/nlreal"$'\n'
+NLREAL_MID="${WORK}/nlmid"$'\n'"x"
+mkdir -p "${WORK}/nlreal" "$NLREAL_END" "$NLREAL_MID"
+ln -s "$NLREAL_END" "${WORK}/nl_end_lnk"
+ln -s "$NLREAL_MID" "${WORK}/nl_mid_lnk"
+for nl_case in nl_end_lnk nl_mid_lnk; do
+    : > "${WORK}/mktemp.log"
+    nl_rc=0
+    HOME="${HOME_DIR}" TMPDIR="${WORK}/${nl_case}" PATH="${WORK}/bin:${PATH}" \
+        REAL_MKTEMP="$REAL_MKTEMP" HOLD_MARK="${WORK}" MKTEMP_LOG="${WORK}/mktemp.log" \
+        TM_EXCLUSIONS_DEFAULT_CONF="$CONF" \
+        "$BASH" "$TM_EXCLUSIONS" --dry-run --quiet >/dev/null 2>&1 || nl_rc=$?
+    assert_eq 0 "$nl_rc" "${nl_case}: the run still succeeds"
+    assert_eq "-d /tmp/tm_exc_work.XXXXXX" "$(head -n 1 "${WORK}/mktemp.log")" \
+        "${nl_case}: the work directory is created under /tmp, not through the link"
+done
+assert_true "newline-named symlink targets: nothing left in any of them" \
+    test -z "$(find "${WORK}/nlreal" "$NLREAL_END" "$NLREAL_MID" -mindepth 1 2>/dev/null)"
 
 # A TMPDIR holding a newline must never make the cleanup remove another
 # directory: the work directory path was once split at the newline, and the
