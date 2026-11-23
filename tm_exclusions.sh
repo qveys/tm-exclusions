@@ -74,8 +74,10 @@ EXTRA_PATHS=""
 # Unique existing paths for optional du summary in report
 DU_PATHS=""
 SUDO_KEEPALIVE_PID=""
-# Temporary files to remove on exit/signal
+# Temporary paths to remove on exit/signal, and the private work directory that
+# holds every temporary file (see ensure_tmp_dir)
 TMP_FILES=""
+TMP_DIR=""
 # When 1, log_info also appends to FD 5 (opened from TM_EXCLUSIONS_DEBUG_FIFO)
 DEBUG_LOG_FD=0
 
@@ -616,7 +618,7 @@ EXCL_FILE=""
 EXCL_FILE_FAILED=0
 EXCL_TRACKED=0
 excl_track_path() {
-    local p="$1" f=""
+    local p="$1"
     [[ -z "$p" || ! -e "$p" ]] && return 0
     if [[ -z "$EXCL_FIRST_PATH" ]]; then EXCL_FIRST_PATH="$p"; fi
     du_enabled || return 0
@@ -628,10 +630,7 @@ excl_track_path() {
         return 0
     fi
     if [[ -z "$EXCL_FILE" ]]; then
-        if f="$(mktemp "${TMPDIR:-/tmp}/tm_exc_space.XXXXXX" 2>/dev/null)"; then
-            EXCL_FILE="$f"
-            register_tmp_file "$EXCL_FILE"
-        else
+        if ! make_tmp_file EXCL_FILE space 2>/dev/null; then
             EXCL_FILE_FAILED=1
             EXCL_UNTRACKED=$((EXCL_UNTRACKED + 1))
             return 0
@@ -1000,10 +999,73 @@ $f"
     fi
 }
 
-unregister_tmp_file() {
-    local f="$1"
-    [[ -z "$f" || -z "${TMP_FILES}" ]] && return 0
-    TMP_FILES="$(printf '%s\n' "${TMP_FILES}" | grep -Fvx "$f" || true)"
+# Every temporary file lives in ONE private directory created on first use, so
+# a signal can never strand a loose tm_exc_* file in TMPDIR (#92). The window
+# between `mktemp -d` and the assignment of TMP_DIR (the one thing the cleanup
+# removes) is never without a handler: INT/TERM/HUP switch atomically from
+# on_signal to a recorder (TMP_PENDING_SIG), the mktemp child ignores them (so a
+# terminal Ctrl-C cannot kill it half-way), then the caller's own handlers are
+# put back and the recorded signal is replayed to them (cleanup, exit 128+n).
+# Files inside the directory get fixed names and go with it. A TMPDIR holding a
+# control character (newline) falls back to /tmp, TMPDIR is resolved once to its
+# physical path, and only the exact path returned by mktemp, with the expected
+# name, is ever kept or removed.
+TMP_PENDING_SIG=""
+ensure_tmp_dir() {
+    [[ -n "${TMP_DIR}" ]] && return 0
+    local base="${TMPDIR:-/tmp}" cdir="" phys="" d="" s saved_int saved_term saved_hup
+    case "$base" in *[[:cntrl:]]*) base=/tmp ;; esac
+    # Resolve TMPDIR once to its physical path: if it is a symbolic link that is
+    # retargeted while mktemp runs, the directory is still found (and removed)
+    # where it was really created.
+    # The sentinel keeps $(...) from eating trailing newlines of the path; a
+    # physical path holding a control character falls back to /tmp like a raw one.
+    # CDPATH is emptied for this cd: with CDPATH=. a relative TMPDIR makes cd print
+    # the resolved path itself, which would corrupt the captured output.
+    # A relative path gets a ./ prefix: `cd -- -` still means $OLDPWD in Bash 5.
+    cdir="$base"
+    case "$cdir" in /*) ;; *) cdir="./$cdir" ;; esac
+    if phys="$(CDPATH='' cd -P -- "$cdir" >/dev/null 2>&1 && pwd -P && printf x)"; then
+        phys="${phys%x}"
+        phys="${phys%$'\n'}"
+        case "$phys" in *[[:cntrl:]]*) base=/tmp ;; *) base="$phys" ;; esac
+    fi
+    saved_int="$(trap -p INT)"
+    saved_term="$(trap -p TERM)"
+    saved_hup="$(trap -p HUP)"
+    TMP_PENDING_SIG=""
+    trap 'TMP_PENDING_SIG="${TMP_PENDING_SIG:-INT}"' INT
+    trap 'TMP_PENDING_SIG="${TMP_PENDING_SIG:-TERM}"' TERM
+    trap 'TMP_PENDING_SIG="${TMP_PENDING_SIG:-HUP}"' HUP
+    d="$(trap '' INT TERM HUP; exec mktemp -d "${base}/tm_exc_work.XXXXXX" 2>/dev/null)" || d=""
+    case "$d" in
+        "${base}"/tm_exc_work.??????)
+            case "$d" in
+                *[[:cntrl:]]*) ;;
+                *) if [[ -d "$d" && ! -L "$d" ]]; then TMP_DIR="$d"; fi ;;
+            esac
+            ;;
+    esac
+    if [[ -z "${TMP_DIR}" && -n "$d" && -d "$d" ]]; then rmdir -- "$d" 2>/dev/null || true; fi
+    if [[ -n "$saved_int" ]]; then eval "$saved_int"; else trap - INT; fi
+    if [[ -n "$saved_term" ]]; then eval "$saved_term"; else trap - TERM; fi
+    if [[ -n "$saved_hup" ]]; then eval "$saved_hup"; else trap - HUP; fi
+    if [[ -n "${TMP_PENDING_SIG}" ]]; then
+        s="${TMP_PENDING_SIG}"
+        TMP_PENDING_SIG=""
+        kill -s "$s" "$$"
+    fi
+    [[ -n "${TMP_DIR}" ]]
+}
+
+# make_tmp_file <var> <name>: create an empty temporary file <name> in the work
+# directory and store its path in <var>. Never call it in a command
+# substitution: the directory must be created in the main shell. Fails when the
+# directory or the file cannot be created.
+make_tmp_file() {
+    ensure_tmp_dir || return 1
+    : > "${TMP_DIR}/$2" || return 1
+    printf -v "$1" '%s' "${TMP_DIR}/$2"
 }
 
 cleanup_tmp_files() {
@@ -1017,6 +1079,19 @@ cleanup_tmp_files() {
 ${TMP_FILES}
 EOF
         TMP_FILES=""
+    fi
+    # The private work directory (see ensure_tmp_dir): only the exact name it
+    # was given, never a path split or built from TMPDIR.
+    if [[ -n "${TMP_DIR:-}" ]]; then
+        case "${TMP_DIR}" in
+            *[[:cntrl:]]*) ;;
+            */tm_exc_work.??????)
+                if [[ -d "${TMP_DIR}" && ! -L "${TMP_DIR}" ]]; then
+                    rm -rf -- "${TMP_DIR}" 2>/dev/null || true
+                fi
+                ;;
+        esac
+        TMP_DIR=""
     fi
 }
 
@@ -1867,8 +1942,7 @@ scan_dynamic_patterns() {
     # Seed with CONF_PATHS so dynamic candidates under an already-known static
     # exclusion (e.g. ~/.npm covers ~/.npm/_npx/X/node_modules) are also pruned.
     local kept_file
-    kept_file="$(mktemp "${TMPDIR:-/tmp}/tm_exc_kept.XXXXXX")"
-    register_tmp_file "$kept_file"
+    make_tmp_file kept_file kept
     if [[ -n "${CONF_PATHS}" ]]; then
         local static_seed
         while IFS= read -r static_seed; do
@@ -1883,8 +1957,7 @@ EOF
     # them globally — lexical sort puts ancestors before descendants because an
     # ancestor path is a strict string prefix of any descendant.
     local all_results
-    all_results="$(mktemp "${TMPDIR:-/tmp}/tm_exc_all.XXXXXX")"
-    register_tmp_file "$all_results"
+    make_tmp_file all_results all
 
     progress_start "${CONF_PATTERNS}"
 
@@ -1909,8 +1982,7 @@ ${CONF_PATTERNS}
 EOF
 
     local tmp_scan
-    tmp_scan="$(mktemp "${TMPDIR:-/tmp}/tm_exc.XXXXXX")"
-    register_tmp_file "$tmp_scan"
+    make_tmp_file tmp_scan scan
     if [[ "$#" -gt 0 ]]; then
         set -- "$@" ')'
         if ! find "$@" > "$tmp_scan" 2>/dev/null; then
@@ -1958,7 +2030,6 @@ EOF
     done < "$tmp_scan"
     if [[ "$extglob_was_on" -eq 1 ]]; then shopt -s extglob; fi
     rm -f "$tmp_scan"
-    unregister_tmp_file "$tmp_scan"
 
     # Keep the progress-bar contract: one step per configured pattern.
     while IFS= read -r pattern_name; do
@@ -1971,11 +2042,9 @@ EOF
     # Sort by path so that a parent directory precedes its descendants and is
     # therefore kept first; descendants are then dropped by is_covered_by_kept.
     local sorted_results
-    sorted_results="$(mktemp "${TMPDIR:-/tmp}/tm_exc_sorted.XXXXXX")"
-    register_tmp_file "$sorted_results"
+    make_tmp_file sorted_results sorted
     LC_ALL=C sort -t$'\t' -k1,1 "$all_results" > "$sorted_results"
     rm -f "$all_results"
-    unregister_tmp_file "$all_results"
 
     local line found_dir matched_pattern
     while IFS= read -r line; do
@@ -2022,8 +2091,6 @@ EOF
 
     flush_path_results
     rm -f "$sorted_results" "$kept_file"
-    unregister_tmp_file "$sorted_results"
-    unregister_tmp_file "$kept_file"
 }
 
 apply_static_paths() {
@@ -2115,8 +2182,7 @@ collect_post_scan_paths() {
     fi
 
     if [[ "$CONF_SCAN_IMAGES" -eq 0 ]]; then clear_progress; return 0; fi
-    tmp="$(mktemp "${TMPDIR:-/tmp}/tm_exc_disk.XXXXXX")"
-    register_tmp_file "$tmp"
+    make_tmp_file tmp disk
     # Stream directories and matching images from the same walk, NUL-delimited.
     # VM/disk bundle directories (sparsebundle, UTM, VMware, Parallels) are
     # candidates as a whole, whatever their size, and their contents stay pruned:
@@ -2204,7 +2270,6 @@ collect_post_scan_paths() {
         fi
     fi
     rm -f "$tmp"
-    unregister_tmp_file "$tmp"
 }
 
 apply_extra_paths() {
