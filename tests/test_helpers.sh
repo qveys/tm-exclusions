@@ -92,7 +92,29 @@ assert_output_not_contains() {
     fi
 }
 
-# Print test summary and exit with appropriate code
+# Write the CLI's functions (everything but the trailing `main "$@"` call) to a
+# file, to be sourced by the caller. Never `source <(...)`: under Bash 3.2
+# (stock macOS) that returns 0 without defining anything, a silent false green.
+# Usage: write_functions_file <dest_file> [script]   (script defaults to the CLI)
+write_functions_file() {
+    sed '/^main /d' "${2:-$TM_EXCLUSIONS}" > "$1"
+}
+
+# Fail the whole suite unless every named function is defined (call it right
+# after sourcing, so a load that silently did nothing cannot go unnoticed).
+# Usage: require_functions <name>...
+require_functions() {
+    local fn
+    for fn in "$@"; do
+        if ! declare -F "$fn" >/dev/null 2>&1; then
+            echo "FAIL: function $fn is not defined (script load failed silently?)" >&2
+            exit 1
+        fi
+    done
+}
+
+# Print test summary and exit with appropriate code. A suite that ran no
+# assertion proves nothing, so it fails.
 test_summary() {
     echo ""
     echo "========================================"
@@ -100,6 +122,10 @@ test_summary() {
         "$TESTS_RUN" "$TESTS_PASSED" "$TESTS_FAILED"
     echo "========================================"
 
+    if [[ "${TESTS_RUN}" -eq 0 ]]; then
+        echo "FAIL: no assertion was executed (suite did not load or run anything)" >&2
+        exit 1
+    fi
     if [[ "${TESTS_FAILED}" -gt 0 ]]; then
         exit 1
     fi

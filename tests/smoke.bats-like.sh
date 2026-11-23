@@ -41,6 +41,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=tests/test_helpers.sh
 source "${SCRIPT_DIR}/test_helpers.sh"
 
+# Functions of the CLI (no `main` call) for the unit blocks below, written to a
+# file in TEST_HOME (removed by the EXIT trap): `source <(...)` defines nothing
+# under Bash 3.2 and would turn those blocks into silent false greens.
+TM_FUNCS="${TEST_HOME}/tm_exclusions_functions.sh"
+write_functions_file "$TM_FUNCS"
+
 echo "tm-exclusions smoke tests"
 echo "========================================"
 
@@ -372,7 +378,8 @@ assert_file_lacks_regex "${SKIPINV_OUT}" "Homebrew casks \(" \
 assert_exit_code 0 "wrap_name_list wraps to width without trailing commas or split names" \
     bash -c '
 set -euo pipefail
-source <(sed "/^main /d" "$1")
+source "$1"
+declare -F wrap_name_list >/dev/null
 names="$(for ((i = 1; i <= 25; i++)); do printf "package-name-%s\n" "$i"; done)"
 printf -v names "%s\n%s" "$names" "an-extremely-long-package-name-that-exceeds-the-wrap-width-on-purpose"
 out="$(printf "%s\n" "$names" | wrap_name_list 40)"
@@ -387,7 +394,7 @@ for ((i = 1; i <= 25; i++)); do
     [[ "$out" == *"package-name-$i"* ]]
 done
 [[ "$out" == *"an-extremely-long-package-name-that-exceeds-the-wrap-width-on-purpose"* ]]
-' _ "$TM_EXCLUSIONS"
+' _ "$TM_FUNCS"
 
 # Unit: the 2-space indent counts toward the block width, and report_columns
 # only queries the terminal when the caller pre-evaluated [[ -t 1 ]] = 1.
@@ -395,7 +402,8 @@ done
 assert_exit_code 0 "brew_list_block keeps indented lines within the width; report_columns honors the tty flag" \
     bash -c '
 set -euo pipefail
-source <(sed "/^main /d" "$1")
+source "$1"
+declare -F brew_list_block report_columns >/dev/null
 brew() {
     case "$2" in
         --cask) printf "%s\n" "aaaaaaaaa" "bbbbbbbbbbbbbbbbbb" ;;
@@ -417,14 +425,15 @@ tput() { printf "57\n"; }
 [[ "$(report_columns 1)" = "57" ]]
 tput() { printf "10\n"; }
 [[ "$(report_columns 1)" = "80" ]]
-' _ "$TM_EXCLUSIONS"
+' _ "$TM_FUNCS"
 
 # Unit: interactive runs print the inventory body under a localized header.
 # shellcheck disable=SC2016
 assert_exit_code 0 "ui_print_inventory shows the inventory body inline" \
     bash -c '
 set -euo pipefail
-source <(sed "/^main /d" "$1")
+source "$1"
+declare -F ui_print_inventory >/dev/null
 source "$2/locales/en.sh"
 declare_i18n_en
 UI=1
@@ -439,7 +448,7 @@ source "$2/locales/fr.sh"
 declare_i18n_fr
 ui_print_inventory "$inv" > "$3/inv-ui-fr"
 grep -q "Inventaire" "$3/inv-ui-fr"
-' _ "$TM_EXCLUSIONS" "$SCRIPT_DIR" "$TEST_HOME"
+' _ "$TM_FUNCS" "$SCRIPT_DIR" "$TEST_HOME"
 
 # ---- Quiet mode ----
 echo ""
@@ -1204,6 +1213,7 @@ sed '/^main /d' "$TM_EXCLUSIONS" > "$_du_src"
 # shellcheck disable=SC1090
 source "$_du_src"
 rm -f "$_du_src"
+require_functions du_total_kb du_size_record
 # Used inside the sourced script (du_total_kb), invisible to ShellCheck here.
 # shellcheck disable=SC2034
 DU_PATHS=""
@@ -1813,26 +1823,30 @@ touch "${SIG_TMP_FILE}"
 # The handler must re-raise SIGTERM after cleanup (POSIX exit status 128+15=143),
 # not just remove the temp file, so a re-raise regression is caught even though
 # the file-removal path alone would still pass.
+# Exit 143 is also what an unarmed `kill -TERM` yields, so the handler functions
+# are loaded from a file and verified (exit 97 if missing) before the signal.
+SIG_FUNCS="${TEST_HOME}/signal_functions.sh"
+sed -n \
+    -e "/^sudo_keepalive_stop()/,/^}/p" \
+    -e "/^register_tmp_file()/,/^}/p" \
+    -e "/^cleanup_tmp_files()/,/^}/p" \
+    -e "/^clear_progress()/,/^}/p" \
+    -e "/^cleanup()/,/^}/p" \
+    -e "/^on_signal()/,/^}/p" \
+    "$TM_EXCLUSIONS" > "$SIG_FUNCS"
 # shellcheck disable=SC2016
 assert_exit_code 143 "signal handler re-raises SIGTERM (exit 143)" \
     bash -c '
-source <(
-    sed -n \
-        -e "/^sudo_keepalive_stop()/,/^}/p" \
-        -e "/^register_tmp_file()/,/^}/p" \
-        -e "/^cleanup_tmp_files()/,/^}/p" \
-        -e "/^clear_progress()/,/^}/p" \
-        -e "/^cleanup()/,/^}/p" \
-        -e "/^on_signal()/,/^}/p" \
-        "$1"
-)
+source "$1"
+declare -F register_tmp_file cleanup on_signal >/dev/null || exit 97
 TMP_FILES=""
 UI_PROGRESS=0
 register_tmp_file "$2"
 trap "cleanup" EXIT
 trap "on_signal TERM" TERM
 kill -TERM $$
-' _ "${TM_EXCLUSIONS}" "${SIG_TMP_FILE}"
+exit 0 # not the last command of `bash -c`: Bash 3.2 then exits 0 instead of 143
+' _ "${SIG_FUNCS}" "${SIG_TMP_FILE}"
 
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ ! -e "${SIG_TMP_FILE}" ]]; then
@@ -2017,7 +2031,8 @@ rm -rf "${AS_HOME}"
 assert_exit_code 0 "terminal progress, plain logs, quiet and bilingual summary" \
     bash -c '
 set -euo pipefail
-source <(sed "/^main /d" "$1")
+source "$1"
+declare -F progress_start ui_summary >/dev/null
 source "$2/locales/en.sh"
 declare_i18n_en
 init_ui
@@ -2047,13 +2062,14 @@ source "$2/locales/fr.sh"
 declare_i18n_fr
 ui_summary "$MSG_REPORT_WOULD_EXCLUDE" > "$3/summary"
 grep -q "Bilan" "$3/summary"
-' _ "$TM_EXCLUSIONS" "$SCRIPT_DIR" "$TEST_HOME"
+' _ "$TM_FUNCS" "$SCRIPT_DIR" "$TEST_HOME"
 
 # ---- Live discovery: same traversal and candidates, single-line status ----
 # shellcheck disable=SC2016
 assert_exit_code 0 "live discovery preserves candidates, pruning and cap" \
     bash -c 'set -euo pipefail
-source <(sed "/^main /d" "$1")
+source "$1"
+declare -F collect_post_scan_paths >/dev/null
 source "$2/locales/en.sh"
 declare_i18n_en
 CONF_SCAN_IMAGES=1
@@ -2085,7 +2101,7 @@ for ((i=0; i<55; i++)); do mkdir "$HOME/image-$i.sparsebundle"; done
 collect_post_scan_paths > "$3/plain-discovery"
 [[ "$(printf "%s\n" "$EXTRA_PATHS" | wc -l | tr -d " ")" = 51 ]]
 [[ ! -s "$3/plain-discovery" ]]
-' _ "$TM_EXCLUSIONS" "$SCRIPT_DIR" "$TEST_HOME"
+' _ "$TM_FUNCS" "$SCRIPT_DIR" "$TEST_HOME"
 
 # ---- Grouped console output (#24) ----
 echo ""
