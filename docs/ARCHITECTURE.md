@@ -205,7 +205,7 @@ When editing the config via `--edit`, `$EDITOR` (default: `vi`) is parsed into a
 Immediately after **`load_config()`** (and before static paths / dynamic scan), the tool builds **`EXTRA_PATHS`**:
 
 - **`brew --cache`** when `brew` is on `PATH` and the cache directory exists
-- Large disk images under **`$HOME`** in one `find` pass (covers `~/Library` too): files matching `.vmdk`, `.qcow2`, `.raw`, `.img` over **512 MiB** (`find -size +512M`), and **`.sparsebundle` directory bundles** (`-type d`), pruning iCloud “Mobile Documents” trees
+- Large disk images under **`$HOME`** in one `find` pass (covers `~/Library` too): files matching `.vmdk`, `.qcow2`, `.raw`, `.img`, `.iso`, `.ova` over **512 MiB** (`find -size +512M`); **VM bundle directories** `.sparsebundle`, `.utm`, `.vmwarevm`, `.parallels`, `.pvm` (`-type d`, any size, contents pruned so multi-part disks inside are not size-gated or double counted; a `keep` inside a bundle protects the whole bundle and its disks are not excluded individually); and **`.vbox` files** (the file itself; its folder instead when named after it, as in VirtualBox’s `<name>/<name>.vbox` layout, because the disks live there — never `$HOME`). Before the 50-result cap, exact duplicates and candidates under another candidate are dropped (sorted list, one pass; kept when the ancestor is protected by `keep`, and in `--uninstall`, where an older version may have excluded only the disk: no reduction, no pruning of UTM/VMware/Parallels bundles and a cap of 200 instead of 50 there) iCloud “Mobile Documents” and `Library/CloudStorage` trees are pruned so nothing is downloaded
 
 Paths are **deduplicated** before `apply_extra_paths()` runs (after the pattern scan), which applies them like extra static rules.
 
