@@ -228,14 +228,24 @@ assert_file_lacks_regex "$TM_EXCLUSIONS_REPORT" '^WOULD .*\.vmdk ' \
 rm -rf "$HOME/many"
 
 # Uninstall must still offer a disk excluded alone by an older version, even though
-# exclusion mode would now cover it with its VM folder.
-mkdir -p "$HOME/OldVM"
-: > "$HOME/OldVM/OldVM.vbox"
-dd if=/dev/zero of="$HOME/OldVM/disk.vmdk" bs=1 count=0 seek=537919488 2>/dev/null
-TEST_EXCLUDED_PATH="$HOME/OldVM/disk.vmdk" run 0 --uninstall --dry-run
-assert_file_contains "$TM_EXCLUSIONS_REPORT" "WOULD_REMOVE $HOME/OldVM/disk.vmdk" \
-    "uninstall offers the disk an older version excluded alone"
-rm -rf "$HOME/OldVM"
+# exclusion mode now covers it with its VM folder (Box/Box.vbox) or bundle (X.utm).
+mkdir -p "$HOME/Box" "$HOME/X.utm/Data"
+: > "$HOME/Box/Box.vbox"
+for big in "$HOME/Box/disk.vmdk" "$HOME/X.utm/Data/disk.qcow2"; do
+    dd if=/dev/zero of="$big" bs=1 count=0 seek=537919488 2>/dev/null
+done
+TEST_EXCLUDED_PATH="$HOME/Box/disk.vmdk" run 0 --uninstall --dry-run
+assert_file_contains "$TM_EXCLUSIONS_REPORT" "WOULD_REMOVE $HOME/Box/disk.vmdk" \
+    "uninstall offers the disk an older version excluded alone in a VM folder"
+TEST_EXCLUDED_PATH="$HOME/X.utm/Data/disk.qcow2" run 0 --uninstall --dry-run
+assert_file_contains "$TM_EXCLUSIONS_REPORT" "WOULD_REMOVE $HOME/X.utm/Data/disk.qcow2" \
+    "uninstall offers the disk an older version excluded alone inside a bundle"
+run 0 --dry-run
+assert_file_contains "$TM_EXCLUSIONS_REPORT" "WOULD $HOME/X.utm " \
+    "exclusion mode still takes the bundle whole"
+assert_true "exclusion mode does not walk into the bundle" \
+    not grep -Fq "X.utm/Data" "$TM_EXCLUSIONS_REPORT"
+rm -rf "$HOME/Box" "$HOME/X.utm"
 mkdir -p "$HOME/disks/private.sparsebundle"
 
 # A failed or unrecognized status must not be treated as Included in any mode.

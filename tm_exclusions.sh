@@ -2123,11 +2123,16 @@ collect_post_scan_paths() {
     # named after it (VirtualBox's <name>/<name>.vbox layout) that folder holds the
     # VM's disks and becomes the candidate instead, unless it is $HOME. Cloud-synced
     # trees (iCloud, File Provider CloudStorage) are pruned so nothing is downloaded.
+    # --uninstall walks into UTM/VMware/Parallels bundles as before bundle support,
+    # so a disk an older version excluded on its own is still found.
+    local -a prune_names=(-name '*.sparsebundle')
+    if [[ "$MODE" != uninstall ]]; then
+        prune_names+=(-o -name '*.utm' -o -name '*.vmwarevm' -o -name '*.parallels' -o -name '*.pvm')
+    fi
     show_scan_path "$HOME"
     if ! find "$HOME" \( -path '*/Mobile Documents/*' -o -path '*/Library/Mobile Documents/*' \
             -o -path '*/Library/CloudStorage/*' \) -prune -o \
-        \( -type d -print0 \( \( -name '*.sparsebundle' -o -name '*.utm' -o -name '*.vmwarevm' \
-            -o -name '*.parallels' -o -name '*.pvm' \) -prune \) \) -o \
+        \( -type d -print0 \( \( "${prune_names[@]}" \) -prune \) \) -o \
         \( -type f \( -name '*.vmdk' -o -name '*.qcow2' -o -name '*.raw' -o -name '*.img' \
             -o -name '*.iso' -o -name '*.ova' \) -size +512M -print0 \) -o \
         \( -type f -name '*.vbox' -print0 \) \
