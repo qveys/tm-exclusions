@@ -24,6 +24,10 @@ trap 'chmod -R u+rwx "$SIB" 2>/dev/null || true; rm -rf "$WORK" "$SIB"' EXIT
 # The tool falls back to $HOME when the repository is under TMPDIR: keep that inside WORK.
 export HOME="${WORK}/home"
 mkdir -p "$HOME"
+# Pin TMPDIR to the directory that holds the test repository, whatever the caller's
+# environment (unset on Linux runners, /var/folders on macOS): the repository is then
+# always "under TMPDIR" here, and the sibling case below uses a repo outside it.
+export TMPDIR="$WORK"
 
 echo "add-category.sh tests"
 echo "========================================"
