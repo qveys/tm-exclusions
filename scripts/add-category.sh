@@ -35,7 +35,8 @@ DRY_RUN=0
 SKIP_TESTS=0
 LOCK=""      # lock directory, set only once this run owns it
 WORK=""      # temporary copy of the repository (a sibling of ROOT, see make_work_dir)
-BAK=""       # originals of the two edited files, kept until the install is done
+BAK=""       # snapshot of the two files, taken under the lock; the edit is built from it
+MAIN_PID=$$  # the main shell: cleanup must never act from a subshell
 INSTALLING=0 # 1 while the real files are being overwritten
 KEEP_WORK=0  # 1 when a restore failed: keep WORK, it holds the originals
 
@@ -91,6 +92,7 @@ restore_originals() {
 # Runs on every exit and on INT/TERM/HUP: the real files end up either fully
 # installed or fully restored, never half and half.
 cleanup() {
+  [[ "$$" == "$MAIN_PID" ]] || return 0 # $$ is the main shell's pid even in subshells
   trap - EXIT
   if [[ "$INSTALLING" -eq 1 ]]; then
     trap '' INT TERM HUP # a second signal must not cut the restore short
@@ -187,7 +189,7 @@ set_name() {
 }
 
 # True when a `#@<name>` marker (whitespace-trimmed, as the parser does) exists.
-category_exists() {
+category_exists() { # name file
   local line n
   while IFS= read -r line || [[ -n "$line" ]]; do
     case "$line" in
@@ -198,13 +200,13 @@ category_exists() {
         [[ "$n" == "$1" ]] && return 0
         ;;
     esac
-  done < "$CONF"
+  done < "$2"
   return 1
 }
 
 # True when an active or commented-out (opt-in) rule of this type and target
 # (normalized like norm_target, on both sides) is already in the catalog.
-entry_exists() { # type normalized-target
+entry_exists() { # type normalized-target file
   T="$1" V="$2" awk '
     function norm(t) {
       if (t == "~") t = "$HOME"
@@ -224,7 +226,7 @@ entry_exists() { # type normalized-target
       if (type != "pattern") t = norm(t)
       if (t == want) f = 1
     }
-    END { exit !f }' "$CONF"
+    END { exit !f }' "$3"
 }
 
 # The only reader of prompts. Any read failure is an abort: at end of input
@@ -305,15 +307,24 @@ main() {
   [[ "$HAVE_NAME" -eq 1 ]] || usage_error "missing --name"
   [[ -n "$ENTRIES" ]] || usage_error "missing --add TYPE TARGET REASON"
 
-  # From here on the tree is read and edited under the lock.
+  # From here on the tree is read and edited under the lock. Everything below is
+  # derived from ONE snapshot of the two files, and the install refuses to write if
+  # they differ from it: a lock that was lost for any reason cannot cause a lost update.
   acquire_lock
+  [[ -r "$SMOKE" ]] || die "cannot read ${SMOKE}"
+  make_work_dir
+  BAK="${WORK}/.snapshot"
+  mkdir "$BAK"
+  cp -p "$CONF" "${BAK}/default.conf"
+  cp -p "$SMOKE" "${BAK}/smoke"
+  local s_conf="${BAK}/default.conf" s_smoke="${BAK}/smoke"
 
-  category_exists "$NAME" && die "category already exists: ${NAME}"
+  category_exists "$NAME" "$s_conf" && die "category already exists: ${NAME}"
   local type target reason b_static="" b_dynamic="" b_prune="" n=0
   local added=("#@${NAME}")
   while IFS='|' read -r type target reason; do
     [[ -n "$type" ]] || continue
-    if entry_exists "$type" "$target"; then
+    if entry_exists "$type" "$target" "$s_conf"; then
       die "rule already exists: ${type}|${target}"
     fi
     case "$type" in
@@ -334,16 +345,15 @@ EOF
 
   # The insertion anchors must be recognizable, or the edit could silently do nothing.
   local dyn_re='^# ── DYNAMIC SCAN PATTERNS' prune_re='^# ── SCAN PRUNE ZONES'
-  if [[ "$(count_lines "$dyn_re" "$CONF")" -ne 1 || "$(count_lines "$prune_re" "$CONF")" -ne 1 ]]; then
+  if [[ "$(count_lines "$dyn_re" "$s_conf")" -ne 1 || "$(count_lines "$prune_re" "$s_conf")" -ne 1 ]]; then
     die "unrecognized structure: ${CONF} must contain exactly one '# ── DYNAMIC SCAN PATTERNS' and one '# ── SCAN PRUNE ZONES' banner line"
   fi
   local mark_re='^EXPECTED_CATEGORY_COUNT=[0-9]+ # add-category: expected category count$'
-  if [[ ! -r "$SMOKE" || "$(count_lines "$mark_re" "$SMOKE")" -ne 1 ]]; then
+  if [[ "$(count_lines "$mark_re" "$s_smoke")" -ne 1 ]]; then
     die "unrecognized structure: ${SMOKE} must contain exactly one EXPECTED_CATEGORY_COUNT=<n> # add-category: expected category count line"
   fi
 
   # Build the edited files on a temporary copy of the whole repository.
-  make_work_dir
   local e
   for e in "$ROOT"/* "$ROOT"/.[!.]*; do
     case "$(basename "$e")" in .git|.add-category.lock) continue ;; esac
@@ -354,7 +364,7 @@ EOF
     /^# ── DYNAMIC SCAN PATTERNS/ { printf "%s", ENVIRON["B_STATIC"] }
     /^# ── SCAN PRUNE ZONES/ { printf "%s", ENVIRON["B_DYNAMIC"] }
     { print }
-  ' "$CONF" > "${w_conf}.new"
+  ' "$s_conf" > "${w_conf}.new"
   printf '%s' "$b_prune" >> "${w_conf}.new"
   mv "${w_conf}.new" "$w_conf"
   awk '
@@ -364,12 +374,12 @@ EOF
       next
     }
     { print }
-  ' "$SMOKE" > "${w_smoke}.new"
+  ' "$s_smoke" > "${w_smoke}.new"
   mv "${w_smoke}.new" "$w_smoke"
 
   # The rules must really be in the new file, and the catalog must agree with the guard.
   verify_added_lines "$w_conf" "${added[@]}" || die "internal error: an added line is missing after the edit; nothing written"
-  if cmp -s "$CONF" "$w_conf"; then die "internal error: config unchanged after the edit; nothing written"; fi
+  if cmp -s "$s_conf" "$w_conf"; then die "internal error: config unchanged after the edit; nothing written"; fi
   local labels expected
   labels="$({ grep -E '^#@' "$w_conf" || true; } | sort -u | wc -l | tr -d ' ')"
   expected="$(sed -n 's/^EXPECTED_CATEGORY_COUNT=\([0-9][0-9]*\) .*/\1/p' "$w_smoke")"
@@ -383,8 +393,8 @@ EOF
   out="$(bash "${WORK}/scripts/check-i18n.sh" "${WORK}/locales/en.sh" "${WORK}/locales/fr.sh" 2>&1)" || rc=$?
   if [[ "$rc" -ne 0 ]]; then printf '%s\n' "$out" >&2; die "locale parity check failed; nothing written"; fi
 
-  diff -u "$CONF" "$w_conf" || true
-  diff -u "$SMOKE" "$w_smoke" || true
+  diff -u "$s_conf" "$w_conf" || true
+  diff -u "$s_smoke" "$w_smoke" || true
   if [[ "$DRY_RUN" -eq 1 ]]; then
     printf 'Dry run: %d rule(s) for category "%s" planned, nothing written.\n' "$n" "$NAME"
     return 0
@@ -395,12 +405,12 @@ EOF
     GIT_CEILING_DIRECTORIES="$(dirname "$WORK")" make -C "$WORK" check || die "make check failed on the copy; nothing written"
   fi
 
-  # Install: back up the originals, then write INTO the existing files (mode and
-  # inode are kept). Any failure or signal restores both from the backup (cleanup).
-  BAK="${WORK}/.backup"
-  mkdir "$BAK"
-  cp -p "$CONF" "${BAK}/default.conf"
-  cp -p "$SMOKE" "${BAK}/smoke"
+  # Install: refuse if either file changed since the snapshot, then write INTO the
+  # existing files (mode and inode are kept). Any failure or signal restores both
+  # from the snapshot (cleanup).
+  if ! cmp -s "$CONF" "$s_conf" || ! cmp -s "$SMOKE" "$s_smoke"; then
+    die "${CONF} or ${SMOKE} changed while this run was working (concurrent edit or lost lock); nothing written"
+  fi
   INSTALLING=1
   cp "$w_conf" "$CONF" || die "could not write ${CONF}; originals restored"
   cp "$w_smoke" "$SMOKE" || die "could not write ${SMOKE}; originals restored"

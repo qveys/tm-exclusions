@@ -177,26 +177,97 @@ assert_true "message names the lock" grep -Fq 'add-category.lock' <<<"$OUT"
 assert_true "held lock: nothing modified" unchanged
 assert_true "the other run's lock is left alone" test -d "${REPO}/.add-category.lock"
 rmdir "${REPO}/.add-category.lock"
+# One round of two simultaneous runs. Outputs are printed when an assertion fails.
+concurrent_round() {
+    local failed_before="$TESTS_FAILED" ra=0 rb=0 ok=0 present pa pb
+    fresh_repo; base_count="$(expected_count)"
+    label_set > "${WORK}/labels.before"
+    bash "${REPO}/scripts/add-category.sh" --root "$REPO" --skip-tests --name "Alpha" --add path '$HOME/.alpha/cache' 'a' >"${WORK}/a.out" 2>&1 </dev/null &
+    pa=$!
+    bash "${REPO}/scripts/add-category.sh" --root "$REPO" --skip-tests --name "Beta" --add path '$HOME/.beta/cache' 'b' >"${WORK}/b.out" 2>&1 </dev/null &
+    pb=$!
+    wait "$pa" || ra=$?
+    wait "$pb" || rb=$?
+    [[ "$ra" -eq 0 ]] && ok=$((ok + 1))
+    [[ "$rb" -eq 0 ]] && ok=$((ok + 1))
+    label_set > "${WORK}/labels.after"
+    present="$(comm -13 "${WORK}/labels.before" "${WORK}/labels.after" | wc -l | tr -d ' ')"
+    assert_true "at least one concurrent run succeeded" test "$ok" -ge 1
+    assert_true "a run that failed did so with exit 1" test "$ra" -le 1 -a "$rb" -le 1
+    assert_eq "$ok" "$present" "categories added == successful runs (set before/after, no silent loss)"
+    assert_eq "$((base_count + ok))" "$(expected_count)" "constant matches the number of categories added"
+    assert_eq "$(labels)" "$(expected_count)" "constant equals the label count after concurrent runs"
+    assert_true "no lock left after concurrent runs" no_leftovers
+    if [[ "$TESTS_FAILED" -gt "$failed_before" ]]; then
+        printf '    ra=%s rb=%s ok=%s present=%s\n--- run Alpha output ---\n' "$ra" "$rb" "$ok" "$present"
+        cat "${WORK}/a.out"
+        printf -- '--- run Beta output ---\n'
+        cat "${WORK}/b.out"
+        printf -- '--- labels added ---\n'
+        comm -13 "${WORK}/labels.before" "${WORK}/labels.after"
+    fi
+}
+for _round in 1 2 3 4 5; do concurrent_round; done
+
+# Deterministic interleaving (no timing): an `awk` shim makes the run that has
+# STUB_HOLD set stop in the middle of its work, after it took the lock and read the
+# files, until $WORK/go exists.
+mkdir -p "${WORK}/holdstub"
+cat > "${WORK}/holdstub/awk" <<'STUBEOF'
+#!/bin/sh
+if [ -n "${B_STATIC+x}" ] && [ -n "${STUB_HOLD:-}" ]; then
+    : > "$STUB_READY"
+    n=0
+    while [ ! -e "$STUB_GO" ] && [ "$n" -lt 300 ]; do sleep 0.1; n=$((n + 1)); done
+fi
+exec /usr/bin/awk "$@"
+STUBEOF
+chmod +x "${WORK}/holdstub/awk"
+wait_for_file() { # file: up to 30 s
+    local n=0
+    while [[ ! -e "$1" && "$n" -lt 300 ]]; do sleep 0.1; n=$((n + 1)); done
+    [[ -e "$1" ]]
+}
+start_held_run() { # name: Alpha-style run stopped mid-work; sets HELD_PID
+    rm -f "${WORK}/ready" "${WORK}/go"
+    PATH="${WORK}/holdstub:$PATH" STUB_HOLD=1 STUB_READY="${WORK}/ready" STUB_GO="${WORK}/go" \
+        bash "${REPO}/scripts/add-category.sh" --root "$REPO" --skip-tests --name "$1" --add path "\$HOME/.${1}/cache" 'held' >"${WORK}/held.out" 2>&1 </dev/null &
+    HELD_PID=$!
+}
+
+# (a) the lock refuses a second run while the first is mid-work.
 fresh_repo; base_count="$(expected_count)"
-label_set > "${WORK}/labels.before"
-ra=0; rb=0
-bash "${REPO}/scripts/add-category.sh" --root "$REPO" --skip-tests --name "Alpha" --add path '$HOME/.alpha/cache' 'a' >"${WORK}/a.out" 2>&1 </dev/null &
-pa=$!
-bash "${REPO}/scripts/add-category.sh" --root "$REPO" --skip-tests --name "Beta" --add path '$HOME/.beta/cache' 'b' >"${WORK}/b.out" 2>&1 </dev/null &
-pb=$!
-wait "$pa" || ra=$?
-wait "$pb" || rb=$?
-ok=0
-[[ "$ra" -eq 0 ]] && ok=$((ok + 1))
-[[ "$rb" -eq 0 ]] && ok=$((ok + 1))
-label_set > "${WORK}/labels.after"
-present="$(comm -13 "${WORK}/labels.before" "${WORK}/labels.after" | wc -l | tr -d ' ')"
-assert_true "at least one concurrent run succeeded" test "$ok" -ge 1
-assert_true "a run that failed did so with exit 1" test "$ra" -le 1 -a "$rb" -le 1
-assert_eq "$ok" "$present" "categories added == successful runs (set before/after, no silent loss)"
-assert_eq "$((base_count + ok))" "$(expected_count)" "constant matches the number of categories added"
-assert_eq "$(labels)" "$(expected_count)" "constant equals the label count after concurrent runs"
-assert_true "no lock left after concurrent runs" no_leftovers
+start_held_run Held
+assert_true "held run reached its mid-work point" wait_for_file "${WORK}/ready"
+run_add --name "Other" --add path '$HOME/.other/cache' 'x'
+assert_eq 1 "$RC" "second run while the first holds the lock: exit 1"
+assert_true "second run names the lock" grep -Fq 'add-category.lock' <<<"$OUT"
+: > "${WORK}/go"
+held_rc=0
+wait "$HELD_PID" || held_rc=$?
+assert_eq 0 "$held_rc" "the held run completes after the second was refused"
+assert_true "only the held run's category was added" test "$(grep -c '^#@Held$' "$CONF")" -eq 1
+assert_eq "$((base_count + 1))" "$(expected_count)" "constant bumped once"
+assert_true "no leftover after the held run" no_leftovers
+
+# (b) even if the lock is lost (removed behind the first run's back), the first run
+# refuses to overwrite the second run's update instead of losing it silently.
+fresh_repo; base_count="$(expected_count)"
+start_held_run Stale
+assert_true "stale run reached its mid-work point" wait_for_file "${WORK}/ready"
+rmdir "${REPO}/.add-category.lock"
+run_add --name "Winner" --add path '$HOME/.winner/cache' 'x'
+assert_eq 0 "$RC" "second run (lock lost by the first) completes"
+: > "${WORK}/go"
+held_rc=0
+wait "$HELD_PID" || held_rc=$?
+assert_eq 1 "$held_rc" "the stale run refuses to install over the other update (exit 1)"
+assert_true "stale run says the files changed" grep -Fq 'changed while this run was working' "${WORK}/held.out"
+assert_true "the other run's category is kept" test "$(grep -c '^#@Winner$' "$CONF")" -eq 1
+assert_true "the stale run's category was not written" test "$(grep -c '^#@Stale$' "$CONF")" -eq 0
+assert_eq "$((base_count + 1))" "$(expected_count)" "constant bumped once (by the winner)"
+assert_eq "$(labels)" "$(expected_count)" "constant equals the label count"
+assert_true "no leftover after the stale run" no_leftovers
 
 echo ""
 echo "--- Duplicates refused ---"
