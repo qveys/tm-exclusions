@@ -2171,7 +2171,8 @@ collect_post_scan_paths() {
     # Cap after dedup: sort -u drops exact duplicates and puts each candidate right
     # before its descendants, which one pass then drops as already covered, unless
     # the ancestor is protected by keep (then it is not excluded and they stay).
-    # Uninstall keeps descendants: an older version may have excluded only the disk.
+    # Uninstall keeps descendants and has no cap (it only removes exclusions): an
+    # older version may have excluded only the disk, or a disk past the 50th slot.
     if ! LC_ALL=C sort -u -o "$tmp" "$tmp"; then
         record_error "$MSG_SCAN_FAILED $HOME"
     fi
@@ -2187,9 +2188,9 @@ collect_post_scan_paths() {
         fi
         prev="$line" prev_checked=0 prev_blocked=0
         kept=$((kept + 1))
-        if [[ "$kept" -le 50 ]]; then extra_paths_append "${line%/}"; fi
+        if [[ "$kept" -le 50 || "$MODE" = uninstall ]]; then extra_paths_append "${line%/}"; fi
     done < "$tmp"
-    if [[ "$kept" -gt 50 ]]; then
+    if [[ "$kept" -gt 50 && "$MODE" != uninstall ]]; then
         add_report_line "LIMIT $MSG_IMAGE_LIMIT"
     fi
     rm -f "$tmp"

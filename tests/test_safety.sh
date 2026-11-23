@@ -227,6 +227,16 @@ assert_file_lacks_regex "$TM_EXCLUSIONS_REPORT" '^WOULD .*\.vmdk ' \
     "covered disks are not planned on their own"
 rm -rf "$HOME/many"
 
+# Uninstall has no cap: 25 VM folders (50 candidates with their descendants) must not
+# starve an independent disk excluded alone, and LIMIT is never shown there.
+make_vms 25
+dd if=/dev/zero of="$HOME/zz-alone.vmdk" bs=1 count=0 seek=537919488 2>/dev/null
+TEST_EXCLUDED_PATH="$HOME/zz-alone.vmdk" run 0 --uninstall --dry-run
+assert_file_contains "$TM_EXCLUSIONS_REPORT" "WOULD_REMOVE $HOME/zz-alone.vmdk" \
+    "uninstall reaches an independent disk past 50 candidates"
+assert_true "uninstall never reports LIMIT" not grep -Fq 'LIMIT' "$TM_EXCLUSIONS_REPORT"
+rm -rf "$HOME/many" "$HOME/zz-alone.vmdk"
+
 # Uninstall must still offer a disk excluded alone by an older version, even though
 # exclusion mode now covers it with its VM folder (Box/Box.vbox) or bundle (X.utm).
 mkdir -p "$HOME/Box" "$HOME/X.utm/Data"
