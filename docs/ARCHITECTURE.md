@@ -101,7 +101,7 @@ A background **sudo credential refresh** loop may start when a privileged path i
 ### Cleanup and Signal Traps
 
 The tool traps `EXIT`, `INT` (SIGINT), `TERM` (SIGTERM), and `HUP` (SIGHUP) via `cleanup()` and `on_signal()`:
-- **Temporary file tracking**: All temporary files created during dynamic scanning and disk inspection (`mktemp`) are registered in `TMP_FILES` and removed on normal completion or when receiving an interruption signal.
+- **Temporary file tracking**: All temporary files (dynamic scanning, disk inspection, space journal) are created by `make_tmp_file` inside one private work directory (`mktemp -d`, created on first use by `ensure_tmp_dir`) registered in `TMP_FILES` and removed on normal completion or when receiving an interruption signal. `INT`/`TERM`/`HUP` are ignored between that single `mktemp -d` and the registration, so no signal can leave a loose `tm_exc_*` entry in `TMPDIR` (covered by `tests/test_tmp_signal.sh`).
 - **Sudo keepalive**: The background `sudo -n -v` keepalive loop is automatically terminated on exit or signal to prevent orphan background processes.
 - **Signal propagation**: On trapped signals, cleanup executes and the signal is re-delivered to the process to preserve standard POSIX exit status.
 
