@@ -1000,21 +1000,45 @@ $f"
 }
 
 # Every temporary file lives in ONE private directory created on first use, so
-# a signal can never strand a loose tm_exc_* file in TMPDIR (#92): between
-# `mktemp -d` and its registration for cleanup, INT/TERM/HUP are ignored (the
-# mktemp child inherits the ignore), then the caller's traps are restored.
-# Files inside it get fixed names and are removed with the directory.
+# a signal can never strand a loose tm_exc_* file in TMPDIR (#92). The window
+# between `mktemp -d` and the assignment of TMP_DIR (the one thing the cleanup
+# removes) is never without a handler: INT/TERM/HUP switch atomically from
+# on_signal to a recorder (TMP_PENDING_SIG), the mktemp child ignores them (so a
+# terminal Ctrl-C cannot kill it half-way), then the caller's own handlers are
+# put back and the recorded signal is replayed to them (cleanup, exit 128+n).
+# Files inside the directory get fixed names and go with it. A TMPDIR holding a
+# control character (newline) falls back to /tmp, and only the exact path
+# returned by mktemp, with the expected name, is ever kept or removed.
+TMP_PENDING_SIG=""
 ensure_tmp_dir() {
     [[ -n "${TMP_DIR}" ]] && return 0
-    local d="" saved_traps
-    saved_traps="$(trap -p INT TERM HUP)"
-    trap '' INT TERM HUP
-    if d="$(mktemp -d "${TMPDIR:-/tmp}/tm_exc_work.XXXXXX" 2>/dev/null)"; then
-        TMP_DIR="$d"
-        register_tmp_file "$d"
+    local base="${TMPDIR:-/tmp}" d="" s saved_int saved_term saved_hup
+    case "$base" in *[[:cntrl:]]*) base=/tmp ;; esac
+    saved_int="$(trap -p INT)"
+    saved_term="$(trap -p TERM)"
+    saved_hup="$(trap -p HUP)"
+    TMP_PENDING_SIG=""
+    trap 'TMP_PENDING_SIG="${TMP_PENDING_SIG:-INT}"' INT
+    trap 'TMP_PENDING_SIG="${TMP_PENDING_SIG:-TERM}"' TERM
+    trap 'TMP_PENDING_SIG="${TMP_PENDING_SIG:-HUP}"' HUP
+    d="$(trap '' INT TERM HUP; exec mktemp -d "${base}/tm_exc_work.XXXXXX" 2>/dev/null)" || d=""
+    case "$d" in
+        "${base}"/tm_exc_work.??????)
+            case "$d" in
+                *[[:cntrl:]]*) ;;
+                *) if [[ -d "$d" && ! -L "$d" ]]; then TMP_DIR="$d"; fi ;;
+            esac
+            ;;
+    esac
+    if [[ -z "${TMP_DIR}" && -n "$d" && -d "$d" ]]; then rmdir -- "$d" 2>/dev/null || true; fi
+    if [[ -n "$saved_int" ]]; then eval "$saved_int"; else trap - INT; fi
+    if [[ -n "$saved_term" ]]; then eval "$saved_term"; else trap - TERM; fi
+    if [[ -n "$saved_hup" ]]; then eval "$saved_hup"; else trap - HUP; fi
+    if [[ -n "${TMP_PENDING_SIG}" ]]; then
+        s="${TMP_PENDING_SIG}"
+        TMP_PENDING_SIG=""
+        kill -s "$s" "$$"
     fi
-    trap - INT TERM HUP
-    if [[ -n "$saved_traps" ]]; then eval "$saved_traps"; fi
     [[ -n "${TMP_DIR}" ]]
 }
 
@@ -1033,12 +1057,24 @@ cleanup_tmp_files() {
         local f
         while IFS= read -r f; do
             if [[ -n "$f" && -e "$f" ]]; then
-                rm -rf "$f" 2>/dev/null || true
+                rm -f "$f" 2>/dev/null || true
             fi
         done <<EOF
 ${TMP_FILES}
 EOF
         TMP_FILES=""
+    fi
+    # The private work directory (see ensure_tmp_dir): only the exact name it
+    # was given, never a path split or built from TMPDIR.
+    if [[ -n "${TMP_DIR:-}" ]]; then
+        case "${TMP_DIR}" in
+            *[[:cntrl:]]*) ;;
+            */tm_exc_work.??????)
+                if [[ -d "${TMP_DIR}" && ! -L "${TMP_DIR}" ]]; then
+                    rm -rf -- "${TMP_DIR}" 2>/dev/null || true
+                fi
+                ;;
+        esac
         TMP_DIR=""
     fi
 }
