@@ -294,8 +294,14 @@ to `custom.conf` if needed. An upgrade does not remove previously applied exclus
 for these paths or old discovered images: review them explicitly before relying on backups.
 
 Image discovery is off by default. With `scan_images=true`, it considers at most
-50 `.sparsebundle` directories or `.vmdk`/`.qcow2`/`.raw`/`.img` files larger than
-512 MiB. Extra candidates are disclosed as `LIMIT` in the report. This is a cap
+50 candidates: VM bundle directories (`.sparsebundle`, `.utm`, `.vmwarevm`,
+`.parallels`, `.pvm`) of any size, whose contents are not walked (a `keep` inside a VM bundle protects the whole bundle; its disks are not excluded individually); `.vmdk`/`.qcow2`/
+`.raw`/`.img`/`.iso`/`.ova` files larger than 512 MiB; and `.vbox` files (the
+whole folder when it is named after the file, as in `<name>/<name>.vbox`, never
+`$HOME` itself). Duplicates and candidates already inside another candidate are
+dropped before the cap (unless that candidate is protected by a `keep`). iCloud `Mobile Documents` and
+`Library/CloudStorage` trees are skipped so nothing is downloaded. Discovered paths
+appear in the report as `Discovery: …`. Extra candidates are disclosed as `LIMIT` in the report. This is a cap
 on processed images, not traversal time. `scan_images=false` disables it again.
 Candidate paths containing a newline are rejected and reported, because the
 candidate list is newline-delimited.

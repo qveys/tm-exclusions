@@ -21,6 +21,8 @@ cat > "$TEST_DIR/bin/tmutil" <<'STUB'
 printf '%s\n' "$*" >> "$TEST_CALLS"
 case "$1" in
     isexcluded)
+        [ -n "${TEST_EXCLUDED_PATH:-}" ] && [ "$2" = "$TEST_EXCLUDED_PATH" ] && {
+            printf '[Excluded] %s\n' "$2"; exit 0; }
         case "${TEST_STATUS:-included}" in
             fail) exit 1 ;;
             malformed) echo unknown ;;
@@ -114,6 +116,182 @@ assert_file_contains "$TM_EXCLUSIONS_REPORT" 'LIMIT Image discovery limited to 5
     "candidate overflow is disclosed as LIMIT"
 assert_eq 50 "$(grep -c '^WOULD .*sparsebundle' "$TM_EXCLUSIONS_REPORT")" \
     "image discovery is capped at 50 candidates"
+
+# Hypervisor bundles are candidates whole (contents pruned, no size gate); flat
+# images are size-gated; a .vbox file is excluded alone unless it sits in a folder
+# named after it (<name>/<name>.vbox), which then stands for the VM; cloud trees stay pruned.
+rm -rf "$HOME/disks"
+mkdir -p "$HOME/vms/a.utm/Data" "$HOME/vms/b.vmwarevm" "$HOME/vms/c.parallels" "$HOME/vms/d.pvm" \
+    "$HOME/vms/a.utm/nested.vmwarevm" "$HOME/VirtualBox VMs/box" "$HOME/Documents/Documents.vbox" \
+    "$HOME/Library/CloudStorage/Drive/e.utm" \
+    "$HOME/Library/Mobile Documents/f.vmwarevm"
+for big in "$HOME/vms/big.iso" "$HOME/vms/big.ova" "$HOME/Library/CloudStorage/Drive/big.iso"; do
+    dd if=/dev/zero of="$big" bs=1 count=0 seek=537919488 2>/dev/null
+done
+: > "$HOME/vms/small.iso"
+: > "$HOME/vms/small.ova"
+: > "$HOME/VirtualBox VMs/box/box.vbox"
+: > "$HOME/stray.vbox"
+: > "$HOME/Documents/loose.vbox"
+run 0 --dry-run
+for found in vms/a.utm vms/b.vmwarevm vms/c.parallels vms/d.pvm vms/big.iso vms/big.ova \
+    "VirtualBox VMs/box" Documents/loose.vbox stray.vbox; do
+    assert_file_contains "$TM_EXCLUSIONS_REPORT" "WOULD $HOME/$found " \
+        "VM discovery reports $found"
+done
+for missing in small.iso small.ova nested.vmwarevm CloudStorage 'Mobile Documents' \
+    'box/box.vbox'; do
+    assert_file_lacks_regex "$TM_EXCLUSIONS_REPORT" "^WOULD .*$missing" \
+        "VM discovery skips $missing"
+done
+assert_eq 9 "$(grep '^WOULD ' "$TM_EXCLUSIONS_REPORT" | grep -vc 'brew-cache')" \
+    "VM discovery plans exactly the expected paths"
+assert_true "a loose .vbox does not exclude its whole folder" \
+    not grep -Fq "WOULD $HOME/Documents " "$TM_EXCLUSIONS_REPORT"
+assert_true "a directory named like its parent plus .vbox is not a candidate" \
+    not grep -Fq "WOULD $HOME/Documents/Documents.vbox " "$TM_EXCLUSIONS_REPORT"
+rm -rf "$HOME/vms" "$HOME/VirtualBox VMs" "$HOME/stray.vbox" "$HOME/Library" "$HOME/Documents"
+
+# A folder named after its .vbox is never $HOME, with or without a trailing slash.
+HOME_PLAIN="$HOME"
+: > "$HOME/home.vbox"
+for HOME in "$HOME_PLAIN" "$HOME_PLAIN/"; do
+    export HOME
+    run 0 --dry-run
+    assert_file_contains "$TM_EXCLUSIONS_REPORT" "home.vbox " \
+        "a .vbox named like HOME is excluded as a file (HOME=$HOME)"
+    assert_true "HOME is never proposed (HOME=$HOME)" \
+        not grep -Eq "^WOULD ${HOME_PLAIN}/* " "$TM_EXCLUSIONS_REPORT"
+done
+HOME="$HOME_PLAIN"
+export HOME
+rm -f "$HOME/home.vbox"
+
+# Exact duplicates and covered descendants never use up the 50 slots; real overflow still does.
+make_vms() {
+    local n i
+    for ((i = 0; i < $1; i++)); do
+        n="$HOME/many/vm$i"
+        mkdir -p "$n"
+        : > "$n/vm$i.vbox"
+        dd if=/dev/zero of="$n/disk.vmdk" bs=1 count=0 seek=537919488 2>/dev/null
+    done
+}
+make_vms 26
+run 0 --dry-run
+assert_eq 26 "$(grep -c '^WOULD .*many/vm[0-9]* ' "$TM_EXCLUSIONS_REPORT")" \
+    "26 VM folders (vbox + large vmdk) are all planned once"
+assert_true "26 VM folders do not trigger LIMIT" \
+    not grep -Fq 'LIMIT' "$TM_EXCLUSIONS_REPORT"
+make_vms 51
+run 0 --dry-run
+assert_file_contains "$TM_EXCLUSIONS_REPORT" 'LIMIT Image discovery limited to 50' \
+    "51 distinct VM folders still disclose LIMIT"
+assert_eq 50 "$(grep -c '^WOULD .*many/vm[0-9]* ' "$TM_EXCLUSIONS_REPORT")" \
+    "51 distinct VM folders are capped at 50"
+rm -rf "$HOME/many"
+
+# A keep inside a VM folder protects the folder, so its descendants stay candidates;
+# without keep they are covered by the folder. Sorted order must not hide descendants
+# behind look-alike siblings (v, v-b, v.x) across ~200 raw candidates.
+mkdir -p "$HOME/VMs/Box/saved" "$HOME/VMs/Free"
+for name in Box Free; do
+    : > "$HOME/VMs/$name/$name.vbox"
+    dd if=/dev/zero of="$HOME/VMs/$name/disk.vmdk" bs=1 count=0 seek=537919488 2>/dev/null
+done
+printf '%s\n' 'keep|~/VMs/Box/saved|precious state' > "$HOME/.config/tm_exclusions/custom.conf"
+run 0 --dry-run
+assert_file_contains "$TM_EXCLUSIONS_REPORT" "KEEP  $HOME/VMs/Box (" \
+    "a keep inside a VM folder protects the folder"
+assert_file_contains "$TM_EXCLUSIONS_REPORT" "WOULD $HOME/VMs/Box/disk.vmdk " \
+    "the disk of a protected VM folder stays a candidate"
+assert_file_contains "$TM_EXCLUSIONS_REPORT" "WOULD $HOME/VMs/Free " \
+    "an unprotected VM folder is excluded as a whole"
+assert_true "an unprotected VM folder covers its disk" \
+    not grep -Fq "WOULD $HOME/VMs/Free/disk.vmdk " "$TM_EXCLUSIONS_REPORT"
+: > "$HOME/.config/tm_exclusions/custom.conf"
+rm -rf "$HOME/VMs"
+for name in $(seq 0 39) v v-b v.x; do
+    mkdir -p "$HOME/many/vm$name"
+    : > "$HOME/many/vm$name/vm$name.vbox"
+    for k in 1 2 3 4; do
+        dd if=/dev/zero of="$HOME/many/vm$name/disk$k.vmdk" bs=1 count=0 seek=537919488 2>/dev/null
+    done
+done
+run 0 --dry-run
+assert_eq 43 "$(grep -c '^WOULD .*many/vm[0-9a-z.-]* ' "$TM_EXCLUSIONS_REPORT")" \
+    "200+ raw candidates collapse to one entry per VM folder"
+assert_true "collapsed VM folders do not trigger LIMIT" \
+    not grep -Fq 'LIMIT' "$TM_EXCLUSIONS_REPORT"
+assert_file_lacks_regex "$TM_EXCLUSIONS_REPORT" '^WOULD .*\.vmdk ' \
+    "covered disks are not planned on their own"
+rm -rf "$HOME/many"
+
+# Uninstall caps at 200, not 50: 25 VM folders (50 candidates with their descendants)
+# must not starve an independent disk excluded alone, and no LIMIT is shown below the cap.
+make_vms 25
+dd if=/dev/zero of="$HOME/zz-alone.vmdk" bs=1 count=0 seek=537919488 2>/dev/null
+TEST_EXCLUDED_PATH="$HOME/zz-alone.vmdk" run 0 --uninstall --dry-run
+assert_file_contains "$TM_EXCLUSIONS_REPORT" "WOULD_REMOVE $HOME/zz-alone.vmdk" \
+    "uninstall reaches an independent disk past 50 candidates"
+assert_true "uninstall below its cap reports no LIMIT" not grep -Fq 'LIMIT' "$TM_EXCLUSIONS_REPORT"
+rm -rf "$HOME/many" "$HOME/zz-alone.vmdk"
+
+# Past 200 distinct candidates uninstall discloses LIMIT and keeps 200. Discovery only
+# (processing 200 paths is slow), run from a sourced temp copy of the script.
+mkdir -p "$HOME/lots"
+for ((i = 0; i < 201; i++)); do mkdir "$HOME/lots/d$i.sparsebundle"; done
+sed '/^main /d' "$ROOT/tm_exclusions.sh" > "$TEST_DIR/functions.sh"
+for mode in uninstall apply; do
+    expected=50
+    [[ "$mode" = uninstall ]] && expected=200
+    out="$(bash -c 'set -euo pipefail
+        source "$1"; source "$2/locales/en.sh"; declare_i18n_en
+        CONF_SCAN_IMAGES=1 MODE="$3"
+        collect_post_scan_paths
+        printf "%s\n" "$EXTRA_PATHS" | grep -c sparsebundle
+        printf "%s\n" "$REPORT_LINES" | grep -c "^LIMIT "' _ "$TEST_DIR/functions.sh" "$ROOT" "$mode")"
+    assert_eq "$expected
+1" "$out" "$mode discovery keeps $expected of 201 candidates and reports LIMIT once"
+done
+rm -rf "$HOME/lots"
+
+# Uninstall must still offer a disk excluded alone by an older version, even though
+# exclusion mode now covers it with its VM folder (Box/Box.vbox) or bundle (X.utm).
+mkdir -p "$HOME/Box" "$HOME/X.utm/Data"
+: > "$HOME/Box/Box.vbox"
+for big in "$HOME/Box/disk.vmdk" "$HOME/X.utm/Data/disk.qcow2"; do
+    dd if=/dev/zero of="$big" bs=1 count=0 seek=537919488 2>/dev/null
+done
+TEST_EXCLUDED_PATH="$HOME/Box/disk.vmdk" run 0 --uninstall --dry-run
+assert_file_contains "$TM_EXCLUSIONS_REPORT" "WOULD_REMOVE $HOME/Box/disk.vmdk" \
+    "uninstall offers the disk an older version excluded alone in a VM folder"
+TEST_EXCLUDED_PATH="$HOME/Box/Box.vbox" run 0 --uninstall --dry-run
+assert_file_contains "$TM_EXCLUSIONS_REPORT" "WOULD_REMOVE $HOME/Box/Box.vbox" \
+    "uninstall offers a .vbox file excluded alone, not only its folder"
+TEST_EXCLUDED_PATH="$HOME/X.utm/Data/disk.qcow2" run 0 --uninstall --dry-run
+assert_file_contains "$TM_EXCLUSIONS_REPORT" "WOULD_REMOVE $HOME/X.utm/Data/disk.qcow2" \
+    "uninstall offers the disk an older version excluded alone inside a bundle"
+run 0 --dry-run
+assert_file_contains "$TM_EXCLUSIONS_REPORT" "WOULD $HOME/X.utm " \
+    "exclusion mode still takes the bundle whole"
+assert_true "exclusion mode does not walk into the bundle" \
+    not grep -Fq "X.utm/Data" "$TM_EXCLUSIONS_REPORT"
+rm -rf "$HOME/Box" "$HOME/X.utm"
+
+# Documented limit: a keep inside a VM bundle protects the whole bundle; its disks are
+# not walked, so they are not excluded individually.
+mkdir -p "$HOME/Protected.utm/Data/saved"
+dd if=/dev/zero of="$HOME/Protected.utm/Data/independent.qcow2" bs=1 count=0 seek=537919488 2>/dev/null
+printf '%s\n' 'keep|~/Protected.utm/Data/saved|precious state' > "$HOME/.config/tm_exclusions/custom.conf"
+run 0 --dry-run
+assert_file_contains "$TM_EXCLUSIONS_REPORT" "KEEP  $HOME/Protected.utm (" \
+    "a keep inside a VM bundle protects the bundle"
+assert_file_lacks_regex "$TM_EXCLUSIONS_REPORT" '^WOULD .*independent\.qcow2' \
+    "disks of a protected bundle are not excluded individually"
+: > "$HOME/.config/tm_exclusions/custom.conf"
+rm -rf "$HOME/Protected.utm"
+mkdir -p "$HOME/disks/private.sparsebundle"
 
 # A failed or unrecognized status must not be treated as Included in any mode.
 # Literal placeholder is expanded by the CLI.

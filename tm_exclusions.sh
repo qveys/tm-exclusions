@@ -19,6 +19,8 @@ readonly PROGRAM_NAME="tm-exclusions"
 readonly CUSTOM_CONF="${HOME}/.config/tm_exclusions/custom.conf"
 readonly REPORT_FILE="${HOME}/.config/tm_exclusions/last_report.txt"
 readonly CUSTOM_CONF_DIR="${HOME}/.config/tm_exclusions"
+# Image discovery caps: what apply adds, and what --uninstall (removal only) walks.
+readonly IMAGE_CAP_APPLY=50 IMAGE_CAP_UNINSTALL=200
 
 # ---------------------------------------------------------------------------
 # Global state
@@ -2116,13 +2118,29 @@ collect_post_scan_paths() {
     tmp="$(mktemp "${TMPDIR:-/tmp}/tm_exc_disk.XXXXXX")"
     register_tmp_file "$tmp"
     # Stream directories and matching images from the same walk, NUL-delimited.
-    # Sparsebundles are reported as candidates but their contents stay pruned.
+    # VM/disk bundle directories (sparsebundle, UTM, VMware, Parallels) are
+    # candidates as a whole, whatever their size, and their contents stay pruned:
+    # multi-part disks inside never fall under the size gate. Flat image files are
+    # size-gated. A .vbox file is a candidate itself; when it sits in a folder
+    # named after it (VirtualBox's <name>/<name>.vbox layout) that folder holds the
+    # VM's disks and becomes the candidate instead, unless it is $HOME. Cloud-synced
+    # trees (iCloud, File Provider CloudStorage) are pruned so nothing is downloaded.
+    # --uninstall walks into UTM/VMware/Parallels bundles as before bundle support,
+    # so a disk an older version excluded on its own is still found.
+    local -a prune_names=(-name '*.sparsebundle')
+    if [[ "$MODE" != uninstall ]]; then
+        prune_names+=(-o -name '*.utm' -o -name '*.vmwarevm' -o -name '*.parallels' -o -name '*.pvm')
+    fi
     show_scan_path "$HOME"
-    if ! find "$HOME" \( -path '*/Mobile Documents/*' -o -path '*/Library/Mobile Documents/*' \) -prune -o \
-        \( -type d -print0 \( -name '*.sparsebundle' -prune \) \) -o \
-        \( -type f \( -name '*.vmdk' -o -name '*.qcow2' -o -name '*.raw' -o -name '*.img' \) -size +512M -print0 \) \
+    if ! find "$HOME" \( -path '*/Mobile Documents/*' -o -path '*/Library/Mobile Documents/*' \
+            -o -path '*/Library/CloudStorage/*' \) -prune -o \
+        \( -type d -print0 \( \( "${prune_names[@]}" \) -prune \) \) -o \
+        \( -type f \( -name '*.vmdk' -o -name '*.qcow2' -o -name '*.raw' -o -name '*.img' \
+            -o -name '*.iso' -o -name '*.ova' \) -size +512M -print0 \) -o \
+        \( -type f -name '*.vbox' -print0 \) \
         2>/dev/null | {
-            local candidate count=0
+            local candidate vbox_dir home_dir="$HOME"
+            while [[ "$home_dir" = */ ]]; do home_dir="${home_dir%/}"; done
             while IFS= read -r -d '' candidate; do
                 # The find stream is NUL-delimited but the candidate batch file is
                 # newline-delimited (Bash 3.2); a path containing a newline would
@@ -2131,28 +2149,60 @@ collect_post_scan_paths() {
                     record_error "$MSG_SCAN_NEWLINE_PATH"
                     continue
                 fi
-                if [[ -d "$candidate" ]]; then
+                if [[ "$candidate" = *.vbox && -f "$candidate" ]]; then
+                    vbox_dir="${candidate%/*}"
+                    while [[ "$vbox_dir" = */ ]]; do vbox_dir="${vbox_dir%/}"; done
+                    if [[ -n "$vbox_dir" && "$vbox_dir" != "$home_dir" \
+                        && "${vbox_dir##*/}.vbox" = "${candidate##*/}" ]]; then
+                        # Uninstall also offers the file: it may be excluded on its own.
+                        [[ "$MODE" = uninstall ]] && printf '%s/\n' "$candidate" >> "$tmp"
+                        candidate="$vbox_dir"
+                    fi
+                elif [[ -d "$candidate" ]]; then
                     show_scan_path "$candidate"
-                    [[ "$candidate" = *.sparsebundle ]] || continue
+                    case "$candidate" in
+                        *.sparsebundle|*.utm|*.vmwarevm|*.parallels|*.pvm) ;;
+                        *) continue ;;
+                    esac
                 fi
-                count=$((count + 1))
-                if [[ "$count" -le 51 ]]; then printf '%s\n' "$candidate" >> "$tmp"; fi
+                # Trailing slash: sorted, a candidate is followed by its descendants.
+                printf '%s/\n' "$candidate" >> "$tmp"
             done
         }; then
         record_error "$MSG_SCAN_FAILED $HOME"
     fi
     clear_progress
-    if [[ "$(wc -l < "$tmp")" -gt 50 ]]; then
-        add_report_line "LIMIT $MSG_IMAGE_LIMIT"
+    # Cap after dedup: sort -u drops exact duplicates and puts each candidate right
+    # before its descendants, which one pass then drops as already covered, unless
+    # the ancestor is protected by keep (then it is not excluded and they stay).
+    # Uninstall keeps descendants and uses a higher cap (it only removes exclusions):
+    # an older version may have excluded only the disk, or a disk past the 50th slot.
+    # The cap stays finite: per-path processing cost grows quadratically.
+    if ! LC_ALL=C sort -u -o "$tmp" "$tmp"; then
+        record_error "$MSG_SCAN_FAILED $HOME"
     fi
-    local image_count=0
-
+    local kept=0 prev="" prev_checked=0 prev_blocked=0 cap="$IMAGE_CAP_APPLY"
+    [[ "$MODE" = uninstall ]] && cap="$IMAGE_CAP_UNINSTALL"
     while IFS= read -r line || [[ -n "$line" ]]; do
         [[ -z "$line" ]] && continue
-        image_count=$((image_count + 1))
-        [[ "$image_count" -gt 50 ]] && break
-        extra_paths_append "$line"
+        if [[ "$MODE" != uninstall && -n "$prev" && "$line" = "$prev"* ]]; then
+            if [[ "$prev_checked" -eq 0 ]]; then
+                prev_checked=1
+                if keep_blocks "${prev%/}"; then prev_blocked=1; fi
+            fi
+            [[ "$prev_blocked" -eq 0 ]] && continue
+        fi
+        prev="$line" prev_checked=0 prev_blocked=0
+        kept=$((kept + 1))
+        if [[ "$kept" -le "$cap" ]]; then extra_paths_append "${line%/}"; fi
     done < "$tmp"
+    if [[ "$kept" -gt "$cap" ]]; then
+        if [[ "$MODE" = uninstall ]]; then
+            add_report_line "LIMIT $MSG_IMAGE_LIMIT_UNINSTALL"
+        else
+            add_report_line "LIMIT $MSG_IMAGE_LIMIT"
+        fi
+    fi
     rm -f "$tmp"
     unregister_tmp_file "$tmp"
 }
