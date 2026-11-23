@@ -2,12 +2,19 @@
 # test_tmp_signal.sh — a signal in the mktemp window never strands a tm_exc_* file (#92)
 #
 # Every temporary file of tm_exclusions.sh lives in one private work directory
-# created by a single `mktemp -d`; INT/TERM/HUP are ignored between that mktemp
-# and the registration of the directory for cleanup. This suite reproduces the
-# race: a `mktemp` shim creates the real file/directory, then stays suspended
-# (its output not yet returned to the script) while a signal is sent to the
-# script, exactly the window described in the issue. Whatever the outcome of the
-# run, no tm_exc_* entry may remain in TMPDIR.
+# created by a single `mktemp -d`; around that mktemp INT/TERM/HUP are recorded
+# (the mktemp child ignores them), then the normal handlers are restored and a
+# recorded signal is replayed to them (cleanup, exit 128+n). This suite
+# reproduces the race: a `mktemp` shim creates the real directory, then stays
+# suspended (its output not yet returned to the script) while a signal is sent
+# to the script, exactly the window described in the issue. The CLI must then
+# die with the status of that signal and no tm_exc_* entry may remain in TMPDIR.
+# Other cases: a TMPDIR holding a newline must not make the cleanup remove a
+# decoy directory, and a TMPDIR symbolic link retargeted during mktemp must
+# still be cleaned where the directory was created.
+# A signal ignored when the suite starts (an `&` job, nohup) cannot be trapped by
+# any shell: perl resets the dispositions when available, otherwise the affected
+# case is reported SKIP with its reason (never a silent PASS).
 # Run: bash tests/test_tmp_signal.sh   (use /bin/bash 3.2 and Bash 5 both)
 
 set -euo pipefail
@@ -46,7 +53,8 @@ esac
 STUB
 # mktemp shim: the first call creates the real entry, announces it with
 # $HOLD_MARK, then blocks (the caller's command substitution is still waiting
-# for it) until $HOLD_GO exists. Later calls pass straight through.
+# for it) until $HOLD_GO exists. Later calls pass straight through. When
+# $RETARGET_LINK is set, that symbolic link is then pointed at $RETARGET_TO.
 cat > "${WORK}/bin/mktemp" <<'STUB'
 #!/bin/sh
 out="$("$REAL_MKTEMP" "$@")" || exit $?
@@ -58,15 +66,27 @@ if [ ! -e "$HOLD_MARK" ]; then
         n=$((n + 1))
     done
 fi
+if [ -n "${RETARGET_LINK:-}" ]; then ln -sfn "$RETARGET_TO" "$RETARGET_LINK"; fi
 printf '%s\n' "$out"
 STUB
 chmod +x "${WORK}/bin/"*
 
 DEFAULT_SIGS=()
+HAVE_PERL=0
 if command -v perl >/dev/null 2>&1; then
+    HAVE_PERL=1
     # shellcheck disable=SC2016  # Perl code, not shell expansion
     DEFAULT_SIGS=(perl -e '$SIG{INT} = $SIG{TERM} = $SIG{HUP} = "DEFAULT"; exec @ARGV or exit 127' --)
 fi
+
+# sig_ignored <SIG>: succeeds when a child of this suite would start with SIG
+# ignored (then no shell can trap it): a bash raising it on itself survives.
+sig_ignored() {
+    local out
+    # shellcheck disable=SC2016  # expanded by the inner bash
+    out="$("$BASH" -c 'kill -s "$1" $$; echo survived' _ "$1" 2>/dev/null || true)"
+    [ "$out" = survived ]
+}
 
 # run_interrupted <SIG> <expected-exit> <label>: run the CLI, interrupt it while
 # the first mktemp is suspended after creating its entry, then let it go on and
@@ -75,6 +95,11 @@ fi
 # (128+n), not carry on and exit 0.
 run_interrupted() {
     local sig="$1" want="$2" label="$3" hold pid i=0 left got=""
+    if [ "$HAVE_PERL" -eq 0 ] && [ "$sig" != CONT ] && sig_ignored "$sig"; then
+        printf '%b  SKIP%b %s: SIG%s is ignored at suite start and perl is not available to reset it\n' \
+            "$YELLOW" "$NC" "$label" "$sig"
+        return 0
+    fi
     hold="$(mktemp -d "${WORK}/hold.XXXXXX")"
     mkdir "${hold}/tmp"
     # The CLI must start with the default INT/TERM/HUP dispositions: a
@@ -89,11 +114,15 @@ run_interrupted() {
             HOME="${HOME_DIR}" TMPDIR="${hold}/tmp" PATH="${WORK}/bin:${PATH}" \
                 REAL_MKTEMP="$REAL_MKTEMP" HOLD_MARK="${hold}/mark" HOLD_GO="${hold}/go" \
                 TM_EXCLUSIONS_DEFAULT_CONF="$CONF" \
-                "${DEFAULT_SIGS[@]}" "$BASH" "$TM_EXCLUSIONS" --dry-run --quiet >"${hold}/out" 2>&1 &
+                ${DEFAULT_SIGS[@]+"${DEFAULT_SIGS[@]}"} "$BASH" "$TM_EXCLUSIONS" --dry-run --quiet >"${hold}/out" 2>&1 &
             cli=$!
-            echo "$cli" > "${hold}/pid"
-            wait "$cli" || echo "$?" > "${hold}/rc"
-            [ -e "${hold}/rc" ] || echo 0 > "${hold}/rc"
+            # Written then renamed: the reader never sees a created-but-empty file.
+            echo "$cli" > "${hold}/pid.tmp"
+            mv "${hold}/pid.tmp" "${hold}/pid"
+            cli_rc=0
+            wait "$cli" || cli_rc=$?
+            echo "$cli_rc" > "${hold}/rc.tmp"
+            mv "${hold}/rc.tmp" "${hold}/rc"
         ) >/dev/null 2>&1 &
     )
     i=0
@@ -149,6 +178,24 @@ run_interrupted HUP 129 "SIGHUP between mktemp and registration"
 
 # Control: without any signal the same run succeeds and leaves nothing either.
 run_interrupted CONT 0 "no-signal control run"
+
+# A TMPDIR that is a symbolic link retargeted while mktemp runs: the directory
+# created in the first target must still be removed, and the run must succeed.
+LNK_A="${WORK}/lnk_a"
+LNK_B="${WORK}/lnk_b"
+mkdir -p "$LNK_A" "$LNK_B"
+ln -s "$LNK_A" "${WORK}/lnk"
+lk_rc=0
+HOME="${HOME_DIR}" TMPDIR="${WORK}/lnk" PATH="${WORK}/bin:${PATH}" \
+    REAL_MKTEMP="$REAL_MKTEMP" HOLD_MARK="${WORK}" \
+    RETARGET_LINK="${WORK}/lnk" RETARGET_TO="$LNK_B" \
+    TM_EXCLUSIONS_DEFAULT_CONF="$CONF" \
+    "$BASH" "$TM_EXCLUSIONS" --dry-run --quiet >/dev/null 2>&1 || lk_rc=$?
+assert_eq 0 "$lk_rc" "TMPDIR symlink retargeted during mktemp: the run still succeeds"
+assert_true "TMPDIR symlink retargeted during mktemp: nothing left in the first target" \
+    test -z "$(find "$LNK_A" -mindepth 1 2>/dev/null)"
+assert_true "TMPDIR symlink retargeted during mktemp: nothing left in the new target" \
+    test -z "$(find "$LNK_B" -mindepth 1 2>/dev/null)"
 
 # A TMPDIR holding a newline must never make the cleanup remove another
 # directory: the work directory path was once split at the newline, and the
