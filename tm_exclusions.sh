@@ -2166,13 +2166,14 @@ collect_post_scan_paths() {
     # Cap after dedup: sort -u drops exact duplicates and puts each candidate right
     # before its descendants, which one pass then drops as already covered, unless
     # the ancestor is protected by keep (then it is not excluded and they stay).
+    # Uninstall keeps descendants: an older version may have excluded only the disk.
     if ! LC_ALL=C sort -u -o "$tmp" "$tmp"; then
         record_error "$MSG_SCAN_FAILED $HOME"
     fi
     local kept=0 prev="" prev_checked=0 prev_blocked=0
     while IFS= read -r line || [[ -n "$line" ]]; do
         [[ -z "$line" ]] && continue
-        if [[ -n "$prev" && "$line" = "$prev"* ]]; then
+        if [[ "$MODE" != uninstall && -n "$prev" && "$line" = "$prev"* ]]; then
             if [[ "$prev_checked" -eq 0 ]]; then
                 prev_checked=1
                 if keep_blocks "${prev%/}"; then prev_blocked=1; fi

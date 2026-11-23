@@ -21,6 +21,8 @@ cat > "$TEST_DIR/bin/tmutil" <<'STUB'
 printf '%s\n' "$*" >> "$TEST_CALLS"
 case "$1" in
     isexcluded)
+        [ -n "${TEST_EXCLUDED_PATH:-}" ] && [ "$2" = "$TEST_EXCLUDED_PATH" ] && {
+            printf '[Excluded] %s\n' "$2"; exit 0; }
         case "${TEST_STATUS:-included}" in
             fail) exit 1 ;;
             malformed) echo unknown ;;
@@ -224,6 +226,16 @@ assert_true "collapsed VM folders do not trigger LIMIT" \
 assert_file_lacks_regex "$TM_EXCLUSIONS_REPORT" '^WOULD .*\.vmdk ' \
     "covered disks are not planned on their own"
 rm -rf "$HOME/many"
+
+# Uninstall must still offer a disk excluded alone by an older version, even though
+# exclusion mode would now cover it with its VM folder.
+mkdir -p "$HOME/OldVM"
+: > "$HOME/OldVM/OldVM.vbox"
+dd if=/dev/zero of="$HOME/OldVM/disk.vmdk" bs=1 count=0 seek=537919488 2>/dev/null
+TEST_EXCLUDED_PATH="$HOME/OldVM/disk.vmdk" run 0 --uninstall --dry-run
+assert_file_contains "$TM_EXCLUSIONS_REPORT" "WOULD_REMOVE $HOME/OldVM/disk.vmdk" \
+    "uninstall offers the disk an older version excluded alone"
+rm -rf "$HOME/OldVM"
 mkdir -p "$HOME/disks/private.sparsebundle"
 
 # A failed or unrecognized status must not be treated as Included in any mode.
