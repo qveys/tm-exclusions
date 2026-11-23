@@ -62,24 +62,47 @@ printf '%s\n' "$out"
 STUB
 chmod +x "${WORK}/bin/"*
 
-# run_interrupted <SIG> <label>: run the CLI, interrupt it while the first
-# mktemp is suspended after creating its entry, then let it go on and check
-# that TMPDIR holds no tm_exc_* entry.
+DEFAULT_SIGS=()
+if command -v perl >/dev/null 2>&1; then
+    # shellcheck disable=SC2016  # Perl code, not shell expansion
+    DEFAULT_SIGS=(perl -e '$SIG{INT} = $SIG{TERM} = $SIG{HUP} = "DEFAULT"; exec @ARGV or exit 127' --)
+fi
+
+# run_interrupted <SIG> <expected-exit> <label>: run the CLI, interrupt it while
+# the first mktemp is suspended after creating its entry, then let it go on and
+# check both that TMPDIR holds no tm_exc_* entry and that the signal was not
+# swallowed: the CLI must end with the status of a death by that signal
+# (128+n), not carry on and exit 0.
 run_interrupted() {
-    local sig="$1" label="$2" hold pid i=0 left rc
+    local sig="$1" want="$2" label="$3" hold pid i=0 left got=""
     hold="$(mktemp -d "${WORK}/hold.XXXXXX")"
     mkdir "${hold}/tmp"
-    # Job control (set -m) so the background job keeps the default SIGINT
-    # disposition: a non-interactive `&` job would ignore it and could not trap it.
+    # The CLI must start with the default INT/TERM/HUP dispositions: a
+    # non-interactive `&` job (or a suite itself started that way) ignores SIGINT,
+    # and a shell cannot trap a signal ignored on entry. Job control (set -m) is
+    # not enough then, so perl resets the dispositions before exec when present.
+    # The inner subshell records the CLI's exit status (wait) for the assertions.
     (
         set -m
-        HOME="${HOME_DIR}" TMPDIR="${hold}/tmp" PATH="${WORK}/bin:${PATH}" \
-            REAL_MKTEMP="$REAL_MKTEMP" HOLD_MARK="${hold}/mark" HOLD_GO="${hold}/go" \
-            TM_EXCLUSIONS_DEFAULT_CONF="$CONF" \
-            "$BASH" "$TM_EXCLUSIONS" --dry-run --quiet >"${hold}/out" 2>&1 &
-        echo $! > "${hold}/pid"
+        (
+            set -m
+            HOME="${HOME_DIR}" TMPDIR="${hold}/tmp" PATH="${WORK}/bin:${PATH}" \
+                REAL_MKTEMP="$REAL_MKTEMP" HOLD_MARK="${hold}/mark" HOLD_GO="${hold}/go" \
+                TM_EXCLUSIONS_DEFAULT_CONF="$CONF" \
+                "${DEFAULT_SIGS[@]}" "$BASH" "$TM_EXCLUSIONS" --dry-run --quiet >"${hold}/out" 2>&1 &
+            cli=$!
+            echo "$cli" > "${hold}/pid"
+            wait "$cli" || echo "$?" > "${hold}/rc"
+            [ -e "${hold}/rc" ] || echo 0 > "${hold}/rc"
+        ) >/dev/null 2>&1 &
     )
+    i=0
+    while [ ! -e "${hold}/pid" ] && [ "$i" -lt 200 ]; do
+        sleep 0.05 2>/dev/null || sleep 1
+        i=$((i + 1))
+    done
     pid="$(cat "${hold}/pid")"
+    i=0
     while [ ! -e "${hold}/mark" ] && [ "$i" -lt 200 ]; do
         sleep 0.05 2>/dev/null || sleep 1
         i=$((i + 1))
@@ -94,23 +117,25 @@ run_interrupted() {
     fi
     kill -s "$sig" "$pid" 2>/dev/null || true
     : > "${hold}/go"
-    rc=0
     i=0
-    while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 400 ]; do
+    while [ ! -e "${hold}/rc" ] && [ "$i" -lt 400 ]; do
         sleep 0.05 2>/dev/null || sleep 1
         i=$((i + 1))
     done
-    if kill -0 "$pid" 2>/dev/null; then
+    if [ -e "${hold}/rc" ]; then
+        got="$(cat "${hold}/rc")"
+    else
         kill -KILL "$pid" 2>/dev/null || true
-        rc=1
+        got="hung"
     fi
     left="$(find "${hold}/tmp" -name 'tm_exc_*' 2>/dev/null | wc -l | tr -d ' ')"
-    if [ "$rc" -eq 0 ] && [ "$left" -eq 0 ]; then
+    if [ "$got" = "$want" ] && [ "$left" -eq 0 ]; then
         TESTS_PASSED=$((TESTS_PASSED + 1))
-        printf '%b  PASS%b %s: no tm_exc_* left in TMPDIR\n' "$GREEN" "$NC" "$label"
+        printf '%b  PASS%b %s: exit %s, no tm_exc_* left in TMPDIR\n' "$GREEN" "$NC" "$label" "$got"
     else
         TESTS_FAILED=$((TESTS_FAILED + 1))
-        printf '%b  FAIL%b %s: %s tm_exc_* entr(ies) left in TMPDIR (hung=%s)\n' "$RED" "$NC" "$label" "$left" "$rc"
+        printf '%b  FAIL%b %s: exit %s (want %s), %s tm_exc_* entr(ies) left in TMPDIR\n' \
+            "$RED" "$NC" "$label" "$got" "$want" "$left"
         find "${hold}/tmp" -name 'tm_exc_*' 2>/dev/null | sed 's/^/        /'
     fi
 }
@@ -118,11 +143,29 @@ run_interrupted() {
 echo "tm-exclusions temporary file signal window tests (#92)"
 echo "========================================"
 
-run_interrupted TERM "SIGTERM between mktemp and registration"
-run_interrupted INT "SIGINT between mktemp and registration"
-run_interrupted HUP "SIGHUP between mktemp and registration"
+run_interrupted TERM 143 "SIGTERM between mktemp and registration"
+run_interrupted INT 130 "SIGINT between mktemp and registration"
+run_interrupted HUP 129 "SIGHUP between mktemp and registration"
 
-# Control: without any signal the same run leaves nothing either.
-run_interrupted CONT "no-signal control run"
+# Control: without any signal the same run succeeds and leaves nothing either.
+run_interrupted CONT 0 "no-signal control run"
+
+# A TMPDIR holding a newline must never make the cleanup remove another
+# directory: the work directory path was once split at the newline, and the
+# first half (a decoy here, with a file in it) deleted recursively.
+DECOY="${WORK}/decoy"
+BADTMP="${DECOY}"$'\n'"sub"
+mkdir -p "${DECOY}" "${BADTMP}"
+printf 'precious\n' > "${DECOY}/keep.txt"
+nl_rc=0
+# HOLD_MARK names an existing path: the mktemp shim then never holds.
+HOME="${HOME_DIR}" TMPDIR="${BADTMP}" PATH="${WORK}/bin:${PATH}" \
+    REAL_MKTEMP="$REAL_MKTEMP" HOLD_MARK="${WORK}" \
+    TM_EXCLUSIONS_DEFAULT_CONF="$CONF" \
+    "$BASH" "$TM_EXCLUSIONS" --dry-run --quiet >/dev/null 2>&1 || nl_rc=$?
+assert_eq 0 "$nl_rc" "TMPDIR with a newline: the run still succeeds (falls back to /tmp)"
+assert_true "TMPDIR with a newline: the decoy directory and its file survive" test -f "${DECOY}/keep.txt"
+assert_true "TMPDIR with a newline: nothing is created in the odd TMPDIR" \
+    test -z "$(find "${BADTMP}" -mindepth 1 2>/dev/null)"
 
 test_summary
