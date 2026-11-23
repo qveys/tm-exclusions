@@ -19,6 +19,8 @@ readonly PROGRAM_NAME="tm-exclusions"
 readonly CUSTOM_CONF="${HOME}/.config/tm_exclusions/custom.conf"
 readonly REPORT_FILE="${HOME}/.config/tm_exclusions/last_report.txt"
 readonly CUSTOM_CONF_DIR="${HOME}/.config/tm_exclusions"
+# Image discovery caps: what apply adds, and what --uninstall (removal only) walks.
+readonly IMAGE_CAP_APPLY=50 IMAGE_CAP_UNINSTALL=200
 
 # ---------------------------------------------------------------------------
 # Global state
@@ -2171,12 +2173,14 @@ collect_post_scan_paths() {
     # Cap after dedup: sort -u drops exact duplicates and puts each candidate right
     # before its descendants, which one pass then drops as already covered, unless
     # the ancestor is protected by keep (then it is not excluded and they stay).
-    # Uninstall keeps descendants and has no cap (it only removes exclusions): an
-    # older version may have excluded only the disk, or a disk past the 50th slot.
+    # Uninstall keeps descendants and uses a higher cap (it only removes exclusions):
+    # an older version may have excluded only the disk, or a disk past the 50th slot.
+    # The cap stays finite: per-path processing cost grows quadratically.
     if ! LC_ALL=C sort -u -o "$tmp" "$tmp"; then
         record_error "$MSG_SCAN_FAILED $HOME"
     fi
-    local kept=0 prev="" prev_checked=0 prev_blocked=0
+    local kept=0 prev="" prev_checked=0 prev_blocked=0 cap="$IMAGE_CAP_APPLY"
+    [[ "$MODE" = uninstall ]] && cap="$IMAGE_CAP_UNINSTALL"
     while IFS= read -r line || [[ -n "$line" ]]; do
         [[ -z "$line" ]] && continue
         if [[ "$MODE" != uninstall && -n "$prev" && "$line" = "$prev"* ]]; then
@@ -2188,10 +2192,14 @@ collect_post_scan_paths() {
         fi
         prev="$line" prev_checked=0 prev_blocked=0
         kept=$((kept + 1))
-        if [[ "$kept" -le 50 || "$MODE" = uninstall ]]; then extra_paths_append "${line%/}"; fi
+        if [[ "$kept" -le "$cap" ]]; then extra_paths_append "${line%/}"; fi
     done < "$tmp"
-    if [[ "$kept" -gt 50 && "$MODE" != uninstall ]]; then
-        add_report_line "LIMIT $MSG_IMAGE_LIMIT"
+    if [[ "$kept" -gt "$cap" ]]; then
+        if [[ "$MODE" = uninstall ]]; then
+            add_report_line "LIMIT $MSG_IMAGE_LIMIT_UNINSTALL"
+        else
+            add_report_line "LIMIT $MSG_IMAGE_LIMIT"
+        fi
     fi
     rm -f "$tmp"
     unregister_tmp_file "$tmp"

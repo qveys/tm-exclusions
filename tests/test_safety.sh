@@ -227,15 +227,34 @@ assert_file_lacks_regex "$TM_EXCLUSIONS_REPORT" '^WOULD .*\.vmdk ' \
     "covered disks are not planned on their own"
 rm -rf "$HOME/many"
 
-# Uninstall has no cap: 25 VM folders (50 candidates with their descendants) must not
-# starve an independent disk excluded alone, and LIMIT is never shown there.
+# Uninstall caps at 200, not 50: 25 VM folders (50 candidates with their descendants)
+# must not starve an independent disk excluded alone, and no LIMIT is shown below the cap.
 make_vms 25
 dd if=/dev/zero of="$HOME/zz-alone.vmdk" bs=1 count=0 seek=537919488 2>/dev/null
 TEST_EXCLUDED_PATH="$HOME/zz-alone.vmdk" run 0 --uninstall --dry-run
 assert_file_contains "$TM_EXCLUSIONS_REPORT" "WOULD_REMOVE $HOME/zz-alone.vmdk" \
     "uninstall reaches an independent disk past 50 candidates"
-assert_true "uninstall never reports LIMIT" not grep -Fq 'LIMIT' "$TM_EXCLUSIONS_REPORT"
+assert_true "uninstall below its cap reports no LIMIT" not grep -Fq 'LIMIT' "$TM_EXCLUSIONS_REPORT"
 rm -rf "$HOME/many" "$HOME/zz-alone.vmdk"
+
+# Past 200 distinct candidates uninstall discloses LIMIT and keeps 200. Discovery only
+# (processing 200 paths is slow), run from a sourced temp copy of the script.
+mkdir -p "$HOME/lots"
+for ((i = 0; i < 201; i++)); do mkdir "$HOME/lots/d$i.sparsebundle"; done
+sed '/^main /d' "$ROOT/tm_exclusions.sh" > "$TEST_DIR/functions.sh"
+for mode in uninstall apply; do
+    expected=50
+    [[ "$mode" = uninstall ]] && expected=200
+    out="$(bash -c 'set -euo pipefail
+        source "$1"; source "$2/locales/en.sh"; declare_i18n_en
+        CONF_SCAN_IMAGES=1 MODE="$3"
+        collect_post_scan_paths
+        printf "%s\n" "$EXTRA_PATHS" | grep -c sparsebundle
+        printf "%s\n" "$REPORT_LINES" | grep -c "^LIMIT "' _ "$TEST_DIR/functions.sh" "$ROOT" "$mode")"
+    assert_eq "$expected
+1" "$out" "$mode discovery keeps $expected of 201 candidates and reports LIMIT once"
+done
+rm -rf "$HOME/lots"
 
 # Uninstall must still offer a disk excluded alone by an older version, even though
 # exclusion mode now covers it with its VM folder (Box/Box.vbox) or bundle (X.utm).
