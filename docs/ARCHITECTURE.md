@@ -264,7 +264,7 @@ The current architecture (config-driven, function-based) supports these addition
 
 ## Default rule catalog
 
-`config/default.conf` contains 100+ active rules organized under 17 category labels.
+`config/default.conf` contains 100+ active rules organized under `#@` category labels.
 Mixed roots and generic `build`/`dist` patterns ship commented out as opt-in examples.
 The active catalog keeps focused caches and dependencies. Docker state, `/opt/homebrew`,
 Pulumi state, Xcode Archives, CoreSimulator Devices, IDE workspaceStorage, agent
@@ -341,7 +341,7 @@ The `TM_EXCLUSIONS_EXTRA_CONF` loader requires the value to be **both a regular 
 
 The smoke test suite (`tests/smoke.bats-like.sh`) guards these catalog invariants:
 - ≥ 100 active rules (path/pattern/prune lines).
-- Exactly 17 distinct `#@` category labels.
+- The number of distinct `#@` category labels equals `EXPECTED_CATEGORY_COUNT` in the smoke test (a single constant that `scripts/add-category.sh` bumps).
 - Three section banners present (`# ── STATIC EXCLUSIONS (path) ──`, `# ── DYNAMIC SCAN PATTERNS (pattern) ──`, `# ── SCAN PRUNE ZONES (prune) ──`); the smoke test matches them by prefix.
 - No rule uses the `~/` home prefix (must be `$HOME/`).
 - Every rule sits under a `#@` marker.

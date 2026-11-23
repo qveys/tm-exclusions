@@ -109,7 +109,7 @@ debug logs always remain plain text. No extra dependencies are required.
 
 | | Feature | Details |
 |---|---|---|
-| 📦 | **Built-in rules** | 100+ active rules across 17 categories, plus opt-in examples (Node.js, Python, Rust, Java, Xcode, AI/LLM, Docker, Homebrew, …) |
+| 📦 | **Built-in rules** | 100+ active rules across the built-in categories, plus opt-in examples (Node.js, Python, Rust, Java, Xcode, AI/LLM, Docker, Homebrew, …) |
 | 🔍 | **Dynamic scan** | Recursively finds `node_modules`, `.venv`, `__pycache__`, tool-specific build caches |
 | 🔒 | **Dual tmutil strategy** | User paths via `tmutil addexclusion`; system paths via `sudo tmutil ... -p` |
 | 🌍 | **Multilingual** | French / English (auto-detected from `$LANG`) |
@@ -162,7 +162,7 @@ Config files are loaded, merged, then applied via a dual `tmutil` strategy (user
 > 💡 Most exclusions won't appear in System Settings → Time Machine. They're still active — verify with `tmutil isexcluded ~/Library/Caches`
 
 <details>
-<summary>📦 <strong>Built-in Categories</strong> (17 categories — see <code>config/default.conf</code> for the full list)</summary>
+<summary>📦 <strong>Built-in Categories</strong> (see <code>config/default.conf</code> for the full list)</summary>
 
 | Category | Examples |
 |---|---|

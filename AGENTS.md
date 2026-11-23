@@ -35,6 +35,7 @@ This file provides guidance to AI agentic LLM CLI tools when working with code i
   - `make test-summary`
 - Run the smoke test script directly:
   - `bash tests/smoke.bats-like.sh`
+- Scaffold a new category in `config/default.conf` (validated; `--dry-run` previews): `scripts/add-category.sh --name <Name> --add <type> <target> <reason> [--add …]`; see `CONTRIBUTING.md`.
 - Install locally:
   - `make install`
 - Uninstall:

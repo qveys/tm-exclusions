@@ -666,15 +666,17 @@ else
     printf '%b  FAIL%b default.conf has >=%d active rules (got %d)\n' "$RED" "$NC" "${MIN_ACTIVE_RULES}" "${RULE_COUNT}"
 fi
 
-# Distinct #@ category labels == 17
+# Distinct #@ category labels == EXPECTED_CATEGORY_COUNT. Single source of the
+# number; scripts/add-category.sh bumps this exact line when it adds a category.
+EXPECTED_CATEGORY_COUNT=17 # add-category: expected category count
 LABEL_COUNT=$({ grep -E '^#@' "${CONF}" || true; } | sort -u | wc -l | tr -d ' ')
 TESTS_RUN=$((TESTS_RUN + 1))
-if [[ "${LABEL_COUNT}" -eq 17 ]]; then
+if [[ "${LABEL_COUNT}" -eq "${EXPECTED_CATEGORY_COUNT}" ]]; then
     TESTS_PASSED=$((TESTS_PASSED + 1))
-    printf '%b  PASS%b default.conf has 17 distinct #@ category labels\n' "$GREEN" "$NC"
+    printf '%b  PASS%b default.conf has %d distinct #@ category labels\n' "$GREEN" "$NC" "${EXPECTED_CATEGORY_COUNT}"
 else
     TESTS_FAILED=$((TESTS_FAILED + 1))
-    printf '%b  FAIL%b default.conf has 17 distinct #@ category labels (got %d)\n' "$RED" "$NC" "${LABEL_COUNT}"
+    printf '%b  FAIL%b default.conf has %d distinct #@ category labels (got %d)\n' "$RED" "$NC" "${EXPECTED_CATEGORY_COUNT}" "${LABEL_COUNT}"
 fi
 
 # Three section markers exist

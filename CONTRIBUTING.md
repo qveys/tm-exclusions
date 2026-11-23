@@ -26,6 +26,16 @@ See [`AGENTS.md`](AGENTS.md) for the full architecture, build commands, and Bash
 
 Skip it for one commit with `git commit --no-verify`. There is no one-line permanent opt-out: any `make` invocation (even `make help`) sets `core.hooksPath` back to `.githooks` — reporting on stderr a different local value it replaces — and the fallback hooks installed by `make setup` in `.git/hooks` restore it on the next commit, checkout or merge, so `git config --unset core.hooksPath` only lasts until then. `TM_EXCLUSIONS_NO_HOOKS=1 make …` skips the automatic `make` bootstrap (an explicit `make setup` still installs the hooks); to disable the hooks for a clone, unset `core.hooksPath`, export `TM_EXCLUSIONS_NO_HOOKS=1` and delete the fallbacks in `$(git rev-parse --git-common-dir)/hooks`.
 
+## Adding an exclusion category
+
+```bash
+scripts/add-category.sh --dry-run --name "Deno" \
+  --add path '$HOME/.deno/cache' 'Deno cache — re-downloaded' \
+  --add pattern '.deno' 'Deno project cache'
+```
+
+Drop `--dry-run` to write it (run without `--name`/`--add` in a terminal to be prompted). The script validates the fields (`path`, `pattern`, `prune` or `keep`; no empty value, `|` or newline), refuses an existing category or rule, inserts the `#@Name` section into `config/default.conf` following its layout (`path`/`keep` before the pattern banner, `pattern` before the prune banner, `prune` at the end), and replaces the files only if `scripts/check-conf.sh`, `scripts/check-i18n.sh` and the checks below pass. A leading `~` is written as `$HOME`. Category names are not localized: the CLI prints the `#@` label as written (only "Uncategorized" is translated), so no `locales/*.sh` key is written. The script also bumps `EXPECTED_CATEGORY_COUNT` in `tests/smoke.bats-like.sh` (the single source of the category count) and, unless `--skip-tests` is given, runs `make check` (lint + tests) on a copy of the repository (next to the checkout, or under `$HOME` when the checkout itself is under `TMPDIR` or `/var/folders`) before touching any real file; the two real files are then overwritten in place and restored if anything fails, so they are both updated or both untouched; with `--skip-tests`, run `make check` yourself. Only one run may edit a tree at a time (`.add-category.lock`, taken through an `O_EXCL` guard file because some `mkdir` implementations, e.g. uutils coreutils, are not exclusive under a race). `config/default.conf` and the smoke test must be regular files (symbolic links are refused). Known limit: a signal in the few microseconds between creating the lock and recording its ownership, or a SIGKILL during the final restore, can leave a stale `.add-category.lock` or `.add-category.lock.guard` or an unrestored file; remove them by hand and check `git status`.
+
 ## Commit style
 
 Conventional Commits with a leading emoji, enforced by the local [`commit-msg`](.githooks/commit-msg) hook (active when `core.hooksPath = .githooks`, set up by `make setup`). Examples:
