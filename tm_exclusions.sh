@@ -1018,8 +1018,12 @@ ensure_tmp_dir() {
     # Resolve TMPDIR once to its physical path: if it is a symbolic link that is
     # retargeted while mktemp runs, the directory is still found (and removed)
     # where it was really created.
-    if phys="$(cd -- "$base" 2>/dev/null && pwd -P)"; then
-        case "$phys" in *[[:cntrl:]]*) ;; *) base="$phys" ;; esac
+    # The sentinel keeps $(...) from eating trailing newlines of the path; a
+    # physical path holding a control character falls back to /tmp like a raw one.
+    if phys="$(cd -- "$base" 2>/dev/null && pwd -P && printf x)"; then
+        phys="${phys%x}"
+        phys="${phys%$'\n'}"
+        case "$phys" in *[[:cntrl:]]*) base=/tmp ;; *) base="$phys" ;; esac
     fi
     saved_int="$(trap -p INT)"
     saved_term="$(trap -p TERM)"
