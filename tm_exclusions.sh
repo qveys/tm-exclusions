@@ -1013,7 +1013,7 @@ $f"
 TMP_PENDING_SIG=""
 ensure_tmp_dir() {
     [[ -n "${TMP_DIR}" ]] && return 0
-    local base="${TMPDIR:-/tmp}" phys="" d="" s saved_int saved_term saved_hup
+    local base="${TMPDIR:-/tmp}" cdir="" phys="" d="" s saved_int saved_term saved_hup
     case "$base" in *[[:cntrl:]]*) base=/tmp ;; esac
     # Resolve TMPDIR once to its physical path: if it is a symbolic link that is
     # retargeted while mktemp runs, the directory is still found (and removed)
@@ -1022,7 +1022,10 @@ ensure_tmp_dir() {
     # physical path holding a control character falls back to /tmp like a raw one.
     # CDPATH is emptied for this cd: with CDPATH=. a relative TMPDIR makes cd print
     # the resolved path itself, which would corrupt the captured output.
-    if phys="$(CDPATH='' cd -P -- "$base" >/dev/null 2>&1 && pwd -P && printf x)"; then
+    # A relative path gets a ./ prefix: `cd -- -` still means $OLDPWD in Bash 5.
+    cdir="$base"
+    case "$cdir" in /*) ;; *) cdir="./$cdir" ;; esac
+    if phys="$(CDPATH='' cd -P -- "$cdir" >/dev/null 2>&1 && pwd -P && printf x)"; then
         phys="${phys%x}"
         phys="${phys%$'\n'}"
         case "$phys" in *[[:cntrl:]]*) base=/tmp ;; *) base="$phys" ;; esac
