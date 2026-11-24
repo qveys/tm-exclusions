@@ -466,8 +466,8 @@ assert_eq unsafe "$(unsafe_rc "$B_HOME/c/alias-abs/inner")" "child of an alias t
 echo ""
 echo "--- Non-regression: normalize_path and path sets behave exactly as on master ---"
 # Frozen verbatim copies of origin/master's normalize_path and du_track_path
-# (641ae3d), renamed ref_*: the production functions must give the same output
-# AND exit status on a battery of inputs. Committed copies: no git needed in CI.
+# (641ae3d), renamed ref_*: compare normalization output and status, then
+# compare the finalized path sets. Committed copies: no git needed in CI.
 B_REF="$TEST_HOME/ref.sh"
 cat > "$B_REF" <<'REFEOF'
 ref_normalize_path() {
@@ -540,16 +540,17 @@ pwdfail_rc() {
 }
 assert_eq 1 "$(pwdfail_rc ref_normalize_path)" "reference: failing pwd -> exit 1"
 assert_eq 1 "$(pwdfail_rc normalize_path)" "normalize_path: failing pwd -> exit 1 (like master)"
-# DU_PATHS bookkeeping: same set as master's du_track_path for ordinary paths
+# DU_PATHS bookkeeping: compare the ordered sets after all paths are tracked.
 du_paths_run() {
     bash -c '
         source "$1"; source "$2"; fn="$3"; shift 3; DU_PATHS=""
         for x in "$@"; do "$fn" "$x"; done
+        if [[ "$fn" = du_track_path ]]; then finalize_du_paths; fi
         printf "%q\n" "$DU_PATHS"' _ "$B_FUNCS" "$B_REF" "$1" \
         "$B_HOME/c/sz100/sz50" "$B_HOME/c/sz100" "$B_HOME/c/lnk" "$B_HOME/c/target-dir/sub" "$B_HOME/c/with space" \
         "$B_HOME/c/missing" "$B_HOME/c/sz1024" "$B_HOME/c/../c/sz1024"
 }
-assert_eq "$(du_paths_run ref_du_track_path)" "$(du_paths_run du_track_path)" "du_track_path keeps master's DU_PATHS set for ordinary paths"
+assert_eq "$(du_paths_run ref_du_track_path)" "$(du_paths_run du_track_path)" "the finalized DU_PATHS set matches master for ordinary paths"
 
 echo ""
 echo "--- Security: keep protects an alias to a newline-named directory (as master) ---"
