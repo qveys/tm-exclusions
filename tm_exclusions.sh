@@ -84,6 +84,14 @@ DEBUG_LOG_FD=0
 # ---------------------------------------------------------------------------
 # i18n locale resolution
 # ---------------------------------------------------------------------------
+resolve_script_dir() {
+    local source_dir
+    source_dir="$(dirname -- "${BASH_SOURCE[0]}")" || return 1
+    # A bare "-" is special to cd even after --.
+    [[ "$source_dir" != -* ]] || source_dir="./$source_dir"
+    CDPATH='' cd -P -- "$source_dir" >/dev/null 2>&1 && pwd
+}
+
 # Finds the locales/ directory. Tries in order:
 #   1. TM_EXCLUSIONS_LOCALES_DIR env var (escape hatch for tests / unusual installs;
 #      ignored when running as root to avoid sourcing an untrusted path)
@@ -92,7 +100,7 @@ DEBUG_LOG_FD=0
 #   4. /usr/local/share, /opt/homebrew/share, /usr/share (Homebrew / system install roots)
 resolve_locales_dir() {
     local script_dir candidate
-    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    script_dir="$(resolve_script_dir)"
 
     # Env-var override takes precedence when set, but only for non-root runs.
     # Under `sudo -E`, allowing this variable to control a `source`d path would be
@@ -1181,7 +1189,7 @@ resolve_default_conf() {
         return 0
     fi
 
-    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    script_dir="$(resolve_script_dir)"
     for candidate in \
         "${script_dir}/config/default.conf" \
         "${script_dir}/../share/tm-exclusions/default.conf" \
