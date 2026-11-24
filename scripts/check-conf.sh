@@ -14,7 +14,11 @@
 # Bash 3.2+ compatible (macOS stock bash).
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(
+    source_dir="$(dirname -- "${BASH_SOURCE[0]}")" || exit 1
+    [[ "$source_dir" != -* ]] || source_dir="./$source_dir"
+    CDPATH='' cd -P -- "${source_dir}/.." >/dev/null 2>&1 && pwd
+)"
 ERRORS=0
 FILES=0
 
