@@ -37,7 +37,11 @@ STUB
 chmod +x "$TEST_HOME/bin/"*
 export PATH="$TEST_HOME/bin:$PATH"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(
+    source_dir="$(dirname -- "${BASH_SOURCE[0]}")" || exit 1
+    [[ "$source_dir" != -* ]] || source_dir="./$source_dir"
+    CDPATH='' cd -P -- "${source_dir}" >/dev/null 2>&1 && pwd
+)"
 # shellcheck source=tests/test_helpers.sh
 source "${SCRIPT_DIR}/test_helpers.sh"
 
@@ -61,6 +65,27 @@ assert_exit_code 0 \
 assert_output_contains "Usage:" \
     "--help shows usage line" \
     bash "$TM_EXCLUSIONS" --help
+
+pushd -- "$ROOT/.." >/dev/null
+RELATIVE_CLI="${ROOT##*/}/tm_exclusions.sh"
+
+assert_exit_code 0 \
+    "relative --help with CDPATH exits 0" \
+    env CDPATH="$PWD" "$BASH" -- "$RELATIVE_CLI" --help
+
+assert_output_contains "Usage:" \
+    "relative --help with CDPATH shows usage" \
+    env CDPATH="$PWD" "$BASH" -- "$RELATIVE_CLI" --help
+
+assert_exit_code 0 \
+    "relative --lang en --help with CDPATH exits 0" \
+    env CDPATH="$PWD" "$BASH" -- "$RELATIVE_CLI" --lang en --help
+
+assert_output_contains "Usage:" \
+    "relative --lang en --help with CDPATH shows usage" \
+    env CDPATH="$PWD" "$BASH" -- "$RELATIVE_CLI" --lang en --help
+
+popd >/dev/null
 
 assert_exit_code 0 \
     "-h exits 0 (alias for --help)" \
