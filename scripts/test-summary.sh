@@ -20,7 +20,11 @@
 
 set -uo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(
+    source_dir="$(dirname -- "${BASH_SOURCE[0]}")" || exit 1
+    [[ "$source_dir" != -* ]] || source_dir="./$source_dir"
+    CDPATH='' cd -P -- "${source_dir}/.." >/dev/null 2>&1 && pwd
+)"
 TAIL_LINES=15
 
 suites=()
