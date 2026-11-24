@@ -67,11 +67,11 @@ CONF_DESKTOP_REPORT=0
 REPORT_LINES=""
 # Same detail lines as REPORT_LINES, as "<category>\t<line>" records for grouping.
 REPORT_GROUPED=""
-RULE_SUMMARY=""
+RULE_SUMMARY="" # Rule context events, counted once at report generation.
 TM_LIST_STATUS="not-run"
 # Paths discovered after config (brew cache, large VM images); newline-separated
 EXTRA_PATHS=""
-# Unique existing paths for optional du summary in report
+# Normalized existing paths; deduplicated once for the optional du summary
 DU_PATHS=""
 SUDO_KEEPALIVE_PID=""
 # Temporary paths to remove on exit/signal, and the private work directory that
@@ -454,33 +454,15 @@ add_report_line() {
     update_rule_summary "$detail"
     if [[ -n "$RULE_CONTEXT" ]]; then detail="$detail [$RULE_CONTEXT]"; fi
     category_label
-    REPORT_GROUPED="${REPORT_GROUPED}${CATEGORY_LABEL}"$'\t'"${detail//$'\n'/ }"$'\n'
-    if [[ -z "${REPORT_LINES}" ]]; then
-        REPORT_LINES="$detail"
-    else
-        REPORT_LINES="${REPORT_LINES}
-$detail"
-    fi
+    REPORT_GROUPED+="${CATEGORY_LABEL}"$'\t'"${detail//$'\n'/ }"$'\n'
+    [[ -z "$REPORT_LINES" ]] || REPORT_LINES+=$'\n'
+    REPORT_LINES+="$detail"
 }
 
+# Keep events in order; aggregate once when the final report is generated.
 update_rule_summary() {
-    local action="$1" key="$RULE_CONTEXT" line count found=0 new_summary=""
-    [[ -z "$key" ]] && return 0
-    action="${action%% *}"
-    while IFS=$'\t' read -r line count; do
-        [[ -z "$line" ]] && continue
-        if [[ "$line" = "$key" ]]; then
-            count=$((count + 1))
-            found=1
-        fi
-        new_summary="${new_summary}${line}"$'\t'"${count}"$'\n'
-    done <<EOF
-${RULE_SUMMARY}
-EOF
-    if [[ "$found" -eq 0 ]]; then
-        new_summary="${new_summary}${key}"$'\t1\n'
-    fi
-    RULE_SUMMARY="$new_summary"
+    [[ -n "$RULE_CONTEXT" ]] || return 0
+    RULE_SUMMARY+="${RULE_CONTEXT}"$'\n'
 }
 
 # Size measurement only (never called by keep/exclusion/uninstall guards).
@@ -552,44 +534,39 @@ size_path_unsafe() {
     return "$rc"
 }
 
-# Track paths for optional du summary (dedupe; Bash 3.2 — no associative arrays)
+# Each path is normalized once; parent/duplicate collapse is deferred to reporting.
 du_track_path() {
     local p="$1"
     [[ -z "$p" || ! -e "$p" ]] && return 0
     # Size bookkeeping only: never record a name whose measurement would hit the
     # wrong directory (#44).
     if [[ "$SIZE_UNSAFE_NOW" -eq 1 ]]; then return 0; fi
-    DU_PATHS="$(path_set_add "$DU_PATHS" "$p")"
+    p="$(normalize_path "$p")" || return 0
+    DU_PATHS+="${p}"$'\n'
 }
 
-# Prints the newline-separated path set $1 with $2 merged in. Compare physical
-# spellings: symlinked and `..`-relative duplicates must not inflate a total,
-# and stored entries are normalized on the way in too. A path already covered
-# by a stored ancestor is not added; stored descendants of $2 are dropped.
-# Same logic as the former inline du_track_path (used only by it); it makes no
-# newline decision: du_track_path skips unsafe names first (size_path_unsafe).
-path_set_add() {
-    local set="$1" p="$2" entry normalized retained=""
-    if ! p="$(normalize_path "$p")"; then
-        printf '%s' "$set"
-        return 0
-    fi
-    while IFS= read -r entry; do
-        [[ -z "$entry" ]] && continue
-        normalized="$entry"
-        if [[ -e "$entry" ]]; then
-            normalized="$(normalize_path "$entry")" || normalized="$entry"
-        fi
-        if path_under "$p" "$normalized"; then
-            printf '%s' "$set"
-            return 0
-        fi
-        if ! path_under "$normalized" "$p"; then retained="${retained}${normalized}
-"; fi
-    done <<EOF
-${set}
+# Collapse duplicate and descendant paths once, before the du summary is built.
+finalize_du_paths() {
+    DU_PATHS="$(awk '
+        NF { paths[++n] = $0; seen[$0] = 1 }
+        END {
+            for (i = 1; i <= n; i++) {
+                p = paths[i]
+                if (emitted[p]++) continue
+                parent = p
+                covered = 0
+                while (parent != "/") {
+                    sub(/\/[^\/]*$/, "", parent)
+                    if (parent == "") parent = "/"
+                    if (parent in seen) { covered = 1; break }
+                }
+                if (!covered) print p
+            }
+        }
+    ' <<EOF
+${DU_PATHS}
 EOF
-    printf '%s%s' "$retained" "$p"
+)"
 }
 
 # Paths newly excluded (or that would be, in dry-run/audit) by this run, for the
@@ -1331,13 +1308,12 @@ tm_remove_exclusion() {
 append_conf_path() {
     local p="$1"
     [[ -z "$p" ]] && return 0
-    CONF_RULES="${CONF_RULES}path|${p}|${RULE_CATEGORY}|${RULE_CONTEXT}
+    CONF_RULES+="path|${p}|${RULE_CATEGORY}|${RULE_CONTEXT}
 "
     if [[ -z "${CONF_PATHS}" ]]; then
         CONF_PATHS="${p}"
     else
-        CONF_PATHS="${CONF_PATHS}
-${p}"
+        CONF_PATHS+=$'\n'"${p}"
     fi
 }
 
@@ -2101,15 +2077,36 @@ apply_static_paths() {
     fi
 
     progress_start "${CONF_PATHS}"
-    local static_path
-    while IFS= read -r static_path; do
-        [[ -z "$static_path" ]] && continue
-
-        set_rule_context path "$static_path"
+    local static_path static_category static_context static_rules
+    # Index the first category/context once, then emit a path and a metadata line
+    # for each CONF_PATHS entry. Expanded glob matches can contain "|".
+    static_rules="$(awk -F '|' '
+        FILENAME != "-" {
+            if ($1 == "path" && !($2 in categories)) {
+                categories[$2] = $3
+                context = $0
+                sub(/^[^|]*[|][^|]*[|][^|]*[|]/, "", context)
+                contexts[$2] = context
+            }
+            next
+        }
+        length {
+            print $0
+            print categories[$0] "|" contexts[$0]
+        }
+    ' /dev/fd/3 - 3<<RULES <<PATHS
+${CONF_RULES}
+RULES
+${CONF_PATHS}
+PATHS
+)"
+    while IFS= read -r static_path && IFS='|' read -r static_category static_context; do
+        RULE_CATEGORY="$static_category"
+        RULE_CONTEXT="$static_context"
         process_path "$static_path"
         progress_step
     done <<EOF
-${CONF_PATHS}
+${static_rules}
 EOF
     flush_path_results
 }
@@ -2686,6 +2683,7 @@ generate_report() {
         excluded_label="${MSG_REPORT_NEED_EXCLUSION}"
     fi
 
+    finalize_du_paths
     du_sec=""
     size_total_line=""
     size_total_disp=""
@@ -2710,8 +2708,7 @@ generate_report() {
                 ''|*[!0-9]*) continue ;;
             esac
             sh="$(format_size_kb "$szk")"
-            du_sec="${du_sec}
-${sh}	${p}"
+            du_sec+=$'\n'"${sh}"$'\t'"${p}"
         done <<EOF
 ${DU_PATHS}
 EOF
@@ -2812,12 +2809,15 @@ ${raw_list}"
 
 === ${MSG_REPORT_RULE_SUMMARY} ==="
     if [[ -n "$RULE_SUMMARY" ]]; then
-        while IFS=$'\t' read -r key count; do
-            [[ -z "$key" ]] && continue
-            report="${report}"$'\n'"${count}"$'\t'"${key}"
-        done <<EOF
+        local summary
+        summary="$(awk '
+            NF { if (!($0 in counts)) keys[++n] = $0; counts[$0]++ }
+            END { for (i = 1; i <= n; i++) printf "%d\t%s\n", counts[keys[i]], keys[i] }
+        ' <<EOF
 ${RULE_SUMMARY}
 EOF
+)"
+        report+=$'\n'"${summary}"
     else
         report="${report}
 ${MSG_REPORT_RULE_SUMMARY_EMPTY}"

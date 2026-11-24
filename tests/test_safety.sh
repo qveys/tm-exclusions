@@ -357,6 +357,26 @@ run 0 --lang fr --dry-run
 assert_file_contains "$TM_EXCLUSIONS_REPORT" 'preserve state' \
     "the added keep rule survives a localized run"
 
+# Resolve static rules in catalog order without splitting expanded glob matches.
+mkdir -p "$HOME/duplicate" "$HOME/pipe" "$HOME/pipe|literal"
+cat > "$TM_EXCLUSIONS_DEFAULT_CONF" <<'CONF'
+#@First category
+path|$HOME/duplicate|first reason
+#@Second category
+path|$HOME/duplicate|second reason
+path|$HOME/pipe*literal|literal glob
+CONF
+run 0 --dry-run
+assert_file_contains "$TEST_CALLS" "isexcluded $HOME/pipe|literal" \
+    "a static glob preserves a pipe in the matched path"
+assert_file_lacks_regex "$TEST_CALLS" '^isexcluded .*/pipe$' \
+    "a static glob never checks the truncated path"
+assert_file_contains "$TM_EXCLUSIONS_REPORT" \
+    "$(printf '2\t%s:2 | path|%s/duplicate | first reason' "$TM_EXCLUSIONS_DEFAULT_CONF" "$HOME")" \
+    "duplicate static rules aggregate under the first context"
+assert_file_lacks_regex "$TM_EXCLUSIONS_REPORT" 'second reason' \
+    "duplicate static rules never switch to the second context"
+
 # Literal keeps support root and symlink/dot spellings; nested du entries count once.
 # Temp file (removed with TEST_DIR by the EXIT trap), never `source <(...)`:
 # that defines nothing under Bash 3.2.
@@ -371,10 +391,12 @@ DU_PATHS=""
 du_track_path "$HOME/project/cache/saved"
 du_track_path "$HOME/project"
 du_track_path "$HOME/project/other/cache"
+finalize_du_paths
 assert_eq "$PHYSICAL_PROJECT" "$DU_PATHS" "nested du entries collapse into their parent"
 DU_PATHS=""
 du_track_path "$HOME/project/other/cache"
 du_track_path "$HOME/cache-alias/saved"
+finalize_du_paths
 assert_eq "$(printf '%s\n%s' \
     "$(normalize_path "$HOME/project/other/cache")" \
     "$(normalize_path "$HOME/project/cache/saved")")" "$DU_PATHS" \
@@ -382,8 +404,32 @@ assert_eq "$(printf '%s\n%s' \
 DU_PATHS=""
 du_track_path "$HOME/project"
 du_track_path "$HOME/cache-alias/saved"
+finalize_du_paths
 assert_eq "$PHYSICAL_PROJECT" "$DU_PATHS" \
     "a physical parent absorbs its symlinked descendants"
+# Accounting must normalize each candidate once, independent of paths already seen.
+NORMALIZE_CALLS="$TEST_DIR/normalize_calls"
+eval "$(declare -f normalize_path | sed '1s/normalize_path/original_normalize_path/')"
+normalize_path() {
+    printf '%s\n' "$1" >> "$NORMALIZE_CALLS"
+    original_normalize_path "$@"
+}
+for candidate_count in 8 16; do
+    DU_PATHS=""
+    : > "$NORMALIZE_CALLS"
+    for ((candidate=0; candidate<candidate_count; candidate++)); do
+        candidate_path="$HOME/accounting/path$candidate"
+        mkdir -p "$candidate_path"
+        du_track_path "$candidate_path"
+    done
+    finalize_du_paths
+    assert_eq "$candidate_count" "$(wc -l < "$NORMALIZE_CALLS" | tr -d ' ')" \
+        "du accounting normalizes $candidate_count siblings exactly once each"
+done
+eval "$(declare -f original_normalize_path | sed '1s/original_normalize_path/normalize_path/')"
+unset -f original_normalize_path
+DU_PATHS=""
+
 CONF_KEEPS="$(normalize_path "$HOME/cache-alias/../cache/saved")"
 assert_true "keep blocks its parent" keep_blocks "$HOME/project/cache"
 assert_true "keep ignores unrelated siblings" not keep_blocks "$HOME/project/other/cache"
