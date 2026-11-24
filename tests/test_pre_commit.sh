@@ -9,7 +9,11 @@
 
 set -euo pipefail
 
-PRE_COMMIT_TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PRE_COMMIT_TEST_DIR="$(
+    source_dir="$(dirname -- "${BASH_SOURCE[0]}")" || exit 1
+    [[ "$source_dir" != -* ]] || source_dir="./$source_dir"
+    CDPATH='' cd -P -- "${source_dir}" >/dev/null 2>&1 && pwd
+)"
 # shellcheck source=tests/test_helpers.sh
 source "${PRE_COMMIT_TEST_DIR}/test_helpers.sh"
 

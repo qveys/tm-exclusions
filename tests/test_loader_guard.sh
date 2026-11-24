@@ -14,7 +14,11 @@
 # `/bin/bash tests/test_loader_guard.sh` exercises Bash 3.2.
 set -euo pipefail
 
-GUARD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GUARD_DIR="$(
+    source_dir="$(dirname -- "${BASH_SOURCE[0]}")" || exit 1
+    [[ "$source_dir" != -* ]] || source_dir="./$source_dir"
+    CDPATH='' cd -P -- "${source_dir}" >/dev/null 2>&1 && pwd
+)"
 # shellcheck source=tests/test_helpers.sh
 source "${GUARD_DIR}/test_helpers.sh"
 

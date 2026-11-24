@@ -24,7 +24,11 @@
 # Bash 3.2+ compatible (macOS stock bash), GNU/Linux userland.
 set -euo pipefail
 
-SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SELF_DIR="$(
+    source_dir="$(dirname -- "${BASH_SOURCE[0]}")" || exit 1
+    [[ "$source_dir" != -* ]] || source_dir="./$source_dir"
+    CDPATH='' cd -P -- "${source_dir}" >/dev/null 2>&1 && pwd
+)"
 ROOT="$(cd "${SELF_DIR}/.." && pwd)"
 LF=$'\n'
 SMOKE_REL="tests/smoke.bats-like.sh"
@@ -114,7 +118,7 @@ cleanup() {
 make_work_dir() {
   local real tmp=""
   WORK=""
-  real="$(cd "$(dirname "${ROOT%/}")" 2>/dev/null && pwd -P)" || real=""
+  real="$(CDPATH='' cd -P -- "$(dirname -- "${ROOT%/}")" >/dev/null 2>&1 && pwd)" || real=""
   if [[ -n "${TMPDIR:-}" ]]; then tmp="$(cd "$TMPDIR" 2>/dev/null && pwd -P)" || tmp=""; fi
   if [[ -n "$real" && "${real}/" != /var/folders/* && "${real}/" != /private/var/folders/* &&
     ( -z "$tmp" || "${real}/" != "${tmp}/"* ) ]]; then

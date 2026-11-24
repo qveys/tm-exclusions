@@ -8,7 +8,11 @@
 # logs their arguments and tees the raw output of the single pass.
 set -euo pipefail
 
-SCAN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCAN_DIR="$(
+    source_dir="$(dirname -- "${BASH_SOURCE[0]}")" || exit 1
+    [[ "$source_dir" != -* ]] || source_dir="./$source_dir"
+    CDPATH='' cd -P -- "${source_dir}" >/dev/null 2>&1 && pwd
+)"
 # shellcheck source=tests/test_helpers.sh
 source "${SCAN_DIR}/test_helpers.sh"
 

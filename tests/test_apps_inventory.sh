@@ -10,7 +10,11 @@
 # /Applications content is required and no real du ever walks an app.
 set -euo pipefail
 
-APPS_TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APPS_TEST_DIR="$(
+    source_dir="$(dirname -- "${BASH_SOURCE[0]}")" || exit 1
+    [[ "$source_dir" != -* ]] || source_dir="./$source_dir"
+    CDPATH='' cd -P -- "${source_dir}" >/dev/null 2>&1 && pwd
+)"
 # shellcheck source=tests/test_helpers.sh
 source "${APPS_TEST_DIR}/test_helpers.sh"
 

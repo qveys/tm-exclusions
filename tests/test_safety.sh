@@ -2,7 +2,11 @@
 # Regression checks: isolated HOME and fake commands, never real Time Machine.
 set -euo pipefail
 # Resolve the repo root before sourcing: test_helpers.sh reuses SCRIPT_DIR for it.
-SAFETY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SAFETY_DIR="$(
+    source_dir="$(dirname -- "${BASH_SOURCE[0]}")" || exit 1
+    [[ "$source_dir" != -* ]] || source_dir="./$source_dir"
+    CDPATH='' cd -P -- "${source_dir}" >/dev/null 2>&1 && pwd
+)"
 # shellcheck source=tests/test_helpers.sh
 source "${SAFETY_DIR}/test_helpers.sh"
 
