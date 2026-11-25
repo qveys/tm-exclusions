@@ -52,7 +52,7 @@ Targets may use leading `~` (expanded to `$HOME`) or the literal substring `$HOM
 
 ## Scan Logic
 
-Dynamic scanning walks `$HOME` with a single `find` — `-maxdepth 6` keeps execution time practical — that ORs every configured pattern into one expression: `find $HOME -maxdepth 6 -type d \( -name p1 -o -name p2 … \)`. One traversal of the tree discovers all patterns at once (#50); there is deliberately no `-prune`, because the old per-pattern walks kept descending into matched directories (nested matches such as `node_modules/.pnpm/*/node_modules` must still be discovered, notably in uninstall mode). The `scan_dynamic_patterns()` function then uses a two-phase approach to collect and process matches:
+Dynamic scanning walks `$HOME` with a single `find` — `-maxdepth 6` keeps execution time practical — that ORs every configured pattern into one expression: `find $HOME -maxdepth 6 -type d \( -name p1 -o -name p2 … \)`. One traversal of the tree discovers all patterns at once (#50), and the traversal itself is pruned in three layers (#13, see [Scan pruning layers](#scan-pruning-layers)) so subtrees whose matches would be discarded anyway are never walked. The `scan_dynamic_patterns()` function then uses a two-phase approach to collect and process matches:
 
 **Phase 1: Collect**  
 The single consolidated `find` locates every directory matching any configured pattern. Each discovered directory is tagged with every configured pattern whose glob matches its basename (the same `(dir, pattern)` pairs the per-pattern `find -name <pattern>` calls produced), written tab-separated to a temporary file. All patterns are collected before any processing begins.
@@ -72,11 +72,31 @@ A temporary file (`kept_file`) tracks all paths that have been kept. This file i
 - `path_under(descendant, ancestor)`: Returns 0 if `descendant` is the same as or under `ancestor`. Uses a quoted case pattern so paths with glob metacharacters (`*`, `[`, `?`) are matched literally.
 - `is_covered_by_kept(check, kept_file)`: Returns 0 if `check` is covered by any entry in the kept-paths file (i.e., if any kept path is a prefix of `check`).
 
+## Scan pruning layers
+
+The scan used to filter after discovery: `find` walked every directory under `$HOME` (down to depth 6) and the results were then dropped by the prune zones and the kept-prefix check. Since #13 the `find` expression itself stops descending where the post-filters are guaranteed to drop everything below, in three layers. Each layer only skips subtrees whose matches the filters would discard, so the set of excluded paths is identical to the full traversal; the post-filters (`pattern_match_allowed`, `is_pruned`, `keep_blocks`, `is_covered_by_kept`) are unchanged and stay as the safety net.
+
+| Layer | Expression | Skips | Active |
+|-------|------------|-------|--------|
+| 1. Prune zones | `-path <zone> -print -prune` | everything under each existing `prune` zone (`~/Library`, `~/.bun`, the `.bak`/`.old` shadow copies, …) | all modes, including `--uninstall` |
+| 2. Static exclusions | `-path <path> -prune` | everything under an existing `path` rule not blocked by a `keep` (the tree is excluded wholesale, so nested matches are redundant) | not in `--uninstall` |
+| 3. Unconditional matches | `-name <pattern> -print -prune` | everything below a directory matched by a pattern with no match guard (e.g. below `node_modules`: `.pnpm/*/node_modules`) | not in `--uninstall`, and only when no `keep` rule exists |
+
+- **Layer 1** prints each zone root once before pruning it; the scan reports one `Pruning (skipping scan of):` entry per zone root (and the grouped `Pruned:` counter counts zones). Before #13 it reported one entry per nested match, which the traversal no longer visits. The zone is still never excluded from Time Machine.
+- **Layer 2** reuses the kept-file seed of the prefix-prune (#23): a static path seeded there already covers all of its descendants, so descending adds nothing. Static paths protected by (or protecting) a `keep` are not seeded and not pruned.
+- **Layer 3** is limited to patterns that `pattern_match_allowed()` never rejects. Guarded patterns (`target`, `worktrees`, `site-packages`, listed in `pattern_is_guarded()`; a test keeps both lists in sync) may be dropped after discovery, so their subtrees keep being traversed. With any `keep` rule configured the layer is off: a `keep` decides per match whether a directory is excluded, so nothing can be assumed covered.
+- `--uninstall` bypasses the kept-prefix filter on purpose (every nested exclusion added by older versions must be removed individually), so only layer 1 applies there.
+- Only existing, shallow-enough (depth ≤ 6) directories that are not symbolic links become `-path` clauses; glob metacharacters in zone names are escaped. Anything else is simply handled by the post-filters.
+
+`TM_EXCLUSIONS_NO_SCAN_PRUNE=1` disables all three layers (old full traversal, per-match prune entries). It exists to measure and to roll back.
+
+Reproducible before/after numbers: `scripts/measure-scan.sh` builds a fake tree under a temporary `HOME` (stub `tmutil`, `--dry-run`), counts the directories `find` evaluates and the wall time with and without pruning, and checks that the processed paths are identical (`--baseline PATH` compares against another checkout's script). `tests/test_scan_pruning.sh` proves parity (same `tmutil` calls, same order, apply / `--uninstall` / `keep`) and that pruned subtrees are never visited.
+
 ## Prune Logic
 
 Prune entries prevent the scanner from processing found directories under certain trees. For example, `prune|~/Library` prevents the tool from applying exclusions to `node_modules` directories inside `~/Library`, which are better handled by static path rules.
 
-Prune does NOT apply a Time Machine exclusion. It only filters the dynamic scan results. Within `scan_dynamic_patterns()`, the prune check (`is_pruned`) runs after `pattern_match_allowed` validation but before the prefix-prune (`is_covered_by_kept`). Paths under a prune zone emit a `MSG_PRUNE_SKIP` log message; paths pruned by prefix are dropped silently.
+Prune does NOT apply a Time Machine exclusion. It only keeps the dynamic scan out of the zone: `find` does not descend into it (layer 1 above), and `is_pruned` remains as a post-filter for anything that still reaches it. Each zone root emits one `MSG_PRUNE_SKIP` log message; paths pruned by prefix are dropped silently.
 
 Package-manager reinstalls often leave a sibling of a catalogued cache (e.g. `~/.bun.bak` next to `~/.bun`). Those trees are not covered by the live-path prune (`~/.bun` does not match `~/.bun.bak`), so the default catalog ships explicit prune zones for `.bak` / `.old` siblings of `.bun`, `.npm`, `.yarn`, `.pnpm-store`, and `.cargo` ([#25](https://github.com/qveys/tm-exclusions/issues/25)). This stops the `dist` / `node_modules` scan from emitting one exclusion per nested package without excluding the backup directory from Time Machine.
 
