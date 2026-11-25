@@ -817,7 +817,7 @@ else
     printf '%b  FAIL%b ~/.bun.bak should not emit exclusions, got %d\n' "$RED" "$NC" "${BAK_BUN_APPLY}"
 fi
 
-BAK_BUN_PRUNE=$(printf '%s\n' "${BAK_OUT}" | grep -cE "Pruning \(skipping scan of\):.*\.bun\.bak/" || true)
+BAK_BUN_PRUNE=$(printf '%s\n' "${BAK_OUT}" | grep -cE "Pruning \(skipping scan of\):.*\.bun\.bak(/|$)" || true)
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ "${BAK_BUN_PRUNE}" -ge 1 ]]; then
     TESTS_PASSED=$((TESTS_PASSED + 1))
@@ -2139,6 +2139,7 @@ mkdir -p "$BATCH_HOME/.config/tm_exclusions" "$BATCH_BIN" \
     "$BATCH_HOME/Git/repo-extra/node_modules" \
     "$BATCH_HOME/.tool/a/dist" "$BATCH_HOME/.tool/b/dist" \
     "$BATCH_HOME/.tool/pruned/a/dist" "$BATCH_HOME/.tool/pruned/b/dist" \
+    "$BATCH_HOME/.tool/pruned2/a/dist" \
     "$BATCH_HOME/already/cache"
 : > "$BATCH_HOME/.config/tm_exclusions/custom.conf"
 cat > "$BATCH_HOME/rules" <<'CONF'
@@ -2148,6 +2149,7 @@ path|$HOME/already/cache|existing exclusion
 pattern|node_modules|dependencies
 pattern|dist|build output
 prune|$HOME/.tool/pruned|skip archived build output
+prune|$HOME/.tool/pruned2|skip second archived build output
 CONF
 cat > "$BATCH_BIN/tmutil" <<'STUB'
 #!/bin/sh
@@ -2203,8 +2205,8 @@ assert_file_contains "$BATCH_HOME/report" \
     "saved report retains individual exclusions"
 assert_file_contains "$BATCH_HOME/report" "SKIP  $BATCH_HOME/missing-one (not found)" \
     "saved report retains missing static paths"
-assert_file_contains "$BATCH_HOME/report" "SKIP  $BATCH_HOME/.tool/pruned/a/dist" \
-    "saved report retains individual prune decisions"
+assert_file_contains "$BATCH_HOME/report" "SKIP  $BATCH_HOME/.tool/pruned (" \
+    "saved report retains one prune decision per zone (#13: nested matches are no longer visited)"
 assert_file_contains "$BATCH_HOME/report" "OK    $BATCH_HOME/already/cache" \
     "saved report retains already-excluded paths"
 sed '/^Date:/d' "$BATCH_HOME/report" > "$BATCH_HOME/report-reference"
@@ -2218,8 +2220,8 @@ for BATCH_FLAG in -v --verbose; do
         "$BATCH_FLAG restores missing-path lines"
     assert_file_contains "$BATCH_HOME/verbose" "Already excluded: $BATCH_HOME/already/cache" \
         "$BATCH_FLAG restores already-excluded lines"
-    assert_file_contains "$BATCH_HOME/verbose" "Pruning (skipping scan of): $BATCH_HOME/.tool/pruned/a/dist" \
-        "$BATCH_FLAG restores individual prune lines"
+    assert_file_contains "$BATCH_HOME/verbose" "Pruning (skipping scan of): $BATCH_HOME/.tool/pruned" \
+        "$BATCH_FLAG restores individual prune lines (one per zone, #13)"
     assert_file_lacks_regex "$BATCH_HOME/verbose" ' → ' "$BATCH_FLAG emits no grouped lines"
     sed '/^Date:/d' "$BATCH_HOME/report" > "$BATCH_HOME/report-current"
     assert_true "$BATCH_FLAG leaves saved report identical" \
