@@ -105,6 +105,30 @@ lines, but the full report on stdout. Saved reports retain every exclusion,
 prune decision and missing path, regardless of verbosity. Saved reports and
 debug logs always remain plain text. No extra dependencies are required.
 
+## 🖥️ Two-pane tmux interface (`--tmux`)
+
+On an **interactive terminal**, `--tmux` runs the tool inside a dedicated tmux
+session with two panes: the left pane shows the normal progress/status view, the
+right pane streams the debug log (the same `log_info` lines exposed by
+`TM_EXCLUSIONS_DEBUG_FIFO` on FD 5). The session runs on its own private socket,
+so it never touches an existing tmux session; both panes are removed when the
+run ends.
+
+- The flag only takes effect on an interactive TTY. With **stdout redirected**
+  (a pipe, a file) or under **`--quiet`**, the option is ignored and the run
+  behaves exactly as if `--tmux` had not been passed — no tmux is started.
+- If **`tmux` is not installed**, or the interface cannot be started, the tool
+  prints a notice on stderr and falls back to the normal run (same arguments,
+  same exit status, one scan only).
+- The left pane runs the same script with the same arguments (minus `--tmux`),
+  so the scan, exclusions and exit code are unchanged. The log pane is wired
+  through the existing `TM_EXCLUSIONS_DEBUG_FIFO`/FD 5 mechanism, so a
+  manually-set `TM_EXCLUSIONS_DEBUG_FIFO` is overridden in this mode.
+
+```bash
+tm-exclusions --tmux --dry-run
+```
+
 ## ✨ Features
 
 | | Feature | Details |
@@ -213,6 +237,7 @@ Other:
   --verbose, -v    Show each path instead of grouped summaries
   --quiet, -q      Quiet mode (no banner, no colors, no spinners)
   --desktop-report Write a report copy to ~/Desktop (default: off; avoids clutter on cron/launchd runs)
+  --tmux           Two-pane tmux interface (progress/status + debug log stream; requires tmux)
   --version        Show version
   --lang <fr|en>   Force language
   --help           Show help
