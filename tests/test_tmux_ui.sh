@@ -63,13 +63,30 @@ PTY_RUNNER="$WORK/pty_runner.py"
 if command -v python3 >/dev/null 2>&1; then
     HAVE_PTY=1
     cat > "$PTY_RUNNER" <<'PYEOF'
-import os, pty, sys, shutil
+import os, pty, sys, errno
 argv = sys.argv[1:]
 pid, fd = pty.fork()
 if pid == 0:
-    os.execvp(argv[0], argv)
+    try:
+        os.execvp(argv[0], argv)
+    except OSError:
+        os._exit(127)
     os._exit(127)
-shutil.copyfileobj(os.fdopen(fd, 'rb'), sys.stdout.buffer)
+
+# Drain the master pty to stdout until end-of-stream. On Linux, reading the
+# master after the slave side closes raises EIO instead of returning b""; that
+# is the normal end, not an error, and must not lose the child's exit status.
+while True:
+    try:
+        data = os.read(fd, 65536)
+    except OSError as exc:
+        if exc.errno == errno.EIO:
+            break
+        raise
+    if not data:
+        break
+    sys.stdout.buffer.write(data)
+
 _, status = os.waitpid(pid, 0)
 if os.WIFEXITED(status):
     sys.exit(os.WEXITSTATUS(status))

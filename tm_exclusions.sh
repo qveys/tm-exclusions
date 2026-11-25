@@ -1229,8 +1229,13 @@ tmux_launch() {
     local child_rc=1
     if [[ -s "$rc_file" ]]; then
         child_rc="$(cat "$rc_file" 2>/dev/null || echo 1)"
+        case "$child_rc" in ''|*[!0-9]*) child_rc=1 ;; esac
+    else
+        # The wrapper never wrote the inner status (attach-session returned
+        # without it, or the session died early): assume failure and say so.
+        child_rc=1
+        log_error "${MSG_TMUX_NO_STATUS}"
     fi
-    case "$child_rc" in ''|*[!0-9]*) child_rc=1 ;; esac
 
     tmux_cleanup
     TMUX_CHILD_RC="$child_rc"

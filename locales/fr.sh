@@ -95,6 +95,7 @@ declare_i18n_fr() {
     MSG_ERROR_NO_TMUTIL="Attention : tmutil introuvable. Mode simulation activé."
     MSG_TMUX_NOT_FOUND="tmux introuvable ; exécution sans l'interface à deux volets"
     MSG_TMUX_FALLBACK="Impossible de démarrer l'interface tmux ; exécution normale"
+    MSG_TMUX_NO_STATUS="Le wrapper tmux a terminé sans rapporter le code de sortie interne ; échec supposé"
     MSG_ERROR_EMPTY_REPORT_PATH="Attention : report_path vide à"
     MSG_ERROR_INVALID_DESKTOP_REPORT="Attention : valeur desktop_report invalide"
     MSG_ERROR_INVALID_DESKTOP_REPORT_HINT="(utiliser true/false, 1/0 ou yes/no)"
