@@ -128,12 +128,18 @@ run_once() {
             TMUTIL_LOG="$WORK/tmutil.$label" VISITED_LOG="$WORK/visited.$label" \
             TM_EXCLUSIONS_NO_SCAN_PRUNE="$noprune" TM_EXCLUSIONS_SKIP_INVENTORY=1 \
             TM_EXCLUSIONS_SKIP_DU=1 TM_EXCLUSIONS_REPORT="$WORK/report.$label" \
-            bash "$script" --dry-run -q > /dev/null 2>&1 || true
+            bash "$script" --dry-run -q > "$WORK/run.$label.log" 2>&1 || {
+                cat "$WORK/run.$label.log" >&2
+                return 1
+            }
     else
         env HOME="$HOME_DIR" PATH="$BIN:$PATH" TMUTIL_LOG="$WORK/tmutil.$label" \
             TM_EXCLUSIONS_NO_SCAN_PRUNE="$noprune" TM_EXCLUSIONS_SKIP_INVENTORY=1 \
             TM_EXCLUSIONS_SKIP_DU=1 TM_EXCLUSIONS_REPORT="$WORK/report.$label" \
-            bash "$script" --dry-run -q > /dev/null 2>&1 || true
+            bash "$script" --dry-run -q > "$WORK/run.$label.log" 2>&1 || {
+                cat "$WORK/run.$label.log" >&2
+                return 1
+            }
     fi
     t1="$(now)"
     perl -e 'printf "%.2f\n", $ARGV[1] - $ARGV[0]' "$t0" "$t1" 2>/dev/null || echo "$((t1 - t0))"
@@ -142,7 +148,7 @@ run_once() {
 best_time() {
     local label="$1" script="$2" noprune="$3" best="" t i=1
     while [[ "$i" -le "$REPEAT" ]]; do
-        t="$(run_once "$label" "$script" "$noprune" 0)"
+        t="$(run_once "$label" "$script" "$noprune" 0)" || return 1
         if [[ -z "$best" ]] || perl -e 'exit !($ARGV[0] < $ARGV[1])' "$t" "$best" 2>/dev/null; then best="$t"; fi
         i=$((i + 1))
     done

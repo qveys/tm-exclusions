@@ -139,7 +139,7 @@ run_scan() {
     reset_logs
     env HOME="$h" TM_EXCLUSIONS_DEFAULT_CONF="$conf" \
         TM_EXCLUSIONS_NO_SCAN_PRUNE="$noprune" "$shbin" "$TM_EXCLUSIONS" -q "$@" \
-        > "$TEST_DIR/out.$label" 2>&1 || true
+        > "$TEST_DIR/out.$label" 2>&1
     grep -E '^(addexclusion|removeexclusion) ' "$TEST_CALLS" > "$TEST_DIR/calls.$label" || true
     sort -u "$VISITED" > "$TEST_DIR/visited.$label"
     cp "$TM_EXCLUSIONS_REPORT" "$TEST_DIR/report.$label" 2>/dev/null || : > "$TEST_DIR/report.$label"
