@@ -27,7 +27,7 @@ archives and agent sessions require an explicit choice because they can hold uni
 
 - **Static exclusion rules** for known cache/artifact paths across multiple ecosystems
 - **Dynamic scanning** to discover `node_modules`, `.venv`, `__pycache__`, and other regenerable directories
-- **Prune support** to skip scanning irrelevant trees
+- **Prune support** to skip scanning irrelevant trees — `find` never descends into prune zones, known static exclusions or below matched directories (multi-layer scan pruning)
 - **Dry-run mode** to preview changes without applying them
 - **Report-only mode** to audit current exclusion status
 - **Uninstall** to remove exclusions matching the current configured rules and discovered patterns
@@ -157,7 +157,7 @@ tm-exclusions --lang en      # 🇬🇧 Force English
 
 ## 🏗️ How It Works
 
-Config files are loaded, merged, then applied via a dual `tmutil` strategy (user paths under `$HOME`, fixed-path for system paths). Dynamic scan uses a single `find "$HOME" -maxdepth 6 -type d \( -name <p1> -o -name <p2> … \)` pass covering every configured pattern at once, and `prune` rules filter matched results under configured prefixes. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full flowchart and details.
+Config files are loaded, merged, then applied via a dual `tmutil` strategy (user paths under `$HOME`, fixed-path for system paths). Dynamic scan uses a single `find "$HOME" -maxdepth 6 -type d \( -name <p1> -o -name <p2> … \)` pass covering every configured pattern at once, and the traversal is pruned in three layers (configured `prune` zones, known static `path` exclusions, and the inside of already-matched directories) so those trees are never walked; results are identical to a full traversal. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full flowchart and details.
 
 > 💡 Most exclusions won't appear in System Settings → Time Machine. They're still active — verify with `tmutil isexcluded ~/Library/Caches`
 
