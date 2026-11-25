@@ -1911,6 +1911,33 @@ is_covered_by_kept() {
     return 1
 }
 
+# Returns 0 when $1 is an existing directory strictly under scan root $2 and
+# shallow enough (<= 6 levels, the scan's -maxdepth) to be reached by the
+# scan's find; only those are worth a `-path` clause. Anything else simply
+# keeps being handled by the post-filters, so a miss here never changes results.
+scan_root_reachable() {
+    local target="$1" root="${2%/}" rel
+    [[ "$target" = "$root"/* && -d "$target" && ! -L "$target" ]] || return 1
+    case "$target" in
+        *$'\n'*|*$'\t'*|*/) return 1 ;;
+    esac
+    rel="${target#"$root"/}"
+    [[ "$rel" != */./* && "$rel" != */../* && "$rel" != ./* && "$rel" != ../* ]] || return 1
+    local slashes="${rel//[^\/]/}"
+    [[ "${#slashes}" -le 5 ]]
+}
+
+# Patterns whose matches pattern_match_allowed() can reject (a guard on the
+# parent or the path). A match of such a pattern may be dropped, so its
+# subtree must keep being traversed (layer 3 never prunes below it).
+# Keep in sync with the case labels of pattern_match_allowed() — a test checks.
+pattern_is_guarded() {
+    case "$1" in
+        target|worktrees|site-packages) return 0 ;;
+    esac
+    return 1
+}
+
 scan_dynamic_patterns() {
     ui_section "🔍" "${MSG_SCANNING}"
 
@@ -1927,13 +1954,38 @@ scan_dynamic_patterns() {
     # exclusion (e.g. ~/.npm covers ~/.npm/_npx/X/node_modules) are also pruned.
     local kept_file
     make_tmp_file kept_file kept
+    # Traversal-pruning inputs (#13). `prune_enabled` is off only for the
+    # TM_EXCLUSIONS_NO_SCAN_PRUNE=1 escape hatch (A/B measurements, rollback).
+    # Layer 2 roots (known static exclusions) are only collected outside
+    # --uninstall, where the kept-prefix filter is bypassed by design.
+    local prune_enabled=1 static_roots=""
+    [[ "${TM_EXCLUSIONS_NO_SCAN_PRUNE:-0}" = 1 ]] && prune_enabled=0
     if [[ -n "${CONF_PATHS}" ]]; then
         local static_seed
         while IFS= read -r static_seed; do
             [[ -z "$static_seed" ]] && continue
-            if ! keep_blocks "$static_seed"; then printf '%s\n' "$static_seed" >> "$kept_file"; fi
+            if ! keep_blocks "$static_seed"; then
+                printf '%s\n' "$static_seed" >> "$kept_file"
+                if [[ "$prune_enabled" -eq 1 && "${MODE}" != "uninstall" ]] \
+                    && scan_root_reachable "$static_seed" "$scan_root"; then
+                    static_roots="${static_roots}${static_seed}"$'\n'
+                fi
+            fi
         done <<EOF
 ${CONF_PATHS}
+EOF
+    fi
+
+    # Layer 1 roots: configured prune zones that exist under the scan root.
+    local prune_roots="" prune_entry
+    if [[ "$prune_enabled" -eq 1 && -n "${CONF_PRUNES}" ]]; then
+        while IFS= read -r prune_entry; do
+            [[ -z "$prune_entry" ]] && continue
+            if scan_root_reachable "$prune_entry" "$scan_root"; then
+                prune_roots="${prune_roots}${prune_entry}"$'\n'
+            fi
+        done <<EOF
+${CONF_PRUNES}
 EOF
     fi
 
@@ -1948,27 +2000,95 @@ EOF
     # Single consolidated traversal (#50): build ONE find expression with every
     # configured pattern OR-ed together — \( -name p1 -o -name p2 ... \) — so
     # the tree is walked once instead of once per pattern. The positional
-    # parameters double as a Bash 3.2-safe argument vector. No -prune: the old
-    # per-pattern walks kept descending into matched directories (nested
-    # matches like node_modules/.pnpm/*/node_modules are required, notably in
-    # uninstall mode), so the traversal must visit the exact same set.
+    # parameters double as a Bash 3.2-safe argument vector.
+    #
+    # Traversal pruning (#13) stops find from descending into subtrees whose
+    # matches the post-filters below would discard anyway (same results, fewer
+    # directories visited). See docs/ARCHITECTURE.md "Scan pruning layers":
+    #   1. prune zones          -path <zone> -print -prune   (all modes)
+    #   2. static path rules    -path <path> -prune          (not --uninstall)
+    #   3. unconditional match  -name <p> -print -prune      (not --uninstall,
+    #      only without `keep` rules and for patterns without a match guard)
+    # Everything else is still found, so nested matches needed in --uninstall
+    # mode (node_modules/.pnpm/*/node_modules) keep being discovered there.
     set --
-    local pattern_name
+    local pattern_name uncond_names="" cond_names="" prune_marker=$'\001PRUNE'
     while IFS= read -r pattern_name; do
         [[ -z "$pattern_name" ]] && continue
-        if [[ "$#" -eq 0 ]]; then
-            set -- "$scan_root" -maxdepth 6 -type d '(' -name "$pattern_name"
+        if [[ "$prune_enabled" -eq 1 && "${MODE}" != "uninstall" && -z "${CONF_KEEPS}" ]] \
+            && ! pattern_is_guarded "$pattern_name"; then
+            uncond_names="${uncond_names}${pattern_name}"$'\n'
         else
-            set -- "$@" -o -name "$pattern_name"
+            cond_names="${cond_names}${pattern_name}"$'\n'
         fi
     done <<EOF
 ${CONF_PATTERNS}
 EOF
+    if [[ -n "$uncond_names" || -n "$cond_names" ]]; then
+        set -- "$scan_root" -maxdepth 6
+        local have_group=0 root_glob
+        if [[ -n "$prune_roots" ]]; then
+            # Zone roots are printed (one skip line each) then pruned.
+            set -- "$@" '(' '('
+            local first=1
+            while IFS= read -r root_glob; do
+                [[ -z "$root_glob" ]] && continue
+                root_glob="$(printf '%s' "$root_glob" | sed 's/[][\*?]/\\&/g')"
+                if [[ "$first" -eq 1 ]]; then first=0; else set -- "$@" -o; fi
+                set -- "$@" -path "$root_glob"
+            done <<EOF
+${prune_roots}
+EOF
+            set -- "$@" ')' -print -prune ')'
+            have_group=1
+        fi
+        if [[ -n "$static_roots" ]]; then
+            [[ "$have_group" -eq 1 ]] && set -- "$@" -o
+            set -- "$@" '(' '('
+            local first_static=1
+            while IFS= read -r root_glob; do
+                [[ -z "$root_glob" ]] && continue
+                root_glob="$(printf '%s' "$root_glob" | sed 's/[][\*?]/\\&/g')"
+                if [[ "$first_static" -eq 1 ]]; then first_static=0; else set -- "$@" -o; fi
+                set -- "$@" -path "$root_glob"
+            done <<EOF
+${static_roots}
+EOF
+            set -- "$@" ')' -prune ')'
+            have_group=1
+        fi
+        if [[ -n "$uncond_names" ]]; then
+            [[ "$have_group" -eq 1 ]] && set -- "$@" -o
+            set -- "$@" '(' -type d '('
+            local first_name=1
+            while IFS= read -r pattern_name; do
+                [[ -z "$pattern_name" ]] && continue
+                if [[ "$first_name" -eq 1 ]]; then first_name=0; else set -- "$@" -o; fi
+                set -- "$@" -name "$pattern_name"
+            done <<EOF
+${uncond_names}
+EOF
+            set -- "$@" ')' -print -prune ')'
+            have_group=1
+        fi
+        if [[ -n "$cond_names" ]]; then
+            [[ "$have_group" -eq 1 ]] && set -- "$@" -o
+            set -- "$@" '(' -type d '('
+            local first_cond=1
+            while IFS= read -r pattern_name; do
+                [[ -z "$pattern_name" ]] && continue
+                if [[ "$first_cond" -eq 1 ]]; then first_cond=0; else set -- "$@" -o; fi
+                set -- "$@" -name "$pattern_name"
+            done <<EOF
+${cond_names}
+EOF
+            set -- "$@" ')' -print ')'
+        fi
+    fi
 
     local tmp_scan
     make_tmp_file tmp_scan scan
     if [[ "$#" -gt 0 ]]; then
-        set -- "$@" ')'
         if ! find "$@" > "$tmp_scan" 2>/dev/null; then
             # One traversal covers every pattern; on failure, report once per
             # pattern exactly like the old per-pattern loop did.
@@ -1999,6 +2119,16 @@ EOF
     local found_dir base_name
     while IFS= read -r found_dir; do
         [[ -z "$found_dir" ]] && continue
+        # A layer-1 zone root printed by the pruned traversal: one skip entry
+        # per zone (its nested matches were never visited).
+        if [[ -n "$prune_roots" ]]; then
+            case $'\n'"$prune_roots" in
+                *$'\n'"$found_dir"$'\n'*)
+                    printf '%s\t%s\n' "$found_dir" "$prune_marker" >> "$all_results"
+                    continue
+                    ;;
+            esac
+        fi
         base_name="${found_dir##*/}"
         while IFS= read -r pattern_name; do
             [[ -z "$pattern_name" ]] && continue
@@ -2035,6 +2165,13 @@ EOF
         [[ -z "$line" ]] && continue
         found_dir="${line%%$'\t'*}"
         matched_pattern="${line#*$'\t'}"
+
+        if [[ "$matched_pattern" = "$prune_marker" ]]; then
+            set_rule_context prune "$found_dir"
+            log_path_result prune "$found_dir" "  ${MSG_PRUNE_SKIP} ${found_dir}"
+            add_report_line "SKIP  $found_dir ($MSG_PRUNE_SKIP)"
+            continue
+        fi
 
         if ! pattern_match_allowed "$matched_pattern" "$found_dir"; then
             continue
