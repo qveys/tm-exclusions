@@ -269,8 +269,30 @@ assert_eq "$(printf '%s\n' "$B_PATTERNS" | grep -c .)" "$B_NAME_COUNT" \
 reference_discover "$B_HOME" "$B_PATTERNS" "$TEST_DIR/b_ref"
 cut -f1 "$TEST_DIR/b_ref" | sort -u > "$TEST_DIR/b_ref_dirs"
 sort -u "$FIND_RAW" > "$TEST_DIR/b_raw_dirs"
-assert_files_equal "$TEST_DIR/b_ref_dirs" "$TEST_DIR/b_raw_dirs" \
-    "single find over real catalog discovers the same directories as the per-pattern reference"
+# #13: the pruned traversal intentionally stops below an already-matched
+# directory (those nested matches are dropped downstream anyway), so raw
+# discovery is a subset of the per-pattern reference — but it must never
+# contain a directory the reference does not find. Layer 1 prints each prune
+# zone root before pruning it; those roots are not pattern matches, so they
+# are excluded from the comparison.
+grep -hE '^prune\|' "$REAL_DEFAULT_CONF" "$B_HOME/.config/tm_exclusions/custom.conf" \
+    | cut -d'|' -f2 | sed "s|\$HOME|$B_HOME|g" > "$TEST_DIR/b_prune_roots"
+grep -vxF -f "$TEST_DIR/b_prune_roots" "$TEST_DIR/b_raw_dirs" > "$TEST_DIR/b_raw_matches" || true
+# shellcheck disable=SC2016
+assert_true "pruned single find never discovers a match outside the per-pattern reference" \
+    bash -c '! comm -23 "$1" "$2" | grep -q .' _ "$TEST_DIR/b_raw_matches" "$TEST_DIR/b_ref_dirs"
+
+# With the full traversal (TM_EXCLUSIONS_NO_SCAN_PRUNE=1) raw discovery keeps
+# the pre-#13 invariant: exactly the union of the per-pattern finds.
+reset_find_logs
+assert_exit_code 0 \
+    "dry-run with full traversal (TM_EXCLUSIONS_NO_SCAN_PRUNE=1) over fake tree exits 0" \
+    env HOME="$B_HOME" TM_EXCLUSIONS_NO_SCAN_PRUNE=1 bash "$TM_EXCLUSIONS" -q --dry-run
+assert_eq 1 "$(find_call_count)" \
+    "full-traversal scan still runs exactly ONE find invocation"
+sort -u "$FIND_RAW" > "$TEST_DIR/b_raw_full_dirs"
+assert_files_equal "$TEST_DIR/b_ref_dirs" "$TEST_DIR/b_raw_full_dirs" \
+    "unpruned single find over real catalog discovers the same directories as the per-pattern reference"
 
 # ---------------------------------------------------------------------------
 # Scenario C — extglob-literal regression: (path, pattern) pairs themselves.
