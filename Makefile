@@ -112,6 +112,8 @@ test: ## Run smoke tests
 	@bash tests/test_categories.sh
 	@echo "Running single-find scan tests..."
 	@bash tests/test_scan_single_find.sh
+	@echo "Running scan pruning tests..."
+	@bash tests/test_scan_pruning.sh
 	@echo "Running test-summary runner tests..."
 	@bash tests/test_summary.sh
 	@echo "Running apps inventory tests..."
@@ -164,6 +166,8 @@ lint: ## Run ShellCheck on all shell scripts and syntax-check locale tables
 	@shellcheck -x -s bash tests/test_check_i18n.sh
 	@shellcheck -x -s bash tests/test_categories.sh
 	@shellcheck -x -s bash tests/test_scan_single_find.sh
+	@shellcheck -x -s bash tests/test_scan_pruning.sh
+	@shellcheck -x -s bash scripts/measure-scan.sh
 	@shellcheck -x -s bash tests/test_summary.sh
 	@shellcheck -x -s bash tests/test_apps_inventory.sh
 	@shellcheck -x -s bash tests/test_path_inventory.sh
