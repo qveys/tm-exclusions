@@ -446,6 +446,10 @@ assert_true "root keep blocks everything" keep_blocks "$HOME/project"
 CONF_PATHS="" CONF_PATTERNS="" CONF_RULES="" CONF_KEEPS=""
 source "$ROOT/locales/en.sh"
 declare_i18n_en
+# Path globs expand at load time: give the nvm rules one installed version.
+mkdir -p "$HOME/.nvm/versions/node/v22.1.0/lib" "$HOME/.nvm/versions/node/v22.1.0/bin" \
+    "$HOME/.nvm/versions/node/v22.1.0/etc"
+touch "$HOME/.nvm/versions/node/v22.1.0/etc/npmrc"
 parse_config_file "$ROOT/config/default.conf"
 for target in /opt/homebrew "$HOME/.pulumi" "$HOME/Library/Developer/Xcode/Archives" \
     "$HOME/Library/Containers/com.docker.docker" "$HOME/Library/Developer/CoreSimulator/Devices"; do
@@ -453,18 +457,23 @@ for target in /opt/homebrew "$HOME/.pulumi" "$HOME/Library/Developer/Xcode/Archi
         not grep -Fxq "$target" <<<"$CONF_PATHS"
 done
 # Focused regenerable subtrees ship by default; their mixed parents stay opt-in.
-for target in "$HOME/.bun/install/cache" "$HOME/.nvm/versions" "$HOME/.cache/uv" \
+for target in "$HOME/.bun/install/cache" "$HOME/.nvm/.cache" "$HOME/.cache/uv" \
     "$HOME/.local/share/uv/python" "$HOME/.local/share/uv/tools" \
     "$HOME/Library/pnpm/store" "$HOME/Library/Android/sdk" /opt/homebrew/Cellar \
     "$HOME/Library/Application Support/Code/CachedData"; do
     assert_true "catalog ships $target" \
         grep -Fxq "$target" <<<"$CONF_PATHS"
 done
-for target in "$HOME/.bun" "$HOME/.nvm" "$HOME/.local/share/uv" "$HOME/Library/pnpm" \
+for target in "$HOME/.bun" "$HOME/.nvm" "$HOME/.nvm/versions" "$HOME/.local/share/uv" "$HOME/Library/pnpm" \
     "$HOME/.android/avd" "$HOME/.ollama/models" "$HOME/Library/Application Support/Code"; do
     assert_true "catalog does not ship $target" \
         not grep -Fxq "$target" <<<"$CONF_PATHS"
 done
+# nvm: only per-version lib/ and bin/ are excluded; etc/npmrc (global npm
+# config, possibly an auth token) stays in backups.
+assert_eq ".nvm/.cache .nvm/versions/node/v22.1.0/bin .nvm/versions/node/v22.1.0/lib " \
+    "$(grep -F "/.nvm/" <<<"$CONF_PATHS" | sed "s|^$HOME/||" | LC_ALL=C sort | tr '\n' ' ')" \
+    "catalog excludes nvm lib/bin per version and never etc/npmrc"
 for pattern in .codex .auto-claude worktrees build dist; do
     assert_true "catalog does not ship the $pattern pattern" \
         not grep -Fxq "$pattern" <<<"$CONF_PATTERNS"
