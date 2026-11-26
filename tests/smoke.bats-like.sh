@@ -1257,16 +1257,19 @@ assert_eq 42 "$(du_total_kb)" \
     "du_total_kb skips a path deleted after measurement — same source as the report (#77 review)"
 
 # Run-3 review: the cumulative total must be computed ONCE and handed to the
-# summary. A tmutil stub deletes the beta cache during `listexclusions` — i.e.
-# between the report total and the interactive summary — and report must equal
-# summary (red on d251be7e where ui_summary recomputed du_total_kb).
+# summary. A `hostname` stub deletes the beta cache while generate_report
+# assembles the report header (`Host: $(hostname)`) — i.e. after the total is
+# computed and before the interactive summary — and report must equal summary
+# (red on d251be7e where ui_summary recomputed du_total_kb).
 SZ_TM_BIN="$(mktemp -d "${TEST_HOME}/sz-tm.XXXXXX")"
-cat > "${SZ_TM_BIN}/tmutil" << EOF
+SZ_HOST_RAN="${SZ_TM_BIN}/hostname.ran"
+cat > "${SZ_TM_BIN}/hostname" << EOF
 #!/bin/sh
-if [ "\$1" = listexclusions ]; then rm -rf "${SZ_HOME}/caches/beta"; fi
-exit 0
+rm -rf "${SZ_HOME}/caches/beta"
+: > "${SZ_HOST_RAN}"
+echo stub-host
 EOF
-chmod +x "${SZ_TM_BIN}/tmutil"
+chmod +x "${SZ_TM_BIN}/hostname"
 SZ_ALPHA="${SZ_HOME}/caches/alpha"
 SZ_BETA="${SZ_HOME}/caches/beta"
 mkdir -p "${SZ_ALPHA}" "${SZ_BETA}"
@@ -1320,14 +1323,16 @@ SZ_OLD_PATH="${PATH}"
 PATH="${SZ_TM_BIN}:${PATH}"
 TM_EXCLUSIONS_REPORT="${SZ_REPORT}" generate_report > "${SZ_SUMMARY}" 2>&1 || true
 PATH="${SZ_OLD_PATH}"
+assert_true "tree mutation point ran after the total (hostname stub invoked, beta removed)" \
+    test -f "${SZ_HOST_RAN}" -a ! -e "${SZ_BETA}"
 assert_file_contains "${SZ_REPORT}" "Total (sum of du -sk, KiB): 150" \
-    "report total is computed before tmutil listexclusions (#77 run-3)"
+    "report total is computed before the tree changes (#77 run-3)"
 assert_file_contains "${SZ_REPORT}" "Disk usage total: 150K" \
     "report carries the formatted cumulative total (#45)"
 assert_file_contains "${SZ_SUMMARY}" "Disk usage total: 150K" \
     "interactive summary reuses the precomputed total — report == summary (#77 run-3)"
 assert_file_lacks_regex "${SZ_SUMMARY}" 'Disk usage total: 100K' \
-    "summary never recomputes the total after listexclusions (#77 run-3)"
+    "summary never recomputes the total after the tree changes (#77 run-3)"
 rm -rf "${SZ_TM_BIN}"
 
 rm -rf "${SZ_BIN}" "${SZ_HOME}"
