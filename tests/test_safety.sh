@@ -80,9 +80,10 @@ assert_file_contains "$TM_EXCLUSIONS_REPORT" 'Summary by rule' "report includes 
 assert_file_contains "$TM_EXCLUSIONS_REPORT" \
     "$(printf '\t%s:5 | pattern|cache | regenerable cache' "$TM_EXCLUSIONS_DEFAULT_CONF")" \
     "rule summary attributes the dynamic match to its config line"
-assert_file_contains "$TM_EXCLUSIONS_REPORT" \
-    'tmutil listexclusions (first 500 lines; status: empty)' \
-    "report states the listexclusions status"
+assert_file_lacks_regex "$TM_EXCLUSIONS_REPORT" 'tmutil listexclusions|status: (ok|empty|failed|unavailable)' \
+    "report has no tmutil listing section (that verb does not exist)"
+assert_eq 0 "$(cut -d' ' -f1 "$TEST_CALLS" | grep -Evc '^(addexclusion|removeexclusion|isexcluded)$' || true)" \
+    "tmutil is never invoked with a verb other than addexclusion/removeexclusion/isexcluded"
 assert_file_contains "$TM_EXCLUSIONS_REPORT" "KEEP  $HOME/project (protected by keep" \
     "keep blocks the broad parent exclusion"
 run 0 --report-only

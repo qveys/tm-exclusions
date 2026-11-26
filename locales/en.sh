@@ -71,8 +71,6 @@ declare_i18n_en() {
     MSG_REPORT_SIZE_TOTAL="Disk usage total:"
     MSG_REPORT_RULE_SUMMARY="Summary by rule"
     MSG_REPORT_RULE_SUMMARY_EMPTY="No rule actions recorded."
-    MSG_REPORT_TMLIST_FAILED="tmutil listexclusions failed."
-    MSG_REPORT_TMLIST_EMPTY="tmutil returned no exclusions."
     MSG_REPORT_REMOVED="Removed:"
     MSG_REPORT_SAVED="Report saved to:"
     MSG_REPORT_DESKTOP_COPY="Also saved report copy to:"

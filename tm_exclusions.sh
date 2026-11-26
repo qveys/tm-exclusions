@@ -68,7 +68,6 @@ REPORT_LINES=""
 # Same detail lines as REPORT_LINES, as "<category>\t<line>" records for grouping.
 REPORT_GROUPED=""
 RULE_SUMMARY="" # Rule context events, counted once at report generation.
-TM_LIST_STATUS="not-run"
 # Paths discovered after config (brew cache, large VM images); newline-separated
 EXTRA_PATHS=""
 # Normalized existing paths; deduplicated once for the optional du summary
@@ -270,7 +269,7 @@ ui_summary() {
     # Cumulative disk usage of the paths touched in this run (#45). The total is
     # computed once by generate_report and passed in as $2 — never recomputed
     # here — so the summary always matches the report even if a path disappears
-    # while tmutil listexclusions runs between the two.
+    # while the report is being written between the two.
     if [[ -n "${2:-}" ]]; then
         printf '  %s %s\n' "$MSG_REPORT_SIZE_TOTAL" "$2"
     fi
@@ -2869,7 +2868,7 @@ generate_report() {
     local report="" console_report=""
     local dry_run_note=""
     local excluded_label="${MSG_REPORT_EXCLUDED}"
-    local inv du_sec size_total_line size_total_disp tm_list out_path path_total path_dirs p szk sh total_k desk_copy raw_list tm_list_rc
+    local inv du_sec size_total_line size_total_disp out_path path_total path_dirs p szk sh total_k desk_copy
     local space_label banner_path report_saved=0 space_line="" tip_path=""
     local stdout_tty=0
     # Evaluated here, in the main shell: inside $(...) stdout is a pipe and
@@ -2922,7 +2921,7 @@ EOF
         # since their measurement, exactly like the per-path lines above) and
         # passed to ui_summary as $2 — it is never recomputed afterwards, so
         # the report and the interactive summary always agree, even if a path
-        # disappears while tmutil listexclusions runs in between (#45, #77 review).
+        # disappears between this computation and the end-of-run summary (#45, #77 review).
         total_k="$(du_total_kb)"
         size_total_disp="$(format_size_kb "${total_k}")"
         du_sec="${du_sec}
@@ -2987,29 +2986,6 @@ ${inv}"
 Details:
 $(group_report_details)"
     fi
-
-    tm_list=""
-    if [[ "${HAS_TMUTIL}" -eq 1 ]]; then
-        raw_list=""
-        tm_list_rc=0
-        raw_list="$(tmutil listexclusions 2>/dev/null)" || tm_list_rc=$?
-        if [[ "$tm_list_rc" -ne 0 ]]; then
-            TM_LIST_STATUS="failed (exit ${tm_list_rc})"
-            raw_list="${MSG_REPORT_TMLIST_FAILED}"
-        elif [[ -n "$raw_list" ]]; then
-            TM_LIST_STATUS="ok"
-            raw_list="$(printf '%s\n' "$raw_list" | head -n 500)"
-        else
-            TM_LIST_STATUS="empty"
-            raw_list="${MSG_REPORT_TMLIST_EMPTY}"
-        fi
-        tm_list="
-=== tmutil listexclusions (first 500 lines; status: ${TM_LIST_STATUS}) ===
-${raw_list}"
-    else
-        TM_LIST_STATUS="unavailable"
-    fi
-    report="${report}${tm_list}"
 
     report="${report}
 

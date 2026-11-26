@@ -71,8 +71,6 @@ declare_i18n_fr() {
     MSG_REPORT_SIZE_TOTAL="Usage disque total :"
     MSG_REPORT_RULE_SUMMARY="Synthèse par règle"
     MSG_REPORT_RULE_SUMMARY_EMPTY="Aucune action de règle enregistrée."
-    MSG_REPORT_TMLIST_FAILED="Échec de tmutil listexclusions."
-    MSG_REPORT_TMLIST_EMPTY="tmutil n'a retourné aucune exclusion."
     MSG_REPORT_REMOVED="Supprimés :"
     MSG_REPORT_SAVED="Rapport sauvegardé dans :"
     MSG_REPORT_DESKTOP_COPY="Copie du rapport également enregistrée dans :"

@@ -34,8 +34,8 @@ archives and agent sessions require an explicit choice because they can hold uni
 - **Idempotent** — safe to run repeatedly
 - **Multilingual** — English and French output
 - **Config management** — add custom rules, init/list/edit config
-- **Human-readable reports** after each run (host/user/version, optional inventory, `du` summary, `tmutil listexclusions` excerpt)
-- Reports group actions by rule, distinguish missing and privilege-blocked paths, and state the `tmutil listexclusions` result.
+- **Human-readable reports** after each run (host/user/version, optional inventory, `du` summary)
+- Reports group actions by rule and distinguish missing and privilege-blocked paths.
 
 Optional environment variables (see **`docs/ARCHITECTURE.md`**): `TM_EXCLUSIONS_REPORT`, `TM_EXCLUSIONS_REPORT_DESKTOP`, `TM_EXCLUSIONS_SKIP_INVENTORY`, `TM_EXCLUSIONS_DEBUG_FIFO`.
 
@@ -91,7 +91,7 @@ The final summary is a banner: counters (newly excluded / already excluded / ski
 the cumulative disk usage of the touched paths, the **space excluded** by this run (sum of the
 `du -sk` sizes already measured for the newly excluded paths, shown as KB/MB/GB; nested paths
 counted once), the saved report path and a copy-pasteable `tmutil isexcluded '<first processed path>'` verification tip (shell-quoted real path). With
-`--dry-run` the banner says the run is **simulated** (no exclusion added or removed — only the read-only `tmutil isexcluded` / `listexclusions` status lookups run — projected values); `--report-only`
+`--dry-run` the banner says the run is **simulated** (no exclusion added or removed — only the read-only `tmutil isexcluded` status lookups run — projected values); `--report-only`
 labels the figure "space needing exclusion" unless `--dry-run` is also set (the simulated label then wins). If some sizes cannot be read (or `du` exits non-zero on unreadable children, so its total is partial) the figure is shown as
 a lower bound (truncated, never rounded up) (`≥ 1.0M (partial, unmeasured paths: 1)`), or `unknown` when none could be read — never a false
 total. Interactive terminals only: `--quiet`, pipes and `NO_COLOR` runs print no banner (`--quiet` stdout gains no line — the space line stays in the saved report — but it benefits from the size-formatting fix at unit boundaries, e.g. `1048575K` now prints `1.0G` instead of `1024.0M`;
@@ -483,7 +483,7 @@ launchctl load ~/Library/LaunchAgents/com.tm-exclusions.weekly.plist
 - In non-interactive runs without cached/passwordless sudo (`sudo -n`), system paths are not silently skipped: each one is recorded as a privilege-blocked entry in the report and counted, so the run exits non-zero (see [Results and exit codes](#results-and-exit-codes)). No blocking prompt is ever shown. Privileged exclusions such as `/private/var/folders` use `sudo tmutil addexclusion -p` when credentials are available.
 - Report disk-usage uses `du -sk` and ignores permission-denied children, so partially-readable trees like `/private/var/folders` cannot abort a run under `set -euo pipefail`.
 - Verbose runs show a right-aligned, human-readable size (e.g. `1.0G`) next to each processed path; missing or unreadable paths show `-` without failing, and the summary/report gain a cumulative `Disk usage total:` line. Each path is measured once (`du -sk`) and the report reuses that measurement, so trees are never walked twice. `--quiet` adds no per-path lines; `TM_EXCLUSIONS_SKIP_DU=1` disables the size column as well.
-- Reports include a rule summary, separate missing-path and privilege-blocked counts, and an explicit `tmutil listexclusions` status (`ok`, `empty`, `failed`, or `unavailable`).
+- Reports include a rule summary, separate missing-path and privilege-blocked counts.
 - `--uninstall` removes exclusions matching current configured static rules, dynamic matches, and discovered extra paths. It also drops retired catalog paths that are still excluded (today: the former `$HOME/Library/Developer/CoreSimulator` parent, and `$HOME/.gradle`, which the `.gradle` pattern used to match as a whole).
 - Apply and `--dry-run` drop those same retired exclusions when `tmutil` still has them, then add the granular rules (CoreSimulator subdirs, `~/.gradle/caches` and `~/.gradle/wrapper`); `--dry-run` only reports the removal. A retired path you still exclude with your own `path` rule is not migrated (`--uninstall` still removes it, like any static rule), and a `keep` rule below a retired path never blocks its removal. Manual equivalent: `tmutil removeexclusion "$HOME/Library/Developer/CoreSimulator"` and `tmutil removeexclusion "$HOME/.gradle"`.
 - Dynamic scan depth is intentionally capped to `find -maxdepth 6`.
