@@ -47,7 +47,7 @@ Targets may use leading `~` (expanded to `$HOME`) or the literal substring `$HOM
 | `path` | Static exclusion: apply `tmutil addexclusion` to the expanded path (optional glob expansion at load time) |
 | `pattern` | Dynamic scan: a single `find $HOME -maxdepth 6 -type d \( -name <p1> -o -name <p2> … \)` over all patterns, then exclude matches |
 | `prune` | Scan skip: paths under this prefix are ignored during dynamic pattern scanning (not excluded from backup) |
-| `keep` | Protect a literal path and descendants across all modes; also block ancestor exclusions. Existing exclusions are reported, not automatically removed. |
+| `keep` | Protect a literal path and descendants across all modes; also block ancestor exclusions. Existing exclusions are reported, not automatically removed — except retired catalog exclusions (`migrate_retired_exclusions()`): the migration drops those before keeps are checked, so a `keep` below a retired path gets its parent exclusion removed, unless an active static `path` rule still asks for that path. |
 | `setting` | Preference, not a Time Machine rule. Keys: `report_path` (saved report **file** path) and boolean `desktop_report` / `scan_images` (`true`/`1`/`yes` or `false`/`0`/`no`). Unknown keys and invalid `desktop_report` values warn on stderr and are ignored. |
 
 ## Scan Logic
