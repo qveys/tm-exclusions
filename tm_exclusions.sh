@@ -1175,6 +1175,31 @@ pattern_match_allowed() {
             esac
             return 1
             ;;
+        .gradle)
+            # Project-level Gradle cache only: it sits next to a build or
+            # settings script, or the wrapper. The Gradle user home
+            # ($HOME/.gradle) has none of these siblings and also holds
+            # gradle.properties (signing credentials, tokens) and init.d
+            # scripts; its caches/ and wrapper/ are covered by static rules.
+            if [[ -f "${parent}/settings.gradle" \
+                || -f "${parent}/settings.gradle.kts" \
+                || -f "${parent}/build.gradle" \
+                || -f "${parent}/build.gradle.kts" \
+                || -f "${parent}/gradlew" ]]; then
+                return 0
+            fi
+            return 1
+            ;;
+        venv|virtualenv)
+            # These names collide with real source trees (CPython's Lib/venv,
+            # the virtualenv package, the oh-my-zsh `virtualenv` plugin). A
+            # real environment has pyvenv.cfg (venv, virtualenv >= 20) or
+            # bin/activate (legacy virtualenv).
+            if [[ -f "${dir}/pyvenv.cfg" || -f "${dir}/bin/activate" ]]; then
+                return 0
+            fi
+            return 1
+            ;;
         *)
             return 0
             ;;
@@ -1933,7 +1958,7 @@ scan_root_reachable() {
 # Keep in sync with the case labels of pattern_match_allowed() — a test checks.
 pattern_is_guarded() {
     case "$1" in
-        target|worktrees|site-packages) return 0 ;;
+        target|worktrees|site-packages|.gradle|venv|virtualenv) return 0 ;;
     esac
     return 1
 }
@@ -2256,14 +2281,19 @@ EOF
     flush_path_results
 }
 
-# Paths previously shipped as path| rules that the catalog no longer excludes.
+# Paths the catalog used to exclude and no longer does: former path| rules, and
+# $HOME/.gradle, which the unguarded `.gradle` pattern matched as a whole.
 # Apply / dry-run / uninstall drop them from tmutil when still present so an
 # upgrade does not keep the old parent exclusion forever. Silent when the
 # path is not currently excluded (simulation mode, fresh install, already migrated).
+# A path the user still excludes with their own path| rule is left alone.
 migrate_retired_exclusions() {
     local retired_path
     while IFS= read -r retired_path; do
         [[ -z "$retired_path" ]] && continue
+        if printf '%s\n' "${CONF_PATHS}" | grep -Fqx -- "$retired_path"; then
+            continue
+        fi
         if [[ ! -e "$retired_path" ]] && [[ "${FORCE}" -eq 0 ]]; then
             continue
         fi
@@ -2284,6 +2314,7 @@ migrate_retired_exclusions() {
         remove_exclusion "$retired_path"
     done <<EOF
 ${HOME}/Library/Developer/CoreSimulator
+${HOME}/.gradle
 EOF
 }
 
