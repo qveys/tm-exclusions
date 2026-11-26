@@ -116,7 +116,9 @@ printf 'SUB=%s ARGS=%s FIFO=%s DEBUG_FIFO=%s\n' \
 if [ "${TMUX_FAIL_NEW_SESSION:-0}" = 1 ] && [ "$sub" = new-session ]; then exit 1; fi
 case "$sub" in
     new-session)
-        "${TM_EXCLUSIONS_TMUX_WRAPPER}" &
+        # stdin from /dev/null so the wrapper's "press Enter" read never blocks
+        # this stub (the real tmux pane provides a TTY instead).
+        "${TM_EXCLUSIONS_TMUX_WRAPPER}" < /dev/null &
         ;;
     attach-session)
         i=0
@@ -130,7 +132,9 @@ exit 0
 STUB
 chmod +x "$STUB_TMUX_DIR/tmux"
 
-TMUX_CALLS="$WORK/tmux.calls"
+# Exported so the stub tmux (spawned by tmux_launch) always finds the log path,
+# even in the help/redirect/--quiet scenarios that pass no explicit TMUX_CALLS.
+export TMUX_CALLS="$WORK/tmux.calls"
 
 echo "tm-exclusions optional tmux interface tests (#14)"
 echo "========================================"
@@ -178,6 +182,7 @@ else
     rc=0
     run_pty "$WORK/out-no-tmux" \
         env HOME="$B_HOME" PATH="$B_BIN:/usr/bin:/bin" TERM=xterm TM_EXCLUSIONS_DEFAULT_CONF="$CONF" \
+            TM_EXCLUSIONS_TMUX_BIN="/nonexistent/tmux" \
             bash "$TM_EXCLUSIONS" --tmux --dry-run || rc=$?
     assert_eq 0 "$rc" "tmux missing: the run still exits 0"
     assert_file_contains "$WORK/out-no-tmux" "tmux not found" \
@@ -279,7 +284,7 @@ else
         rc=0
         run_pty "$WORK/out-real-tmux" \
             env HOME="$B_HOME" PATH="$B_BIN:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" TERM=xterm \
-                TM_EXCLUSIONS_DEFAULT_CONF="$CONF" \
+                TM_EXCLUSIONS_DEFAULT_CONF="$CONF" TM_EXCLUSIONS_TMUX_NO_HOLD=1 \
                 bash "$TM_EXCLUSIONS" --tmux --dry-run || rc=$?
         assert_eq 0 "$rc" "real tmux: --tmux --dry-run exits 0"
         assert_eq 1 "$(isexcluded_count)" "real tmux: the scan ran exactly once"

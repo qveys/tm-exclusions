@@ -172,19 +172,24 @@ Debug FD 5 receives undecorated console messages.
 run. After the config subcommands are handled (so `--help` / `--init` / `--add`
 / `--list` / `--edit` never launch it), `main()` calls `tmux_launch`, which
 declines — returning 1 and leaving the normal run unchanged — unless all of
-these hold: the flag was passed, stdout is a TTY, the run is not `--quiet`, tmux
-is on `PATH`, and the guard `TM_EXCLUSIONS_TMUX_CHILD` is unset (the re-exec
-inside the pane never re-arms). When it launches, it returns 0 and `main` exits
-with the inner run's status, so the wrapper never scans: the scan, exclusions
-and exit code belong to the single inner run.
+these hold: the flag was passed, stdout **and stdin** are TTYs (attach needs
+both), the run is not `--quiet`, tmux is resolvable (on `PATH` or via
+`TM_EXCLUSIONS_TMUX_BIN`, an escape hatch for tests/unusual installs), and the
+guard `TM_EXCLUSIONS_TMUX_CHILD` is unset (the re-exec inside the pane never
+re-arms). When it launches, it returns 0 and `main` exits with the inner run's
+status, so the wrapper never scans: the scan, exclusions and exit code belong to
+the single inner run.
 
 The wrapper starts a **dedicated** tmux server on a private socket
 (`tmux -L tm-exc-<pid>`) with one session:
 
 - **Left pane** — a generated bash re-exec wrapper (`tmux_wrapper.sh`, written
   into `TMP_DIR`) that `cd`s to the original working directory and runs the
-  script again with the original arguments minus `--tmux`. Its stdout is the
-  normal progress/status view.
+  script again through `"$BASH"` with the original arguments minus `--tmux` (the
+  explicit interpreter keeps the same Bash as the outer run). Its stdout is the
+  normal progress/status view. When the run ends it records the exit status,
+  then keeps the summary on screen and waits for a keypress before closing the
+  session (skipped when stdin is not a TTY or `TM_EXCLUSIONS_TMUX_NO_HOLD=1`).
 - **Right pane** — `cat -- "$TM_EXCLUSIONS_TMUX_FIFO"` over a FIFO
   (`TMP_DIR/debug.fifo`); the inner run opens that FIFO as FD 5 through the
   existing `TM_EXCLUSIONS_DEBUG_FIFO` contract, so the pane streams the same
@@ -192,20 +197,24 @@ The wrapper starts a **dedicated** tmux server on a private socket
 
 Script path and arguments are `%q`-quoted for the same bash into the wrapper;
 every other path (wrapper, FIFO, rc file, socket, session) travels through the
-session environment, never through a shell command line, so spaces and special
-characters are safe and there is no shell-injection surface. The wrapper records
-the inner exit status in `TMP_DIR/tmux.rc`, then closes the session, which
-returns `attach-session` to the outer script. `tmux_cleanup` (run from `cleanup`,
-so also on EXIT/INT/TERM/HUP) kills only this run's session and server, and
-removes the dedicated socket file that tmux 3.x can leave behind; the FIFO,
-wrapper and rc file go with `TMP_DIR` when the work directory is removed.
+session environment of the `new-session` process only (passed with `env`, never
+`export`ed into this shell), never through a shell command line, so spaces and
+special characters are safe, there is no shell-injection surface, and a failed
+launch cannot leave `TM_EXCLUSIONS_DEBUG_FIFO` (or the other variables) set for
+the fallback run. The wrapper records the inner exit status in `TMP_DIR/tmux.rc`,
+then closes the session, which returns `attach-session` to the outer script;
+a plain detach (`Ctrl-b d`) is re-attached, while a real attach failure with no
+inner status falls back to a normal run. `tmux_cleanup` (run from `cleanup`, so
+also on EXIT/INT/TERM/HUP) kills only this run's session and server, and removes
+the dedicated socket file that tmux 3.x can leave behind; the FIFO, wrapper and
+rc file go with `TMP_DIR` when the work directory is removed.
 
-Fallbacks: no tmux → a `MSG_TMUX_NOT_FOUND` notice; a failed
-`new-session`/`mkfifo` → a `MSG_TMUX_FALLBACK` notice. In both cases the run
-continues normally with one scan and the same exit status. Covered by
-`tests/test_tmux_ui.sh` (`make test`, `make lint`) with a stub tmux (two-pane
-wiring, single scan, exit-code propagation, cleanup) plus an opt-in real-tmux
-check on a dedicated `-L` socket.
+Fallbacks: no usable tmux → a `MSG_TMUX_NOT_FOUND` notice; a failed
+`new-session`/`mkfifo`/`split-window`/`attach` → a `MSG_TMUX_FALLBACK` notice.
+In all these cases the run continues normally with one scan and the same exit
+status. Covered by `tests/test_tmux_ui.sh` (`make test`, `make lint`) with a
+stub tmux (two-pane wiring, single scan, exit-code propagation, cleanup) plus an
+opt-in real-tmux check on a dedicated `-L` socket.
 
 Verbose runs prefix every per-path status line with a formatted disk size
 (#45): `process_path()` calls `path_size_column()`, which runs one `du -sk` per

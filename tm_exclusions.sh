@@ -1130,11 +1130,20 @@ tmux_launch() {
     # behavior even with the flag.
     [[ "${QUIET}" -eq 0 ]] || return 1
     [[ -t 1 ]] || return 1
+    [[ -t 0 ]] || return 1
 
-    TMUX_BIN="$(command -v tmux 2>/dev/null)" || {
+    # Resolve the tmux binary. TM_EXCLUSIONS_TMUX_BIN is an escape hatch for
+    # tests and unusual installs: an explicit path, or a nonexistent one to
+    # force the missing-tmux fallback, instead of the PATH lookup.
+    if [[ -n "${TM_EXCLUSIONS_TMUX_BIN:-}" ]]; then
+        TMUX_BIN="${TM_EXCLUSIONS_TMUX_BIN}"
+    else
+        TMUX_BIN="$(command -v tmux 2>/dev/null)" || TMUX_BIN=""
+    fi
+    if [[ -z "${TMUX_BIN}" || ! -x "${TMUX_BIN}" ]]; then
         log_error "${MSG_TMUX_NOT_FOUND}"
         return 1
-    }
+    fi
 
     # Re-exec arguments: the original ones minus the --tmux flag.
     local inner=()
@@ -1173,7 +1182,7 @@ tmux_launch() {
         printf 'cd %s 2>/dev/null || _rc=1\n' "$(printf '%q' "$PWD")"
         # shellcheck disable=SC2016  # $_rc is for the generated wrapper, not here
         printf 'if [ "$_rc" -eq 0 ]; then\n'
-        printf '  %s' "$(printf '%q' "$script_path")"
+        printf '  %s %s' "$(printf '%q' "$BASH")" "$(printf '%q' "$script_path")"
         local i
         for ((i = 0; i < ${#inner[@]}; i++)); do
             printf ' %s' "$(printf '%q' "${inner[$i]}")"
@@ -1184,9 +1193,21 @@ tmux_launch() {
         # shellcheck disable=SC2016  # $_rc/$TM_EXCLUSIONS_TMUX_* expand in the wrapper
         printf 'printf %%s "$_rc" > "$TM_EXCLUSIONS_TMUX_RC"\n'
         # shellcheck disable=SC2016  # the wrapper's shell expands these variables
+        printf 'if [ -t 0 ] && [ -z "${TM_EXCLUSIONS_TMUX_NO_HOLD:-}" ]; then\n'
+        # shellcheck disable=SC2016  # the wrapper's shell expands the message variable
+        printf '  printf "%%s\\n" "$TM_EXCLUSIONS_TMUX_DONE_MSG"\n'
+        printf '  read -r _key 2>/dev/null || true\n'
+        printf 'fi\n'
+        # shellcheck disable=SC2016  # the wrapper's shell expands these variables
         printf 'exec "$TM_EXCLUSIONS_TMUX_BIN" -L "$TM_EXCLUSIONS_TMUX_SOCK" kill-session -t "$TM_EXCLUSIONS_TMUX_SESSION"\n'
-    } > "$wrapper"
-    chmod +x "$wrapper"
+    } > "$wrapper" || {
+        log_error "${MSG_TMUX_FALLBACK}"
+        return 1
+    }
+    chmod +x "$wrapper" || {
+        log_error "${MSG_TMUX_FALLBACK}"
+        return 1
+    }
 
     : > "$rc_file" 2>/dev/null || true
 
@@ -1196,21 +1217,20 @@ tmux_launch() {
     TMUX_SESSION="$session"
 
     local launch_rc=0
-    # Export the child/pane environment (the dedicated tmux server inherits it,
-    # and a stub tmux reads it to emulate the run). Only names created here are
-    # referenced, and the child opens the FIFO through the existing
-    # TM_EXCLUSIONS_DEBUG_FIFO contract.
-    export TM_EXCLUSIONS_TMUX_CHILD=1
-    export TM_EXCLUSIONS_DEBUG_FIFO="$fifo"
-    export TM_EXCLUSIONS_TMUX_FIFO="$fifo"
-    export TM_EXCLUSIONS_TMUX_WRAPPER="$wrapper"
-    export TM_EXCLUSIONS_TMUX_RC="$rc_file"
-    export TM_EXCLUSIONS_TMUX_BIN="$TMUX_BIN"
-    export TM_EXCLUSIONS_TMUX_SOCK="$sock"
-    export TM_EXCLUSIONS_TMUX_SESSION="$session"
-
+    # Pass the child/pane environment only to the tmux process that creates the
+    # session (never to this shell), so a failed launch cannot leave
+    # TM_EXCLUSIONS_DEBUG_FIFO (or any other variable) set for the fallback run.
     # shellcheck disable=SC2016  # the pane shell expands $TM_EXCLUSIONS_TMUX_WRAPPER
-    "$TMUX_BIN" -L "$sock" new-session -d -s "$session" \
+    env TM_EXCLUSIONS_TMUX_CHILD=1 \
+        TM_EXCLUSIONS_DEBUG_FIFO="$fifo" \
+        TM_EXCLUSIONS_TMUX_FIFO="$fifo" \
+        TM_EXCLUSIONS_TMUX_WRAPPER="$wrapper" \
+        TM_EXCLUSIONS_TMUX_RC="$rc_file" \
+        TM_EXCLUSIONS_TMUX_BIN="$TMUX_BIN" \
+        TM_EXCLUSIONS_TMUX_SOCK="$sock" \
+        TM_EXCLUSIONS_TMUX_SESSION="$session" \
+        TM_EXCLUSIONS_TMUX_DONE_MSG="$MSG_TMUX_DONE" \
+        "$TMUX_BIN" -L "$sock" new-session -d -s "$session" \
         'exec "$TM_EXCLUSIONS_TMUX_WRAPPER"' || launch_rc=$?
     if [[ "$launch_rc" -ne 0 ]]; then
         log_error "${MSG_TMUX_FALLBACK}"
@@ -1218,13 +1238,31 @@ tmux_launch() {
         return 1
     fi
 
-    # Log pane (right): stream the debug FIFO.
+    # Log pane (right): stream the debug FIFO. Fail loudly: without a reader on
+    # the FIFO the child would block once the pipe buffer fills.
     # shellcheck disable=SC2016  # the pane shell expands $TM_EXCLUSIONS_TMUX_FIFO
-    "$TMUX_BIN" -L "$sock" split-window -t "$session" -h \
-        'cat -- "$TM_EXCLUSIONS_TMUX_FIFO"' 2>/dev/null || true
+    if ! "$TMUX_BIN" -L "$sock" split-window -t "$session" -h \
+        'cat -- "$TM_EXCLUSIONS_TMUX_FIFO"' 2>/dev/null; then
+        log_error "${MSG_TMUX_FALLBACK}"
+        tmux_cleanup
+        return 1
+    fi
 
-    # Attach until the wrapper closes our session.
-    "$TMUX_BIN" -L "$sock" attach-session -t "$session" 2>/dev/null || true
+    # Attach until the wrapper closes the session. Re-attach on a plain detach
+    # (Ctrl-b d) while the inner run is still going; a real attach failure with
+    # no inner status falls back to a normal run instead of exiting 1.
+    local attach_rc=0
+    while :; do
+        "$TMUX_BIN" -L "$sock" attach-session -t "$session" 2>/dev/null || attach_rc=$?
+        [[ -s "$rc_file" ]] && break
+        if "$TMUX_BIN" -L "$sock" has-session -t "$session" 2>/dev/null; then
+            [[ "$attach_rc" -eq 0 ]] && continue
+            log_error "${MSG_TMUX_FALLBACK}"
+            tmux_cleanup
+            return 1
+        fi
+        break
+    done
 
     local child_rc=1
     if [[ -s "$rc_file" ]]; then

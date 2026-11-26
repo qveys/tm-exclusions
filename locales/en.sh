@@ -96,6 +96,7 @@ declare_i18n_en() {
     MSG_TMUX_NOT_FOUND="tmux not found; running without the two-pane interface"
     MSG_TMUX_FALLBACK="Could not start the tmux interface; running normally"
     MSG_TMUX_NO_STATUS="tmux wrapper finished without reporting the inner exit status; assuming failure"
+    MSG_TMUX_DONE="Run finished — press Enter to close"
     MSG_ERROR_EMPTY_REPORT_PATH="Warning: Empty report_path setting at"
     MSG_ERROR_INVALID_DESKTOP_REPORT="Warning: Invalid desktop_report value"
     MSG_ERROR_INVALID_DESKTOP_REPORT_HINT="(use true/false, 1/0, or yes/no)"

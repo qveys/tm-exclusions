@@ -124,6 +124,10 @@ run ends.
   so the scan, exclusions and exit code are unchanged. The log pane is wired
   through the existing `TM_EXCLUSIONS_DEBUG_FIFO`/FD 5 mechanism, so a
   manually-set `TM_EXCLUSIONS_DEBUG_FIFO` is overridden in this mode.
+- When the run finishes, the left pane keeps the final summary on screen and
+  waits for a keypress before closing (set `TM_EXCLUSIONS_TMUX_NO_HOLD=1` to
+  close immediately). The `TM_EXCLUSIONS_TMUX_BIN` variable can point at a
+  specific `tmux` binary (escape hatch for unusual installs and tests).
 
 ```bash
 tm-exclusions --tmux --dry-run
@@ -499,6 +503,8 @@ launchctl load ~/Library/LaunchAgents/com.tm-exclusions.weekly.plist
 | `TM_EXCLUSIONS_SYSTEM_PATHS` | Colon-separated PATH directories treated as system (count only) in the PATH tools survey; default `/bin:/sbin:/usr/bin:/usr/sbin` |
 | `TM_EXCLUSIONS_SKIP_DU=1` | Skip the per-path `du` size column and the disk-usage section in the report |
 | `TM_EXCLUSIONS_DEBUG_FIFO` | Mirror `log_info` output to FD 5 |
+| `TM_EXCLUSIONS_TMUX_BIN` | Use this exact `tmux` binary for `--tmux` (escape hatch for unusual installs and tests; a missing/non-executable path forces the fallback) |
+| `TM_EXCLUSIONS_TMUX_NO_HOLD=1` | Close the `--tmux` panes immediately at the end instead of waiting for a keypress |
 
 ---
 
