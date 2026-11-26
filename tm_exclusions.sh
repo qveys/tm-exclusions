@@ -1175,6 +1175,38 @@ pattern_match_allowed() {
             esac
             return 1
             ;;
+        .gradle)
+            # Earlier versions excluded every match: --uninstall must still
+            # reach them (removing an exclusion never loses data).
+            [[ "${MODE}" = "uninstall" ]] && return 0
+            # The Gradle user home holds gradle.properties (signing
+            # credentials, tokens) and init.d scripts; its caches/ and
+            # wrapper/ are covered by static rules. Never the whole tree,
+            # even when $HOME itself is a Gradle project.
+            [[ "$dir" = "${HOME}/.gradle" ]] && return 1
+            # Project-level Gradle cache only: it sits next to a build or
+            # settings script, or the wrapper.
+            if [[ -f "${parent}/settings.gradle" \
+                || -f "${parent}/settings.gradle.kts" \
+                || -f "${parent}/build.gradle" \
+                || -f "${parent}/build.gradle.kts" \
+                || -f "${parent}/gradlew" ]]; then
+                return 0
+            fi
+            return 1
+            ;;
+        venv|virtualenv)
+            # These names collide with real source trees (CPython's Lib/venv,
+            # the virtualenv package, the oh-my-zsh `virtualenv` plugin). A
+            # real environment has pyvenv.cfg (venv, virtualenv >= 20) or
+            # bin/activate (legacy virtualenv). Earlier versions excluded
+            # every match, so --uninstall still reaches the look-alikes.
+            [[ "${MODE}" = "uninstall" ]] && return 0
+            if [[ -f "${dir}/pyvenv.cfg" || -f "${dir}/bin/activate" ]]; then
+                return 0
+            fi
+            return 1
+            ;;
         *)
             return 0
             ;;
@@ -1933,7 +1965,7 @@ scan_root_reachable() {
 # Keep in sync with the case labels of pattern_match_allowed() — a test checks.
 pattern_is_guarded() {
     case "$1" in
-        target|worktrees|site-packages) return 0 ;;
+        target|worktrees|site-packages|.gradle|venv|virtualenv) return 0 ;;
     esac
     return 1
 }
@@ -2256,14 +2288,42 @@ EOF
     flush_path_results
 }
 
-# Paths previously shipped as path| rules that the catalog no longer excludes.
+# True when $1 is an active static path| rule. A rule written with a trailing
+# slash ($HOME/.gradle/) names the same directory.
+retired_path_is_static_rule() {
+    local static_rule
+    while IFS= read -r static_rule; do
+        [[ -z "$static_rule" ]] && continue
+        [[ "${static_rule%/}" = "$1" ]] && return 0
+    done <<EOF
+${CONF_PATHS}
+EOF
+    return 1
+}
+
+# Removal of a retired exclusion, with keep rules out of the way (see
+# migrate_retired_exclusions). CONF_KEEPS is restored when the function returns.
+remove_retired_exclusion() {
+    local CONF_KEEPS=""
+    remove_exclusion "$1"
+}
+
+# Paths the catalog used to exclude and no longer does: former path| rules, and
+# $HOME/.gradle, which the unguarded `.gradle` pattern matched as a whole.
 # Apply / dry-run / uninstall drop them from tmutil when still present so an
 # upgrade does not keep the old parent exclusion forever. Silent when the
 # path is not currently excluded (simulation mode, fresh install, already migrated).
+# A path the user still excludes with their own path| rule is left to the
+# static pass (kept by apply, removed by --uninstall like any static rule).
+# keep rules never block the removal: dropping a parent exclusion is what a
+# keep on one of its descendants needs.
 migrate_retired_exclusions() {
     local retired_path
     while IFS= read -r retired_path; do
         [[ -z "$retired_path" ]] && continue
+        if retired_path_is_static_rule "$retired_path"; then
+            continue
+        fi
         if [[ ! -e "$retired_path" ]] && [[ "${FORCE}" -eq 0 ]]; then
             continue
         fi
@@ -2281,9 +2341,10 @@ migrate_retired_exclusions() {
         RULE_CONTEXT="$MSG_RETIRED_EXCLUSION"
         RULE_CATEGORY=""
         log_info "  ${MSG_RETIRED_EXCLUSION} ${retired_path}"
-        remove_exclusion "$retired_path"
+        remove_retired_exclusion "$retired_path"
     done <<EOF
 ${HOME}/Library/Developer/CoreSimulator
+${HOME}/.gradle
 EOF
 }
 

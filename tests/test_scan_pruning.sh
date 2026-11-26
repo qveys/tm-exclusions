@@ -265,6 +265,107 @@ if [[ -x /opt/homebrew/bin/bash ]]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Match guards for `.gradle`, `venv` and `virtualenv`: only real project
+# caches and real environments are excluded; the Gradle user home and
+# look-alike source directories stay in backups.
+# ---------------------------------------------------------------------------
+echo ""
+echo "--- Match guards: .gradle, venv, virtualenv ---"
+
+G_HOME="$TEST_DIR/g"
+G_CONF="$TEST_DIR/g.conf"
+mkdir -p "$G_HOME/.config/tm_exclusions"
+cat > "$G_CONF" <<'CONF'
+path|$HOME/.gradle/caches|Gradle cache
+pattern|.gradle|Gradle project cache
+pattern|venv|Python virtual environment
+pattern|virtualenv|Python virtual environment (alt)
+CONF
+# Gradle user home: credentials and init scripts next to regenerable caches.
+# $HOME itself looks like a Gradle project (wrapper at its root): ~/.gradle
+# must still never be excluded as a whole.
+mkdir -p "$G_HOME/.gradle/caches" "$G_HOME/.gradle/init.d"
+touch "$G_HOME/.gradle/gradle.properties" "$G_HOME/gradlew"
+# Project caches, one per recognised sibling file.
+mkdir -p "$G_HOME/app-build/.gradle" "$G_HOME/app-build-kts/.gradle" \
+    "$G_HOME/app-settings/.gradle" "$G_HOME/app-settings-kts/.gradle" \
+    "$G_HOME/app-wrapper/.gradle"
+touch "$G_HOME/app-build/build.gradle" "$G_HOME/app-build-kts/build.gradle.kts" \
+    "$G_HOME/app-settings/settings.gradle" "$G_HOME/app-settings-kts/settings.gradle.kts" \
+    "$G_HOME/app-wrapper/gradlew"
+# A `.gradle` directory outside any Gradle project.
+mkdir -p "$G_HOME/notes/.gradle"
+# Real environments (pyvenv.cfg, legacy bin/activate) and look-alikes.
+mkdir -p "$G_HOME/py/venv" "$G_HOME/legacy/virtualenv/bin" \
+    "$G_HOME/cpython/Lib/venv" "$G_HOME/omz/plugins/virtualenv"
+touch "$G_HOME/py/venv/pyvenv.cfg" "$G_HOME/legacy/virtualenv/bin/activate" \
+    "$G_HOME/cpython/Lib/venv/__init__.py" \
+    "$G_HOME/omz/plugins/virtualenv/virtualenv.plugin.zsh"
+
+run_scan "$G_HOME" "$G_CONF" guards "$BASH32" 0
+sed 's|^\([a-z]*\) .*/g/|\1 |' "$TEST_DIR/calls.guards" | LC_ALL=C sort > "$TEST_DIR/guards_actual"
+cat > "$TEST_DIR/guards_expected" <<'EOF'
+addexclusion .gradle/caches
+addexclusion app-build-kts/.gradle
+addexclusion app-build/.gradle
+addexclusion app-settings-kts/.gradle
+addexclusion app-settings/.gradle
+addexclusion app-wrapper/.gradle
+addexclusion legacy/virtualenv
+addexclusion py/venv
+EOF
+assert_files_equal "$TEST_DIR/guards_expected" "$TEST_DIR/guards_actual" \
+    "guards: project .gradle caches and real environments only (not ~/.gradle, not look-alikes)"
+
+# Upgrade: an older catalog excluded ~/.gradle as a whole through the
+# unguarded pattern. The retired parent exclusion is dropped...
+TEST_STUB_EXCLUDED=1 run_scan "$G_HOME" "$G_CONF" guards_retired "$BASH32" 0
+sed 's|^\([a-z]*\) .*/g/|\1 |' "$TEST_DIR/calls.guards_retired" | LC_ALL=C sort > "$TEST_DIR/guards_retired_actual"
+printf 'removeexclusion .gradle\n' > "$TEST_DIR/guards_retired_expected"
+assert_files_equal "$TEST_DIR/guards_retired_expected" "$TEST_DIR/guards_retired_actual" \
+    "guards: a leftover ~/.gradle exclusion from an older catalog is dropped"
+
+# ...unless the user excludes ~/.gradle on purpose with their own path rule.
+cat > "$G_HOME/.config/tm_exclusions/custom.conf" <<'CONF'
+path|$HOME/.gradle|whole Gradle user home, on purpose
+CONF
+TEST_STUB_EXCLUDED=1 run_scan "$G_HOME" "$G_CONF" guards_optin "$BASH32" 0
+assert_eq 0 "$(grep -c . "$TEST_DIR/calls.guards_optin" || true)" \
+    "guards: a user path rule on ~/.gradle keeps its exclusion (no removal)"
+
+# Same rule written with a trailing slash: no remove/add ping-pong.
+cat > "$G_HOME/.config/tm_exclusions/custom.conf" <<'CONF'
+path|$HOME/.gradle/|whole Gradle user home, trailing slash
+CONF
+TEST_STUB_EXCLUDED=1 run_scan "$G_HOME" "$G_CONF" guards_optin_slash "$BASH32" 0
+assert_eq 0 "$(grep -c . "$TEST_DIR/calls.guards_optin_slash" || true)" \
+    "guards: a user path rule with a trailing slash also keeps the exclusion"
+
+# A keep rule below ~/.gradle must not block dropping the retired parent
+# exclusion: that removal is what puts the kept file back in backups. The run
+# exits non-zero here (the all-excluded stub makes check_keeps report the keep).
+cat > "$G_HOME/.config/tm_exclusions/custom.conf" <<'CONF'
+keep|$HOME/.gradle/gradle.properties|signing credentials
+CONF
+reset_logs
+env HOME="$G_HOME" TM_EXCLUSIONS_DEFAULT_CONF="$G_CONF" TEST_STUB_EXCLUDED=1 \
+    "$BASH32" "$TM_EXCLUSIONS" -q > "$TEST_DIR/out.guards_keep" 2>&1 || true
+assert_eq 1 "$(grep -c '^removeexclusion .*/g/\.gradle$' "$TEST_CALLS" || true)" \
+    "guards: a keep rule below ~/.gradle does not block dropping the retired parent"
+rm -f "$G_HOME/.config/tm_exclusions/custom.conf"
+
+# --uninstall ignores the new guards: earlier versions excluded every match,
+# so look-alikes and non-project .gradle directories must be reachable.
+TEST_STUB_EXCLUDED=1 run_scan "$G_HOME" "$G_CONF" guards_uninstall "$BASH32" 0 --uninstall
+sed 's|^\([a-z]*\) .*/g/|\1 |' "$TEST_DIR/calls.guards_uninstall" | LC_ALL=C sort -u > "$TEST_DIR/guards_uninstall_actual"
+for lookalike in .gradle notes/.gradle cpython/Lib/venv omz/plugins/virtualenv py/venv app-build/.gradle; do
+    assert_true "guards: --uninstall removes the exclusion on $lookalike" \
+        grep -Fxq "removeexclusion $lookalike" "$TEST_DIR/guards_uninstall_actual"
+done
+assert_eq 0 "$(grep -c '^addexclusion ' "$TEST_DIR/guards_uninstall_actual" || true)" \
+    "guards: --uninstall adds nothing"
+
+# ---------------------------------------------------------------------------
 # Guard list drift: pattern_is_guarded must name every pattern that
 # pattern_match_allowed can reject.
 # ---------------------------------------------------------------------------
@@ -276,14 +377,14 @@ FN_LABELS="$(awk '
     infn && /^}/ {exit}
     infn && /^    case "\$pat" in/ {incase=1; next}
     incase && /^        \*\)/ {exit}
-    incase && /^        [a-z][a-z-]*\)/ {gsub(/[ )]/, ""); print}
+    incase && /^        [.a-z][.a-z|-]*\)$/ {gsub(/[ )]/, ""); gsub(/\|/, "\n"); print}
 ' "$TM_EXCLUSIONS" | LC_ALL=C sort | tr '\n' ' ')"
 GUARD_LABELS="$(awk '
     /^pattern_is_guarded\(\)/ {infn=1; next}
     infn && /^}/ {exit}
     infn && /\) return 0 ;;/ {sub(/\) return 0 ;;.*/, ""); gsub(/^ +/, ""); gsub(/\|/, "\n"); print}
 ' "$TM_EXCLUSIONS" | LC_ALL=C sort | tr '\n' ' ')"
-assert_eq "site-packages target worktrees " "$FN_LABELS" \
+assert_eq ".gradle site-packages target venv virtualenv worktrees " "$FN_LABELS" \
     "pattern_match_allowed() guards the patterns this test expects"
 assert_eq "$FN_LABELS" "$GUARD_LABELS" \
     "pattern_is_guarded() lists exactly the patterns guarded in pattern_match_allowed()"

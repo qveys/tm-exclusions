@@ -167,19 +167,20 @@ Config files are loaded, merged, then applied via a dual `tmutil` strategy (user
 | Category | Examples |
 |---|---|
 | 🍎 **Applications** | Opt-in: `/Applications`, `$HOME/Applications` |
-| 📗 **Node.js / JavaScript** | npm/yarn/pnpm caches; opt-in `.bun` and `.nvm`;  dynamic `node_modules`, `.next`, `.turbo`, `.parcel-cache` |
-| 🐍 **Python** | pip/pipx caches and Python environments; opt-in mixed uv/conda roots; dynamic `.venv`, `venv`, `__pycache__`, `.pytest_cache`, `.ruff_cache` |
+| 📗 **Node.js / JavaScript** | npm/yarn/pnpm caches (incl. `~/Library/pnpm/store`), Bun package cache, nvm per-version `lib`/`bin` (not `etc/npmrc`), Puppeteer downloads; opt-in whole `.bun` and `.nvm` roots;  dynamic `node_modules`, `.next`, `.turbo`, `.parcel-cache` |
+| 🐍 **Python** | pip/pipx/uv caches, uv Python builds and tools, Python environments; opt-in mixed uv/conda roots; dynamic `.venv`, `venv` (real environments only), `__pycache__`, `.pytest_cache`, `.ruff_cache` |
 | 🐳 **Docker** | Opt-in Docker Desktop data (may contain databases and persistent volumes) |
-| 🍺 **Homebrew** | `/usr/local/Cellar` and discovered `brew --cache`; `/opt/homebrew` is opt-in (includes `etc` and `var`) |
+| 🍺 **Homebrew** | `/opt/homebrew/Cellar`, `/usr/local/Cellar` and discovered `brew --cache`; the whole `/opt/homebrew` is opt-in (includes `etc` and `var`) |
 | 🦀 **Rust / Cargo** | Cargo registry/git, rustup toolchains; dynamic `target` |
-| ☕ **Java / JVM** | Maven, Gradle, Ivy and Coursier caches; opt-in SBT root; dynamic `.gradle` |
+| ☕ **Java / JVM** | Maven, Gradle, Ivy and Coursier caches; opt-in SBT root; dynamic `.gradle` (project caches only, never `~/.gradle`) |
+| 🤖 **Android** | Android SDK, tooling cache; emulator images (`~/.android/avd`) are opt-in |
 | 🐹 **Go** | Go module cache, build cache |
 | 💎 **Ruby / iOS** | rbenv; opt-in mixed RVM/gems/CocoaPods roots; dynamic `Pods` |
 | 🔨 **Xcode / Apple Dev Tools** | DerivedData, DeviceSupport, CoreSimulator Caches/Temp/Volumes; Archives and Devices are opt-in |
 | 🗄️ **macOS Caches** | `~/Library/Caches`, `/private/var/folders`; Logs are opt-in |
 | 🛠️ **Dev Tools** | IDE caches (JetBrains, VS Code), Terraform and kubectl caches; mixed Pulumi/Helm roots are opt-in |
 | 🤖 **AI / LLM** | Hugging Face, LM Studio, Claude runtime bundles, SuperWhisper; Ollama models and agent sessions are opt-in |
-| 🧰 **IDE and Dev Tool Caches** | Selective Application Support caches: Cursor Chromium cache, JetBrains plugins, Zed languages, Discord Cache, … |
+| 🧰 **IDE and Dev Tool Caches** | Selective Application Support caches: Cursor and VS Code Chromium caches, JetBrains plugins, Zed languages, Discord Cache, … |
 | 🤝 **Claude Code / Codex** | Opt-in `.auto-claude`, `.codex`, `worktrees` (may contain uncommitted work and settings) |
 | 🧼 **Generic caches** | (opt-in — see config) Pattern `.cache` |
 | 🚫 **Prune zones** | Skip-scan-only: `~/Library`, `~/.Trash`, `~/.bun`, `~/.nvm`, package-manager `.bak`/`.old` shadow copies (`.bun.bak`, `.npm.bak`, …) |
@@ -483,8 +484,8 @@ launchctl load ~/Library/LaunchAgents/com.tm-exclusions.weekly.plist
 - Report disk-usage uses `du -sk` and ignores permission-denied children, so partially-readable trees like `/private/var/folders` cannot abort a run under `set -euo pipefail`.
 - Verbose runs show a right-aligned, human-readable size (e.g. `1.0G`) next to each processed path; missing or unreadable paths show `-` without failing, and the summary/report gain a cumulative `Disk usage total:` line. Each path is measured once (`du -sk`) and the report reuses that measurement, so trees are never walked twice. `--quiet` adds no per-path lines; `TM_EXCLUSIONS_SKIP_DU=1` disables the size column as well.
 - Reports include a rule summary, separate missing-path and privilege-blocked counts, and an explicit `tmutil listexclusions` status (`ok`, `empty`, `failed`, or `unavailable`).
-- `--uninstall` removes exclusions matching current configured static rules, dynamic matches, and discovered extra paths. It also drops retired catalog paths that are still excluded (today: the former `$HOME/Library/Developer/CoreSimulator` parent).
-- Apply and `--dry-run` drop that same retired parent exclusion when `tmutil` still has it, then add the granular CoreSimulator subdirs. Manual equivalent: `tmutil removeexclusion "$HOME/Library/Developer/CoreSimulator"`.
+- `--uninstall` removes exclusions matching current configured static rules, dynamic matches, and discovered extra paths. It also drops retired catalog paths that are still excluded (today: the former `$HOME/Library/Developer/CoreSimulator` parent, and `$HOME/.gradle`, which the `.gradle` pattern used to match as a whole).
+- Apply and `--dry-run` drop those same retired exclusions when `tmutil` still has them, then add the granular rules (CoreSimulator subdirs, `~/.gradle/caches` and `~/.gradle/wrapper`); `--dry-run` only reports the removal. A retired path you still exclude with your own `path` rule is not migrated (`--uninstall` still removes it, like any static rule), and a `keep` rule below a retired path never blocks its removal. Manual equivalent: `tmutil removeexclusion "$HOME/Library/Developer/CoreSimulator"` and `tmutil removeexclusion "$HOME/.gradle"`.
 - Dynamic scan depth is intentionally capped to `find -maxdepth 6`.
 - Default stdout shows grouped results and counters. `--verbose` adds per-path status lines; in plain output it also prints the full report. `--quiet` continues to print the full report without status lines and takes precedence over `--verbose`. The full report is always saved.
 - On non-macOS or without `tmutil`, behavior is simulated (useful for tests).

@@ -47,7 +47,7 @@ Targets may use leading `~` (expanded to `$HOME`) or the literal substring `$HOM
 | `path` | Static exclusion: apply `tmutil addexclusion` to the expanded path (optional glob expansion at load time) |
 | `pattern` | Dynamic scan: a single `find $HOME -maxdepth 6 -type d \( -name <p1> -o -name <p2> … \)` over all patterns, then exclude matches |
 | `prune` | Scan skip: paths under this prefix are ignored during dynamic pattern scanning (not excluded from backup) |
-| `keep` | Protect a literal path and descendants across all modes; also block ancestor exclusions. Existing exclusions are reported, not automatically removed. |
+| `keep` | Protect a literal path and descendants across all modes; also block ancestor exclusions. Existing exclusions are reported, not automatically removed — except retired catalog exclusions (`migrate_retired_exclusions()`): the migration drops those before keeps are checked, so a `keep` below a retired path gets its parent exclusion removed, unless an active static `path` rule still asks for that path. |
 | `setting` | Preference, not a Time Machine rule. Keys: `report_path` (saved report **file** path) and boolean `desktop_report` / `scan_images` (`true`/`1`/`yes` or `false`/`0`/`no`). Unknown keys and invalid `desktop_report` values warn on stderr and are ignored. |
 
 ## Scan Logic
@@ -84,7 +84,7 @@ The scan used to filter after discovery: `find` walked every directory under `$H
 
 - **Layer 1** prints each zone root once before pruning it; the scan reports one `Pruning (skipping scan of):` entry per zone root (and the grouped `Pruned:` counter counts zones). Before #13 it reported one entry per nested match, which the traversal no longer visits. The zone is still never excluded from Time Machine.
 - **Layer 2** reuses the kept-file seed of the prefix-prune (#23): a static path seeded there already covers all of its descendants, so descending adds nothing. Static paths protected by (or protecting) a `keep` are not seeded and not pruned.
-- **Layer 3** is limited to patterns that `pattern_match_allowed()` never rejects. Guarded patterns (`target`, `worktrees`, `site-packages`, listed in `pattern_is_guarded()`; a test keeps both lists in sync) may be dropped after discovery, so their subtrees keep being traversed. With any `keep` rule configured the layer is off: a `keep` decides per match whether a directory is excluded, so nothing can be assumed covered.
+- **Layer 3** is limited to patterns that `pattern_match_allowed()` never rejects. Guarded patterns (`target`, `worktrees`, `site-packages`, `.gradle`, `venv`, `virtualenv`, listed in `pattern_is_guarded()`; a test keeps both lists in sync) may be dropped after discovery, so their subtrees keep being traversed. With any `keep` rule configured the layer is off: a `keep` decides per match whether a directory is excluded, so nothing can be assumed covered.
 - `--uninstall` bypasses the kept-prefix filter on purpose (every nested exclusion added by older versions must be removed individually), so only layer 1 applies there.
 - Only existing, shallow-enough (depth ≤ 6) directories that are not symbolic links become `-path` clauses; glob metacharacters in zone names are escaped. Anything else is simply handled by the post-filters.
 
