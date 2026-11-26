@@ -452,6 +452,19 @@ for target in /opt/homebrew "$HOME/.pulumi" "$HOME/Library/Developer/Xcode/Archi
     assert_true "catalog does not ship $target" \
         not grep -Fxq "$target" <<<"$CONF_PATHS"
 done
+# Focused regenerable subtrees ship by default; their mixed parents stay opt-in.
+for target in "$HOME/.bun/install/cache" "$HOME/.nvm/versions" "$HOME/.cache/uv" \
+    "$HOME/.local/share/uv/python" "$HOME/.local/share/uv/tools" \
+    "$HOME/Library/pnpm/store" "$HOME/Library/Android/sdk" /opt/homebrew/Cellar \
+    "$HOME/Library/Application Support/Code/CachedData"; do
+    assert_true "catalog ships $target" \
+        grep -Fxq "$target" <<<"$CONF_PATHS"
+done
+for target in "$HOME/.bun" "$HOME/.nvm" "$HOME/.local/share/uv" "$HOME/Library/pnpm" \
+    "$HOME/.android/avd" "$HOME/.ollama/models" "$HOME/Library/Application Support/Code"; do
+    assert_true "catalog does not ship $target" \
+        not grep -Fxq "$target" <<<"$CONF_PATHS"
+done
 for pattern in .codex .auto-claude worktrees build dist; do
     assert_true "catalog does not ship the $pattern pattern" \
         not grep -Fxq "$pattern" <<<"$CONF_PATTERNS"

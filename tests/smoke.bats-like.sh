@@ -702,7 +702,7 @@ fi
 
 # Distinct #@ category labels == EXPECTED_CATEGORY_COUNT. Single source of the
 # number; scripts/add-category.sh bumps this exact line when it adds a category.
-EXPECTED_CATEGORY_COUNT=17 # add-category: expected category count
+EXPECTED_CATEGORY_COUNT=18 # add-category: expected category count
 LABEL_COUNT=$({ grep -E '^#@' "${CONF}" || true; } | sort -u | wc -l | tr -d ' ')
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ "${LABEL_COUNT}" -eq "${EXPECTED_CATEGORY_COUNT}" ]]; then

@@ -167,19 +167,20 @@ Config files are loaded, merged, then applied via a dual `tmutil` strategy (user
 | Category | Examples |
 |---|---|
 | 🍎 **Applications** | Opt-in: `/Applications`, `$HOME/Applications` |
-| 📗 **Node.js / JavaScript** | npm/yarn/pnpm caches; opt-in `.bun` and `.nvm`;  dynamic `node_modules`, `.next`, `.turbo`, `.parcel-cache` |
-| 🐍 **Python** | pip/pipx caches and Python environments; opt-in mixed uv/conda roots; dynamic `.venv`, `venv`, `__pycache__`, `.pytest_cache`, `.ruff_cache` |
+| 📗 **Node.js / JavaScript** | npm/yarn/pnpm caches (incl. `~/Library/pnpm/store`), Bun package cache, nvm versions, Puppeteer downloads; opt-in whole `.bun` and `.nvm` roots;  dynamic `node_modules`, `.next`, `.turbo`, `.parcel-cache` |
+| 🐍 **Python** | pip/pipx/uv caches, uv Python builds and tools, Python environments; opt-in mixed uv/conda roots; dynamic `.venv`, `venv` (real environments only), `__pycache__`, `.pytest_cache`, `.ruff_cache` |
 | 🐳 **Docker** | Opt-in Docker Desktop data (may contain databases and persistent volumes) |
-| 🍺 **Homebrew** | `/usr/local/Cellar` and discovered `brew --cache`; `/opt/homebrew` is opt-in (includes `etc` and `var`) |
+| 🍺 **Homebrew** | `/opt/homebrew/Cellar`, `/usr/local/Cellar` and discovered `brew --cache`; the whole `/opt/homebrew` is opt-in (includes `etc` and `var`) |
 | 🦀 **Rust / Cargo** | Cargo registry/git, rustup toolchains; dynamic `target` |
-| ☕ **Java / JVM** | Maven, Gradle, Ivy and Coursier caches; opt-in SBT root; dynamic `.gradle` |
+| ☕ **Java / JVM** | Maven, Gradle, Ivy and Coursier caches; opt-in SBT root; dynamic `.gradle` (project caches only, never `~/.gradle`) |
+| 🤖 **Android** | Android SDK, tooling cache; emulator images (`~/.android/avd`) are opt-in |
 | 🐹 **Go** | Go module cache, build cache |
 | 💎 **Ruby / iOS** | rbenv; opt-in mixed RVM/gems/CocoaPods roots; dynamic `Pods` |
 | 🔨 **Xcode / Apple Dev Tools** | DerivedData, DeviceSupport, CoreSimulator Caches/Temp/Volumes; Archives and Devices are opt-in |
 | 🗄️ **macOS Caches** | `~/Library/Caches`, `/private/var/folders`; Logs are opt-in |
 | 🛠️ **Dev Tools** | IDE caches (JetBrains, VS Code), Terraform and kubectl caches; mixed Pulumi/Helm roots are opt-in |
 | 🤖 **AI / LLM** | Hugging Face, LM Studio, Claude runtime bundles, SuperWhisper; Ollama models and agent sessions are opt-in |
-| 🧰 **IDE and Dev Tool Caches** | Selective Application Support caches: Cursor Chromium cache, JetBrains plugins, Zed languages, Discord Cache, … |
+| 🧰 **IDE and Dev Tool Caches** | Selective Application Support caches: Cursor and VS Code Chromium caches, JetBrains plugins, Zed languages, Discord Cache, … |
 | 🤝 **Claude Code / Codex** | Opt-in `.auto-claude`, `.codex`, `worktrees` (may contain uncommitted work and settings) |
 | 🧼 **Generic caches** | (opt-in — see config) Pattern `.cache` |
 | 🚫 **Prune zones** | Skip-scan-only: `~/Library`, `~/.Trash`, `~/.bun`, `~/.nvm`, package-manager `.bak`/`.old` shadow copies (`.bun.bak`, `.npm.bak`, …) |
