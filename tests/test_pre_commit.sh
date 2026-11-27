@@ -73,17 +73,28 @@ NOSC_BIN="${WORK}/nosc-bin"
 mkdir -p "$NOSC_BIN"
 for tool in bash sh env git head tr mktemp rm dirname basename grep cat sed \
             mkdir sort uname expr cut awk wc ls date; do
-    # First real executable on PATH (skip wrapper shims such as a git harness
-    # that look for the real tool further down PATH).
+    # First real executable on PATH. Wrapper shims (a git harness, or a `git`
+    # dispatcher script in ~/.local/bin) look for the real tool further down
+    # PATH and strip their own directory from it: symlinked into this
+    # restricted directory they cannot resolve anything and exit 127 (the hook
+    # would then see "not inside a git work tree" and skip every check). So
+    # prefer a compiled binary over a `#!` script; keep the first script only
+    # as a fallback when no binary exists.
     tool_path=""
+    script_path=""
     IFS=: read -r -a path_dirs <<< "$ORIG_PATH"
     for dir in "${path_dirs[@]}"; do
         case "$dir" in *claude-gh-harness*) continue ;; esac
         if [[ -n "$dir" && -x "${dir}/${tool}" && ! -d "${dir}/${tool}" ]]; then
+            if [[ "$(head -c 2 "${dir}/${tool}" 2>/dev/null)" == '#!' ]]; then
+                [[ -n "$script_path" ]] || script_path="${dir}/${tool}"
+                continue
+            fi
             tool_path="${dir}/${tool}"
             break
         fi
     done
+    [[ -n "$tool_path" ]] || tool_path="$script_path"
     if [[ -n "$tool_path" ]]; then
         ln -s "$tool_path" "${NOSC_BIN}/${tool}"
     fi
