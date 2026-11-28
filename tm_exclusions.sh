@@ -246,7 +246,12 @@ show_scan_path() {
     # Printable ASCII occupies one cell per character.
     local ascii='^[ -~]*$'
     if [[ "$display" =~ $ascii ]]; then width=$((STATUS_COLUMNS - 2 - ${#prefix})); fi
-    if (( width <= 0 )); then draw_status; return 0; fi
+    if (( width <= 0 )); then
+        prefix="${prefix% }"
+        if (( ${#prefix} > STATUS_COLUMNS )); then prefix=""; fi
+        draw_status "$UI_DIM$prefix$UI_RESET"
+        return 0
+    fi
     # Literal home abbreviation for display only.
     # shellcheck disable=SC2088
     case "$display" in

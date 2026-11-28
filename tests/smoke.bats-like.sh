@@ -2151,6 +2151,9 @@ UI=1
 SCAN_COLUMNS=22
 show_scan_path "$HOME/repo/node_modules" "1s · Last match " "1s " > "$3/narrow-match"
 grep -q "1s .*ules" "$3/narrow-match"
+SCAN_COLUMNS=15
+show_scan_path "$HOME/repo/node_modules" "1s · Last match " "1s " > "$3/tiny-match"
+grep -q "1s" "$3/tiny-match"
 SCAN_COLUMNS=30
 show_scan_path "$HOME/a very long directory name/with-tail" > "$3/short-discovery"
 grep -q "with-tail" "$3/short-discovery"
