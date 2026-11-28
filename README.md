@@ -45,7 +45,7 @@ Preview the selected exclusions with `tm-exclusions --dry-run` before applying t
 
 ## 🎨 Terminal display
 
-Interactive terminals get cyan section headings, status colors, emojis, progress
+Interactive terminals get bold magenta headings, cyan progress bars, status colors, emojis, progress
 bars and a final summary. A blank line separates status entries and groups related
 counters in the summary. By default, exclusions and prune matches
 are grouped by natural root (a `Git/<repo>`, a hidden `~/.tool`, or the matched

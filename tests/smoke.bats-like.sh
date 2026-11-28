@@ -2070,6 +2070,11 @@ init_ui
 UI=1
 UI_CYAN=$(printf "\033[36m")
 UI_RESET=$(printf "\033[0m")
+UI_HEADING=$(printf "\033[1;35m")
+ui_section "📁" "Section" > "$3/heading"
+ui_category "Category" >> "$3/heading"
+grep -Fq "$UI_HEADING  ━━ 📁  Section$UI_RESET" "$3/heading"
+grep -Fq "${UI_HEADING}══ Category ══$UI_RESET" "$3/heading"
 progress_start "$(printf "one\ntwo")" > "$3/progress"
 progress_step >> "$3/progress"
 start_activity "Measuring" > "$3/counted-activity"

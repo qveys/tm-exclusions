@@ -172,6 +172,7 @@ UI_TOTAL=0
 UI_METER=""
 UI_RESET=""
 UI_CYAN=""
+UI_HEADING=""
 UI_GREEN=""
 UI_DIM=""
 
@@ -182,6 +183,7 @@ init_ui() {
         case "$SCAN_COLUMNS" in ''|*[!0-9]*) SCAN_COLUMNS=80 ;; esac
         UI_RESET=$'\033[0m'
         UI_CYAN=$'\033[1;36m'
+        UI_HEADING=$'\033[1;35m'
         UI_GREEN=$'\033[32m'
         UI_DIM=$'\033[2m'
     fi
@@ -203,7 +205,7 @@ ui_section() {
     UI_METER=""
     clear_progress
     if [[ "${UI}" -eq 1 ]]; then
-        printf '\n%s  %s  %s%s\n\n' "$UI_CYAN" "$1" "$2" "$UI_RESET"
+        printf '\n%s  ━━ %s  %s%s\n\n' "$UI_HEADING" "$1" "$2" "$UI_RESET"
     else
         log_info ""
         log_info "$2"
@@ -402,7 +404,7 @@ ui_category() {
     [[ "${QUIET}" -eq 0 ]] || return 0
     clear_progress
     if [[ "${UI}" -eq 1 ]]; then
-        printf '\n  %s══ %s ══%s\n' "$UI_CYAN" "$1" "$UI_RESET"
+        printf '\n  %s══ %s ══%s\n' "$UI_HEADING" "$1" "$UI_RESET"
         if [[ "${DEBUG_LOG_FD}" -eq 1 ]]; then
             echo "══ $1 ══" >&5 2>/dev/null || true
         fi
@@ -3379,7 +3381,7 @@ main() {
     fi
 
     if [[ "${UI}" -eq 1 ]]; then
-        printf '\n%s  🛡️  %s%s  v%s\n' "$UI_CYAN" "$PROGRAM_NAME" "$UI_RESET" "$VERSION"
+        printf '\n%s  🛡️  %s%s  v%s\n' "$UI_HEADING" "$PROGRAM_NAME" "$UI_RESET" "$VERSION"
         printf '  %s\n' "$MSG_HELP_DESC"
         local mode_label="$MSG_UI_APPLY"
         case "$MODE" in
