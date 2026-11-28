@@ -21,6 +21,12 @@ See [`AGENTS.md`](AGENTS.md) for the full architecture, build commands, and Bash
 - **Keep tests deterministic.** `tests/smoke.bats-like.sh` runs against `--dry-run`; it must not require sudo or real `tmutil` state.
 - **Never load a script with `source <(…)` in tests** (silent false green under Bash 3.2: it returns 0 without defining anything). Write it to a temporary file with `write_functions_file`, `source` that file, then call `require_functions` (both in `tests/test_helpers.sh`); `test_summary` fails a suite that ran no assertion.
 
+## Timing the tests
+
+On the reference Apple M4 Pro, aim for a median below three minutes for `make test` with Bash 5 on PATH, Python 3 and tmux installed. Run `time make test` three times in succession and compare the assertion totals printed by each suite. Record the shell version and any reported skips so the runs exercise the same cases.
+
+Use `time bash tests/test_tmux_ui.sh` to measure a single suite. The tmux fixture waits for session closure on its private socket. The Homebrew smoke scenarios run real directory discovery and disk measurement on tiny application bundles. Keep a fresh capture for each CLI scenario and reuse it for all assertions on that invocation.
+
 ## Pre-commit checks
 
 `make setup` also activates the [`pre-commit`](.githooks/pre-commit) hook: staged `.sh` files are checked with ShellCheck, staged `.conf` files with `scripts/check-conf.sh`, and editing one locale file without the other prints a reminder (`make check-i18n`). It only inspects staged files (their **staged content**, so a partially staged file is judged on what will be committed), so it is fast; `make check` remains the full gate.

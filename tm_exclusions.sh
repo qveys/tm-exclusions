@@ -2097,6 +2097,14 @@ cmd_config_add() {
         log_error "$MSG_INVALID_RULE"
         exit 1
     fi
+    if [[ -z "$entry_path" ]]; then
+        log_error "$MSG_ERROR_EMPTY_TARGET"
+        exit 1
+    fi
+    if [[ "$entry_type" = pattern && "$entry_path" == */* ]]; then
+        log_error "$MSG_ERROR_PATTERN_SLASH"
+        exit 1
+    fi
     # Literal config placeholders are expanded when loading.
     # shellcheck disable=SC2088,SC2016
     if [[ "$entry_type" = keep && "$entry_path" != /* && "$entry_path" != '~' && "$entry_path" != '~/'* && "$entry_path" != '$HOME' && "$entry_path" != '$HOME/'* ]]; then
@@ -3547,8 +3555,37 @@ show_version() {
 # ---------------------------------------------------------------------------
 # Argument parsing
 # ---------------------------------------------------------------------------
-parse_args() {
+# Select the language before any diagnostic and skip --add's literal operands.
+prescan_args() {
     while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --quiet|-q)
+                QUIET=1
+                ;;
+            --lang)
+                [[ $# -ge 2 ]] || break
+                LANG_OVERRIDE="$2"
+                shift
+                ;;
+            --lang=*)
+                LANG_OVERRIDE="${1#*=}"
+                ;;
+            --add)
+                [[ $# -ge 4 ]] || break
+                shift 3
+                ;;
+        esac
+        shift
+    done
+}
+
+parse_args() {
+    local lang
+    while [[ $# -gt 0 ]]; do
+        if [[ "$CONFIG_CMD" = add && "$1" != --lang && "$1" != --lang=* ]]; then
+            log_error "${MSG_ERROR_INVALID_ARG} $1"
+            exit 1
+        fi
         case "$1" in
             --help|-h)
                 CONFIG_CMD="help"
@@ -3561,11 +3598,12 @@ parse_args() {
             --dry-run)
                 DRY_RUN=1
                 ;;
-            --report-only)
-                MODE="report-only"
-                ;;
-            --uninstall)
-                MODE="uninstall"
+            --report-only|--uninstall)
+                if [[ "$MODE" != apply && "$MODE" != "${1#--}" ]]; then
+                    log_error "$MSG_ERROR_MODE_CONFLICT"
+                    exit 1
+                fi
+                MODE="${1#--}"
                 ;;
             --force)
                 FORCE=1
@@ -3582,16 +3620,19 @@ parse_args() {
             --tmux)
                 TMUX_MODE=1
                 ;;
-            --lang)
-                if [[ $# -lt 2 ]]; then
-                    log_error "${MSG_ERROR_MISSING_ARGS}"
-                    exit 1
+            --lang|--lang=*)
+                if [[ "$1" = --lang ]]; then
+                    if [[ $# -lt 2 ]]; then
+                        log_error "${MSG_ERROR_MISSING_ARGS}"
+                        exit 1
+                    fi
+                    shift
+                    lang="$1"
+                else
+                    lang="${1#*=}"
                 fi
-                shift
-                case "$1" in
-                    en|fr)
-                        LANG_OVERRIDE="$1"
-                        ;;
+                case "$lang" in
+                    en|fr) ;;
                     *)
                         log_error "${MSG_ERROR_INVALID_LANG}"
                         exit 1
@@ -3604,18 +3645,10 @@ parse_args() {
                     exit 1
                 fi
                 CONFIG_CMD="add"
-                shift
-                CONFIG_ADD_TYPE="$1"
-                shift
-                CONFIG_ADD_PATH="$1"
-                shift
-                CONFIG_ADD_REASON="$1"
-                shift
-                if [[ $# -gt 0 ]]; then
-                    log_error "${MSG_ERROR_INVALID_ARG} $1"
-                    exit 1
-                fi
-                return 0
+                CONFIG_ADD_TYPE="$2"
+                CONFIG_ADD_PATH="$3"
+                CONFIG_ADD_REASON="$4"
+                shift 3
                 ;;
             --list)
                 CONFIG_CMD="list"
@@ -3647,42 +3680,19 @@ main() {
     trap 'on_signal TERM' TERM
     trap 'on_signal HUP' HUP
 
-    # First pass: detect --lang and --quiet before i18n init
-    local arg
-    for arg in "$@"; do
-        case "$arg" in
-            --quiet|-q) QUIET=1 ;;
-        esac
-    done
-
-    # Peek for --lang in args
-    local i=0
-    for arg in "$@"; do
-        i=$((i + 1))
-        if [[ "$arg" = "--lang" ]]; then
-            local next_i=$((i + 1))
-            local j=0
-            for a2 in "$@"; do
-                j=$((j + 1))
-                if [[ "$j" -eq "$next_i" ]]; then
-                    # Capture raw value; detect_language/load_i18n allowlist
-                    # before any locale path is built. parse_args reports
-                    # MSG_ERROR_INVALID_LANG for unsupported codes.
-                    LANG_OVERRIDE="$a2"
-                    break
-                fi
-            done
-            break
-        fi
-    done
-
-    # Initialize language
+    prescan_args "$@"
     detect_language
 
     init_ui
 
     # Parse arguments fully
     parse_args "$@"
+
+    if [[ "$FORCE" -eq 1 && "$CONFIG_CMD" != help && "$CONFIG_CMD" != version ]] &&
+        [[ "$MODE" != uninstall || -n "$CONFIG_CMD" ]]; then
+        log_error "$MSG_ERROR_FORCE_REQUIRES_UNINSTALL"
+        exit 1
+    fi
 
     case "${CONFIG_CMD}" in
         add|list|edit|"")
