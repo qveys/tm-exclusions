@@ -307,8 +307,8 @@ file starts in the default category, so a section of `default.conf` never leaks 
 path|~/MyLargeDataset|Large dataset not needed in backup
 ```
 
-Rules added with `--add` are appended at the end of the file and therefore join its
-last section.
+`--add` writes each rule on its own line in the last section, even when the file
+ends with an unterminated rule or comment.
 
 ### Protect data and choose broader exclusions
 

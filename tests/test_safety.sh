@@ -357,10 +357,16 @@ assert_file_lacks_regex "$TEST_CALLS" '^(addexclusion|removeexclusion) ' \
     "an invalid keep rule prevents all mutation"
 assert_file_contains "$TM_EXCLUSIONS_REPORT" 'Invalid keep rule' \
     "an invalid keep rule is reported"
+printf '%s' '# last comment' > "$HOME/.config/tm_exclusions/custom.conf"
 : > "$TM_EXCLUSIONS_DEFAULT_CONF"
 run 0 --add keep "$HOME/project" 'preserve state'
 assert_file_contains "$HOME/.config/tm_exclusions/custom.conf" \
     "keep|$HOME/project|preserve state" "--add persists the keep rule"
+assert_true "--add starts a new line after an unterminated comment" \
+    grep -Fxq "keep|$HOME/project|preserve state" "$HOME/.config/tm_exclusions/custom.conf"
+run 0 --add keep "$HOME/other" 'another keep'
+assert_eq 3 "$(wc -l < "$HOME/.config/tm_exclusions/custom.conf" | tr -d ' ')" \
+    "--add preserves the comment and adds no blank line after a terminated rule"
 run 1 --add keep 'relative/path' 'invalid'
 run 1 --add keep "$HOME/project" $'bad\npath|/|injection'
 run 0 --lang fr --dry-run

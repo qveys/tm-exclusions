@@ -2111,7 +2111,13 @@ cmd_config_add() {
         log_error "$MSG_INVALID_KEEP"
         exit 1
     fi
-    echo "${entry_type}|${entry_path}|${entry_reason}" >> "${CUSTOM_CONF}"
+    local separator=""
+    if [[ -s "$CUSTOM_CONF" ]]; then
+        # Command substitution strips a final newline, leaving other bytes intact.
+        separator="$(tail -c 1 "$CUSTOM_CONF")"
+        [[ -z "$separator" ]] || separator=$'\n'
+    fi
+    printf '%s%s|%s|%s\n' "$separator" "$entry_type" "$entry_path" "$entry_reason" >> "$CUSTOM_CONF"
     log_info "${MSG_CONFIG_ADDED} ${entry_type}|${entry_path}|${entry_reason}"
 }
 
