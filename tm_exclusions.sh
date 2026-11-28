@@ -2346,6 +2346,7 @@ ${HOME}/Library/Developer/CoreSimulator
 ${HOME}/.gradle
 ${HOME}/.cache/huggingface
 ${HOME}/Library/Application Support/Claude/vm_bundles
+${HOME}/Library/Application Support/JetBrains/Toolbox/plugins
 EOF
 }
 

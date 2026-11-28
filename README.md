@@ -180,7 +180,7 @@ Config files are loaded, merged, then applied via a dual `tmutil` strategy (user
 | 🗄️ **macOS Caches** | `~/Library/Caches`, `/private/var/folders`; Logs are opt-in |
 | 🛠️ **Dev Tools** | IDE caches (JetBrains, VS Code), Terraform and kubectl caches; mixed Pulumi/Helm roots are opt-in |
 | 🤖 **AI / LLM** | Hugging Face Hub and Xet caches, LM Studio, Claude VM base image (`rootfs.img`), SuperWhisper; Ollama models and agent sessions are opt-in |
-| 🧰 **IDE and Dev Tool Caches** | Selective Application Support caches: Cursor and VS Code Chromium caches, JetBrains plugins, Zed languages, Discord Cache, … |
+| 🧰 **IDE and Dev Tool Caches** | Selective Application Support caches: Cursor and VS Code Chromium caches, versioned JetBrains IDE plugins, Zed languages, Discord Cache, … |
 | 🤝 **Claude Code / Codex** | Opt-in `.auto-claude`, `.codex`, `worktrees` (may contain uncommitted work and settings) |
 | 🧼 **Generic caches** | (opt-in — see config) Pattern `.cache` |
 | 🚫 **Prune zones** | Skip-scan-only: `~/Library`, `~/.Trash`, `~/.bun`, `~/.nvm`, package-manager `.bak`/`.old` shadow copies (`.bun.bak`, `.npm.bak`, …) |
@@ -293,6 +293,12 @@ Devices, IDE workspaceStorage, agent directories) and generic `build`/`dist`
 patterns now ship commented out. Copy individual rules from `config/default.conf`
 to `custom.conf` if needed. An upgrade does not remove previously applied exclusions
 for these paths or old discovered images: review them explicitly before relying on backups.
+
+The built-in rules also cover npm's `_cacache` and `_npx` under `~/.cache/npm`,
+the pnpm store under `~/.local/share/pnpm`, and Gradle's `caches` and `wrapper`
+under `~/.local/share/gradle`. JetBrains Toolbox plugin settings stay eligible
+for backup. The next apply retires the old exclusion on `Toolbox/plugins` unless
+an explicit path rule still selects it.
 
 On the next apply, tm-exclusions removes legacy whole-directory exclusions for
 `~/.cache/huggingface` and `~/Library/Application Support/Claude/vm_bundles`

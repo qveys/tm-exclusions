@@ -451,14 +451,19 @@ declare_i18n_en
 mkdir -p "$HOME/.nvm/versions/node/v22.1.0/lib" "$HOME/.nvm/versions/node/v22.1.0/bin" \
     "$HOME/.nvm/versions/node/v22.1.0/etc"
 touch "$HOME/.nvm/versions/node/v22.1.0/etc/npmrc"
+jb="$HOME/Library/Application Support/JetBrains"
+mkdir -p "$jb/IntelliJIdea2026.3/plugins" "$jb/WebStorm2026.2/plugins" "$jb/Toolbox/plugins/ssh"
 parse_config_file "$ROOT/config/default.conf"
-for target in /opt/homebrew "$HOME/.pulumi" "$HOME/Library/Developer/Xcode/Archives" \
+for target in "$jb/Toolbox/plugins" /opt/homebrew "$HOME/.pulumi" "$HOME/Library/Developer/Xcode/Archives" \
     "$HOME/Library/Containers/com.docker.docker" "$HOME/Library/Developer/CoreSimulator/Devices"; do
     assert_true "catalog does not ship $target" \
         not grep -Fxq "$target" <<<"$CONF_PATHS"
 done
 # Focused regenerable subtrees ship by default; their mixed parents stay opt-in.
-for target in "$HOME/.bun/install/cache" "$HOME/.nvm/.cache" "$HOME/.cache/uv" \
+for target in "$jb/IntelliJIdea2026.3/plugins" "$jb/WebStorm2026.2/plugins" \
+    "$HOME/.cache/npm/_cacache" "$HOME/.cache/npm/_npx" "$HOME/.local/share/pnpm/store" \
+    "$HOME/.local/share/gradle/caches" "$HOME/.local/share/gradle/wrapper" \
+    "$HOME/.bun/install/cache" "$HOME/.nvm/.cache" "$HOME/.cache/uv" \
     "$HOME/.local/share/uv/python" "$HOME/.local/share/uv/tools" \
     "$HOME/Library/pnpm/store" "$HOME/Library/Android/sdk" /opt/homebrew/Cellar \
     "$HOME/Library/Application Support/Code/CachedData"; do

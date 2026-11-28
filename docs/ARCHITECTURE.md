@@ -38,7 +38,7 @@ Strings for **en** / **fr** live in `locales/{en,fr}.sh`; see **`docs/I18N.md`**
 
 Later **rule** entries (`path` / `pattern` / `prune` / `keep`) are appended; there is no override or deduplication. **`setting`** lines are last-wins (a later file or later line replaces the earlier value for that key). Both files use the same `type|target|reason` format.
 
-Targets may use leading `~` (expanded to `$HOME`) or the literal substring `$HOME` (expanded at parse time). For `setting|report_path|<file>`, those expansions apply to the **value** (third field). `path` targets may also contain glob metacharacters (`*`, `?`, `[`); they are expanded with `compgen -G` at load time. Unmatched globs are dropped so a literal `*` is never passed to `tmutil`. This is how versioned folders such as `$HOME/Library/Application Support/JetBrains/*/plugins` are covered without listing every IDE release.
+Targets may use leading `~` (expanded to `$HOME`) or the literal substring `$HOME` (expanded at parse time). For `setting|report_path|<file>`, those expansions apply to the **value** (third field). `path` targets may also contain glob metacharacters (`*`, `?`, `[`); they are expanded with `compgen -G` at load time. Unmatched globs are dropped so a literal `*` is never passed to `tmutil`. This is how versioned folders such as `$HOME/Library/Application Support/JetBrains/IntelliJIdea2026.3/plugins` are covered without listing every IDE release.
 
 ## Config Entry Types
 
@@ -301,7 +301,7 @@ Missing keep targets are protected from future exclusions but cannot be checked 
 Malformed protection rules abort before exclusion processing.
 
 The retired-parent migration covers user CoreSimulator, `~/.gradle`,
-`~/.cache/huggingface` and Claude's `vm_bundles` directory. The static pass then
+`~/.cache/huggingface` Claude's `vm_bundles` directory and JetBrains `Toolbox/plugins`. The static pass then
 processes the selected children. Other disabled catalog rules and old image
 exclusions require manual review because their ownership is unknown.
 Users must audit and remove those existing exclusions explicitly. `keep` cannot force
