@@ -265,12 +265,12 @@ if [[ -x /opt/homebrew/bin/bash ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Match guards for `.gradle`, `venv` and `virtualenv`: only real project
-# caches and real environments are excluded; the Gradle user home and
+# Match guards for `.gradle`, `venv`, `virtualenv`, `Pods` and `.output`: only
+# real project caches, environments and build outputs are excluded; the Gradle user home and
 # look-alike source directories stay in backups.
 # ---------------------------------------------------------------------------
 echo ""
-echo "--- Match guards: .gradle, venv, virtualenv ---"
+echo "--- Match guards: .gradle, venv, virtualenv, Pods, .output ---"
 
 G_HOME="$TEST_DIR/g"
 G_CONF="$TEST_DIR/g.conf"
@@ -280,6 +280,8 @@ path|$HOME/.gradle/caches|Gradle cache
 pattern|.gradle|Gradle project cache
 pattern|venv|Python virtual environment
 pattern|virtualenv|Python virtual environment (alt)
+pattern|Pods|CocoaPods dependencies
+pattern|.output|Build output (Nuxt/Nitro)
 CONF
 # Gradle user home: credentials and init scripts next to regenerable caches.
 # $HOME itself looks like a Gradle project (wrapper at its root): ~/.gradle
@@ -301,6 +303,14 @@ mkdir -p "$G_HOME/py/venv" "$G_HOME/legacy/virtualenv/bin" \
 touch "$G_HOME/py/venv/pyvenv.cfg" "$G_HOME/legacy/virtualenv/bin/activate" \
     "$G_HOME/cpython/Lib/venv/__init__.py" \
     "$G_HOME/omz/plugins/virtualenv/virtualenv.plugin.zsh"
+# CocoaPods install next to its Podfile vs a folder that is merely named Pods;
+# Nuxt/Nitro output (a Nitro build marker inside .output) vs an npm project
+# whose .output holds user data, vs a stray .output directory.
+mkdir -p "$G_HOME/ios/Pods" "$G_HOME/music/Pods" "$G_HOME/web/.output" \
+    "$G_HOME/logs/.output" "$G_HOME/npm-web/.output"
+touch "$G_HOME/ios/Podfile" "$G_HOME/web/package.json" \
+    "$G_HOME/web/.output/nitro.json" "$G_HOME/npm-web/package.json" \
+    "$G_HOME/npm-web/.output/data.json" "$G_HOME/music/Pods/episode.mp3"
 
 run_scan "$G_HOME" "$G_CONF" guards "$BASH32" 0
 sed 's|^\([a-z]*\) .*/g/|\1 |' "$TEST_DIR/calls.guards" | LC_ALL=C sort > "$TEST_DIR/guards_actual"
@@ -311,11 +321,15 @@ addexclusion app-build/.gradle
 addexclusion app-settings-kts/.gradle
 addexclusion app-settings/.gradle
 addexclusion app-wrapper/.gradle
+addexclusion ios/Pods
 addexclusion legacy/virtualenv
 addexclusion py/venv
+addexclusion web/.output
 EOF
 assert_files_equal "$TEST_DIR/guards_expected" "$TEST_DIR/guards_actual" \
-    "guards: project .gradle caches and real environments only (not ~/.gradle, not look-alikes)"
+    "guards: project caches, real environments and build outputs only (not ~/.gradle, not look-alikes)"
+assert_eq 0 "$(grep -c 'npm-web/.output' "$TEST_DIR/guards_actual" || true)" \
+    "guards: an npm project .output without the Nitro marker stays backed up"
 
 # Upgrade: an older catalog excluded ~/.gradle as a whole through the
 # unguarded pattern. The retired parent exclusion is dropped...
@@ -358,7 +372,8 @@ rm -f "$G_HOME/.config/tm_exclusions/custom.conf"
 # so look-alikes and non-project .gradle directories must be reachable.
 TEST_STUB_EXCLUDED=1 run_scan "$G_HOME" "$G_CONF" guards_uninstall "$BASH32" 0 --uninstall
 sed 's|^\([a-z]*\) .*/g/|\1 |' "$TEST_DIR/calls.guards_uninstall" | LC_ALL=C sort -u > "$TEST_DIR/guards_uninstall_actual"
-for lookalike in .gradle notes/.gradle cpython/Lib/venv omz/plugins/virtualenv py/venv app-build/.gradle; do
+for lookalike in .gradle notes/.gradle cpython/Lib/venv omz/plugins/virtualenv py/venv app-build/.gradle \
+    music/Pods logs/.output ios/Pods npm-web/.output web/.output; do
     assert_true "guards: --uninstall removes the exclusion on $lookalike" \
         grep -Fxq "removeexclusion $lookalike" "$TEST_DIR/guards_uninstall_actual"
 done
@@ -377,14 +392,14 @@ FN_LABELS="$(awk '
     infn && /^}/ {exit}
     infn && /^    case "\$pat" in/ {incase=1; next}
     incase && /^        \*\)/ {exit}
-    incase && /^        [.a-z][.a-z|-]*\)$/ {gsub(/[ )]/, ""); gsub(/\|/, "\n"); print}
+    incase && /^        [.A-Za-z][.A-Za-z|-]*\)$/ {gsub(/[ )]/, ""); gsub(/\|/, "\n"); print}
 ' "$TM_EXCLUSIONS" | LC_ALL=C sort | tr '\n' ' ')"
 GUARD_LABELS="$(awk '
     /^pattern_is_guarded\(\)/ {infn=1; next}
     infn && /^}/ {exit}
     infn && /\) return 0 ;;/ {sub(/\) return 0 ;;.*/, ""); gsub(/^ +/, ""); gsub(/\|/, "\n"); print}
 ' "$TM_EXCLUSIONS" | LC_ALL=C sort | tr '\n' ' ')"
-assert_eq ".gradle site-packages target venv virtualenv worktrees " "$FN_LABELS" \
+assert_eq ".gradle .output Pods site-packages target venv virtualenv worktrees " "$FN_LABELS" \
     "pattern_match_allowed() guards the patterns this test expects"
 assert_eq "$FN_LABELS" "$GUARD_LABELS" \
     "pattern_is_guarded() lists exactly the patterns guarded in pattern_match_allowed()"
