@@ -560,7 +560,7 @@ launchctl load ~/Library/LaunchAgents/com.tm-exclusions.weekly.plist
 ## 🧪 Development
 
 ```bash
-make test     # Run TAP-format smoke tests (--dry-run, no tmutil calls)
+make test     # Run all test suites, including the PTY and tmux cases when available
 make test-summary  # Same suites, quiet: totals + only the failed assertions (nonzero on failure)
 make lint     # ShellCheck on all .sh files
 make check-conf  # Validate config/*.conf syntax (also part of make check)

@@ -49,17 +49,21 @@ list_keys() {
 # Usage: report_missing <src_file> <other_file> <src_keys> <other_keys>
 report_missing() {
   local src="$1" other="$2" src_keys="$3" other_keys="$4"
-  local key line count=0
-  while IFS="$(printf '\t')" read -r key line; do
-    [ -n "$key" ] || continue
-    if ! printf '%s\n' "$other_keys" | cut -f1 | grep -Fxq -- "$key"; then
-      printf '%s:%s: error: %s is missing from %s\n' "$src" "$line" "$key" "$other" >&2
-      count=$((count + 1))
-    fi
-  done <<EOF
+  # list_keys emits only nonempty KEY<TAB>LINE records. A blank line
+  # separates the reference set from the records to check in source order.
+  SRC_FILE="$src" OTHER_FILE="$other" awk -F '\t' '
+    !NF { checking = 1; next }
+    !checking { seen[$1] = 1; next }
+    !($1 in seen) {
+      printf "%s:%s: error: %s is missing from %s\n", ENVIRON["SRC_FILE"], $2, $1, ENVIRON["OTHER_FILE"] > "/dev/stderr"
+      missing++
+    }
+    END { print missing + 0 }
+  ' <<EOF
+$other_keys
+
 $src_keys
 EOF
-  printf '%s' "$count"
 }
 
 main() {
