@@ -1071,12 +1071,12 @@ EOF
 
 assert_exit_code 0 \
     "--dry-run exits 0 with partially-unreadable path in config" \
-    env HOME="${DU_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${DU_CONF}" \
+    env -u TM_EXCLUSIONS_SKIP_DU HOME="${DU_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${DU_CONF}" \
         bash "$TM_EXCLUSIONS" --verbose --dry-run
 
 assert_exit_code 0 \
     "--report-only exits 0 with partially-unreadable path in config" \
-    env HOME="${DU_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${DU_CONF}" \
+    env -u TM_EXCLUSIONS_SKIP_DU HOME="${DU_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${DU_CONF}" \
         bash "$TM_EXCLUSIONS" --verbose --report-only
 
 chmod 700 "${DU_HOME}/restrictedparent/unreadable_subdir"

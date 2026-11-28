@@ -91,6 +91,9 @@ TMUX_SESSION=""
 TMUX_CHILD_RC=0
 # PID of the attached tmux client, when one is running: cleanup stops it.
 TMUX_CLIENT_PID=""
+# PID of the supervisor that closes the session if the left pane dies without
+# reporting (a signal before the wrapper installed its traps).
+TMUX_SUP_PID=""
 
 # ---------------------------------------------------------------------------
 # i18n locale resolution
@@ -1200,6 +1203,10 @@ cleanup() {
 # attached client. Never touches an existing tmux server or session: the socket
 # path is made by this run (mktemp -d), so no other server can sit on it.
 tmux_cleanup() {
+    if [[ -n "${TMUX_SUP_PID:-}" ]]; then
+        kill "${TMUX_SUP_PID}" 2>/dev/null || true
+        wait "${TMUX_SUP_PID}" 2>/dev/null || true
+    fi
     if [[ -n "${TMUX_BIN:-}" && -n "${TMUX_SOCK:-}" ]]; then
         # Stop our own client first: it would otherwise keep reading the
         # terminal while its session disappears.
@@ -1217,6 +1224,7 @@ tmux_cleanup() {
         fi
     fi
     TMUX_CLIENT_PID=""
+    TMUX_SUP_PID=""
     TMUX_SOCK=""
     TMUX_SESSION=""
 }
@@ -1395,6 +1403,29 @@ tmux_launch() {
     # From here on the inner run has started: never fall back to a normal run,
     # that would scan everything a second time. Every later failure is reported
     # and the inner status (or a failure) is propagated.
+    #
+    # Supervise the left pane: a signal reaching the wrapper before it installed
+    # its traps kills it silently, and the window (and this script) would wait
+    # forever on a live log pane. When the pane is gone, publish its exit status
+    # (remain-on-exit keeps it readable) and close the session.
+    left_pane="$("$TMUX_BIN" -S "$sock" display-message -p -t "$session" '#{pane_id}' 2>/dev/null)"
+    "$TMUX_BIN" -S "$sock" set-option -t "$session" remain-on-exit on 2>/dev/null || true
+    if [[ -n "$left_pane" ]]; then
+        (
+            while :; do
+                dead="$("$TMUX_BIN" -S "$sock" display-message -p -t "$left_pane" '#{pane_dead}' 2>/dev/null)" || break
+                [[ "$dead" = "1" ]] && break
+                sleep 1 2>/dev/null || sleep 1
+            done
+            status="$("$TMUX_BIN" -S "$sock" display-message -p -t "$left_pane" '#{pane_dead_status}' 2>/dev/null)"
+            case "$status" in
+                ''|*[!0-9]*) ;;
+                *) if [[ ! -s "$rc_file" ]]; then printf '%s' "$status" > "$rc_file" 2>/dev/null || true; fi ;;
+            esac
+            "$TMUX_BIN" -S "$sock" kill-session -t "$session" 2>/dev/null || true
+        ) &
+        TMUX_SUP_PID=$!
+    fi
     #
     # Log pane (right): follow the debug log. A missing or closed pane costs
     # only the log view: the inner run keeps appending to the file and can

@@ -133,6 +133,17 @@ printf 'SUB=%s ARGS=%s LOG=%s DEBUG_LOG=%s SOCK=%s\n' \
 if [ "${TMUX_FAIL_NEW_SESSION:-0}" = 1 ] && [ "$sub" = new-session ]; then exit 1; fi
 if [ "${TMUX_FAIL_SPLIT:-0}" = 1 ] && [ "$sub" = split-window ]; then exit 1; fi
 case "$sub" in
+    display-message)
+        # Left-pane supervisor: alive (default) or dead with a status.
+        case "$*" in
+            *pane_dead_status*) printf '%s\n' "${TMUX_PANE_STATUS:-}" ;;
+            *) if [ -n "${TMUX_PANE_DIES:-}" ]; then printf '1\n'; else printf '0\n'; fi ;;
+        esac
+        exit 0
+        ;;
+    set-option) exit 0 ;;
+esac
+case "$sub" in
     new-session)
         if [ -n "${TMUX_KEEP_WRAPPER:-}" ]; then cp "$TM_EXCLUSIONS_TMUX_WRAPPER" "$TMUX_KEEP_WRAPPER" 2>/dev/null; fi
         # stdin from /dev/null so the wrapper's "press Enter" read never blocks
@@ -260,6 +271,23 @@ else
     assert_eq 1 "$(isexcluded_count)" "log pane failure: the scan ran exactly once (no second scan)"
     assert_true "log pane failure: the client was still attached to the running session" \
         grep -q '^SUB=attach-session' "$TMUX_CALLS"
+
+    # --- the left pane dies before it reports (signal before its traps) ---
+    # The session must be closed by the supervisor and its exit status
+    # published, instead of the parent waiting on the surviving log pane.
+    echo ""
+    echo "--- left pane dies without reporting ---"
+    : > "$TMUTIL_CALLS"
+    : > "$TMUX_CALLS"
+    rc=0
+    run_pty "$WORK/out-pane-dead" \
+        env HOME="$B_HOME" PATH="$STUB_TMUX_DIR:$B_BIN:$PATH" TERM=xterm \
+            TM_EXCLUSIONS_DEFAULT_CONF="$CONF" TMUX_CALLS="$TMUX_CALLS" \
+            TMUX_PANE_DIES=1 TMUX_PANE_STATUS=130 \
+            bash "$TM_EXCLUSIONS" --tmux --dry-run || rc=$?
+    assert_eq 130 "$rc" "left pane died: the published pane status is returned"
+    assert_true "left pane died: the session is closed by the supervisor" \
+        grep -q '^SUB=kill-session' "$TMUX_CALLS"
 
     # --- no log pane at all with a run larger than any pipe buffer ---
     # The log target is a regular file, so neither a missing pane nor a closed
