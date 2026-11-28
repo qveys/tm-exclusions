@@ -130,6 +130,8 @@ test: ## Run smoke tests
 	@bash tests/test_loader_guard.sh
 	@echo "Running temporary-file signal window tests..."
 	@bash tests/test_tmp_signal.sh
+	@echo "Running optional tmux interface tests..."
+	@bash tests/test_tmux_ui.sh
 
 test-summary: ## Run all test suites quietly; print totals and only the failures (nonzero on failure)
 	@bash scripts/test-summary.sh
@@ -179,6 +181,7 @@ lint: ## Run ShellCheck on all shell scripts and syntax-check locale tables
 	@shellcheck -x -s bash tests/test_add_category.sh
 	@shellcheck -x -s bash tests/test_loader_guard.sh
 	@shellcheck -x -s bash tests/test_tmp_signal.sh
+	@shellcheck -x -s bash tests/test_tmux_ui.sh
 	@echo "ShellCheck passed."
 
 install: setup ## Install tm-exclusions to PREFIX (Homebrew bin if writable, else /usr/local/bin)

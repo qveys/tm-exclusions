@@ -77,8 +77,23 @@ SUDO_KEEPALIVE_PID=""
 # holds every temporary file (see ensure_tmp_dir)
 TMP_FILES=""
 TMP_DIR=""
-# When 1, log_info also appends to FD 5 (opened from TM_EXCLUSIONS_DEBUG_FIFO)
+# When 1, log_info also appends to FD 5 (opened from TM_EXCLUSIONS_DEBUG_FIFO,
+# a FIFO or, in --tmux mode, the run's debug log file)
 DEBUG_LOG_FD=0
+# Optional two-pane tmux interface (#14), requested with --tmux. TMUX_MODE marks
+# the flag; TMUX_BIN/SOCK/SESSION name the resources the wrapper creates (so
+# cleanup removes only those, never an existing session); TMUX_CHILD_RC carries
+# the inner run's exit status back to the wrapper.
+TMUX_MODE=0
+TMUX_BIN=""
+TMUX_SOCK=""
+TMUX_SESSION=""
+TMUX_CHILD_RC=0
+# PID of the attached tmux client, when one is running: cleanup stops it.
+TMUX_CLIENT_PID=""
+# PID of the supervisor that closes the session if the left pane dies without
+# reporting (a signal before the wrapper installed its traps).
+TMUX_SUP_PID=""
 
 # ---------------------------------------------------------------------------
 # i18n locale resolution
@@ -1179,7 +1194,294 @@ EOF
 cleanup() {
     clear_progress
     sudo_keepalive_stop
+    tmux_cleanup
     cleanup_tmp_files
+}
+
+# Remove only the tmux resources this run created: its own dedicated server, on
+# a private socket path inside the run's work directory, its session and its
+# attached client. Never touches an existing tmux server or session: the socket
+# path is made by this run (mktemp -d), so no other server can sit on it.
+tmux_cleanup() {
+    if [[ -n "${TMUX_SUP_PID:-}" ]]; then
+        kill "${TMUX_SUP_PID}" 2>/dev/null || true
+        wait "${TMUX_SUP_PID}" 2>/dev/null || true
+    fi
+    if [[ -n "${TMUX_BIN:-}" && -n "${TMUX_SOCK:-}" ]]; then
+        # Stop our own client first: it would otherwise keep reading the
+        # terminal while its session disappears.
+        if [[ -n "${TMUX_CLIENT_PID:-}" ]]; then
+            kill "${TMUX_CLIENT_PID}" 2>/dev/null || true
+        fi
+        if [[ -n "${TMUX_SESSION:-}" ]]; then
+            "$TMUX_BIN" -S "$TMUX_SOCK" kill-session -t "$TMUX_SESSION" 2>/dev/null || true
+        fi
+        "$TMUX_BIN" -S "$TMUX_SOCK" kill-server 2>/dev/null || true
+        # tmux can leave its socket file behind after kill-server; only this
+        # run's path (inside TMP_DIR) is ever removed.
+        if [[ -S "${TMUX_SOCK}" ]]; then
+            rm -f -- "${TMUX_SOCK}" 2>/dev/null || true
+        fi
+    fi
+    TMUX_CLIENT_PID=""
+    TMUX_SUP_PID=""
+    TMUX_SOCK=""
+    TMUX_SESSION=""
+}
+
+# Optional two-pane tmux interface (#14). Launched once, from an explicit --tmux
+# flag, an interactive TTY, with tmux present, and never from the child re-exec
+# (guard TM_EXCLUSIONS_TMUX_CHILD). Left pane runs the script normally (its
+# stdout = progress/state); right pane follows the debug log (log_info → FD 5,
+# the existing TM_EXCLUSIONS_DEBUG_FIFO contract). Returns 0 when it launched
+# (the caller exits with TMUX_CHILD_RC) and 1 when it fell back to a normal run.
+tmux_launch() {
+    # Never re-arm inside the tmux pane.
+    [[ -z "${TM_EXCLUSIONS_TMUX_CHILD:-}" ]] || return 1
+    [[ "${TMUX_MODE}" -eq 1 ]] || return 1
+    # Interactive terminal only: --quiet and redirected stdout keep their current
+    # behavior even with the flag.
+    [[ "${QUIET}" -eq 0 ]] || return 1
+    [[ -t 1 ]] || return 1
+    [[ -t 0 ]] || return 1
+
+    # Resolve the tmux binary. TM_EXCLUSIONS_TMUX_BIN is an escape hatch for
+    # tests and unusual installs: an explicit path, or a nonexistent one to
+    # force the missing-tmux fallback, instead of the PATH lookup.
+    if [[ -n "${TM_EXCLUSIONS_TMUX_BIN:-}" ]]; then
+        TMUX_BIN="${TM_EXCLUSIONS_TMUX_BIN}"
+    else
+        TMUX_BIN="$(command -v tmux 2>/dev/null)" || TMUX_BIN=""
+    fi
+    if [[ -z "${TMUX_BIN}" || ! -x "${TMUX_BIN}" ]]; then
+        log_error "${MSG_TMUX_NOT_FOUND}"
+        return 1
+    fi
+
+    # Re-exec arguments: the original ones minus the --tmux flag.
+    local inner=()
+    local a
+    for a in "$@"; do
+        [[ "$a" = "--tmux" ]] || inner+=("$a")
+    done
+
+    ensure_tmp_dir || {
+        log_error "${MSG_TMUX_FALLBACK}"
+        return 1
+    }
+
+    # Debug log target: a regular file, not a FIFO. The inner run appends to it
+    # (FD 5) and the log pane follows it with tail -f, so neither a closed pane
+    # nor a missing reader can ever block the run on a full pipe.
+    local logfile="${TMP_DIR}/debug.log"
+    local rc_file="${TMP_DIR}/tmux.rc"
+    local wrapper="${TMP_DIR}/tmux_wrapper.sh"
+    # Socket path: inside this run's private work directory, so no other tmux
+    # server can already own it (a PID-derived server name could be reused) and
+    # cleanup can only ever reach this run's server. macOS caps a unix socket
+    # path at 104 bytes (including the trailing NUL); the length is measured in
+    # bytes, not characters, and a TMPDIR long enough to overflow it keeps the
+    # normal single-pane run instead of a broken interface.
+    local sock="${TMP_DIR}/s"
+    local session="tm-exclusions"
+    local sock_bytes
+    sock_bytes="$(printf '%s' "${sock}" | LC_ALL=C wc -c)"
+    sock_bytes="${sock_bytes//[[:space:]]/}"
+    local script_path
+    script_path="$(resolve_script_dir)/$(basename "${BASH_SOURCE[0]}")"
+    if [[ -z "${sock_bytes}" || "${sock_bytes}" -ge 104 ]]; then
+        log_error "${MSG_TMUX_FALLBACK}"
+        return 1
+    fi
+
+    : > "$logfile" 2>/dev/null || {
+        log_error "${MSG_TMUX_FALLBACK}"
+        return 1
+    }
+
+    # Re-exec wrapper (same bash). It runs the script with the original arguments
+    # (minus --tmux), records the exit status, then closes our session so
+    # attach-session returns. Script path and arguments are %q-quoted for this
+    # same bash; every other path travels through the session environment, never
+    # through a shell command line (no injection, spaces and special characters
+    # safe).
+    {
+        printf '#!%s\n' "$BASH"
+        # The scan status is kept in _rc and written to tmux.rc exactly once, at
+        # session close. A signal from the pane (Ctrl-C) after the scan finished
+        # therefore keeps the real status, and the second signal the parent's
+        # cleanup sends while closing is ignored (finished=1).
+        printf '_rc=""\n'
+        # The status file is the guard: a signal arriving at any point of
+        # publish() cannot leave "published but empty", and a published status
+        # is never replaced. The write goes through a temporary file so readers
+        # never see a half-written value.
+        # shellcheck disable=SC2016  # these variables expand in the wrapper
+        printf 'publish() {\n'
+        # shellcheck disable=SC2016  # these variables expand in the wrapper
+        printf '  [ -s "$TM_EXCLUSIONS_TMUX_RC" ] && return 0\n'
+        # shellcheck disable=SC2016  # these variables expand in the wrapper
+        printf '  printf %%s "$1" > "$TM_EXCLUSIONS_TMUX_RC.tmp" && mv -f "$TM_EXCLUSIONS_TMUX_RC.tmp" "$TM_EXCLUSIONS_TMUX_RC"\n'
+        # shellcheck disable=SC2016  # the closing brace is literal
+        printf '}\n'
+        # shellcheck disable=SC2016  # these variables expand in the wrapper
+        printf 'finish() {\n'
+        # shellcheck disable=SC2016  # these variables expand in the wrapper
+        printf '  trap "" INT TERM HUP\n'
+        # shellcheck disable=SC2016  # these variables expand in the wrapper
+        printf '  [ -n "$_rc" ] || _rc="$1"\n'
+        # shellcheck disable=SC2016  # these variables expand in the wrapper
+        printf '  publish "$_rc"\n'
+        # shellcheck disable=SC2016  # these variables expand in the wrapper
+        printf '  exec "$TM_EXCLUSIONS_TMUX_BIN" -S "$TM_EXCLUSIONS_TMUX_SOCK" kill-session -t "$TM_EXCLUSIONS_TMUX_SESSION"\n'
+        # shellcheck disable=SC2016  # the closing brace is literal
+        printf '}\n'
+        # shellcheck disable=SC2016  # these variables expand in the wrapper
+        printf 'trap '\''finish 130'\'' INT\n'
+        printf 'trap '\''finish 143'\'' TERM\n'
+        printf 'trap '\''finish 129'\'' HUP\n'
+        printf 'cd %s 2>/dev/null || _rc=1\n' "$(printf '%q' "$PWD")"
+        # shellcheck disable=SC2016  # $_rc is for the generated wrapper, not here
+        printf 'if [ -z "$_rc" ]; then\n'
+        printf '  %s %s' "$(printf '%q' "$BASH")" "$(printf '%q' "$script_path")"
+        local i
+        for ((i = 0; i < ${#inner[@]}; i++)); do
+            printf ' %s' "$(printf '%q' "${inner[$i]}")"
+        done
+        # shellcheck disable=SC2016  # $_rc is for the generated wrapper, not here
+        printf '\n  _rc=$?\n'
+        printf 'fi\n'
+        # The status is published as soon as the scan ended: a detach at the
+        # closing prompt must not make the parent re-attach and wait again.
+        # shellcheck disable=SC2016  # $_rc is for the generated wrapper, not here
+        printf 'publish "$_rc"\n'
+        # shellcheck disable=SC2016  # the wrapper's shell expands these variables
+        printf 'if [ -t 0 ] && [ -z "${TM_EXCLUSIONS_TMUX_NO_HOLD:-}" ]; then\n'
+        # shellcheck disable=SC2016  # the wrapper's shell expands the message variable
+        printf '  printf "%%s\\n" "$TM_EXCLUSIONS_TMUX_DONE_MSG"\n'
+        printf '  read -r _key 2>/dev/null || true\n'
+        printf 'fi\n'
+        printf 'finish 0\n'
+    } > "$wrapper" || {
+        log_error "${MSG_TMUX_FALLBACK}"
+        return 1
+    }
+    chmod +x "$wrapper" || {
+        log_error "${MSG_TMUX_FALLBACK}"
+        return 1
+    }
+
+    : > "$rc_file" 2>/dev/null || true
+
+    # Track the resources before launching so a signal during new-session still
+    # reaches tmux_cleanup (it only ever removes this run's own socket/session).
+    TMUX_SOCK="$sock"
+    TMUX_SESSION="$session"
+
+    local launch_rc=0
+    # Pass the child/pane environment only to the tmux process that creates the
+    # session (never to this shell), so a failed launch cannot leave
+    # TM_EXCLUSIONS_DEBUG_FIFO (or any other variable) set for the fallback run.
+    # shellcheck disable=SC2016  # the pane shell expands $TM_EXCLUSIONS_TMUX_WRAPPER
+    env TM_EXCLUSIONS_TMUX_CHILD=1 \
+        TM_EXCLUSIONS_DEBUG_FIFO="$logfile" \
+        TM_EXCLUSIONS_TMUX_LOG="$logfile" \
+        TM_EXCLUSIONS_TMUX_WRAPPER="$wrapper" \
+        TM_EXCLUSIONS_TMUX_RC="$rc_file" \
+        TM_EXCLUSIONS_TMUX_BIN="$TMUX_BIN" \
+        TM_EXCLUSIONS_TMUX_SOCK="$sock" \
+        TM_EXCLUSIONS_TMUX_SESSION="$session" \
+        TM_EXCLUSIONS_TMUX_DONE_MSG="$MSG_TMUX_DONE" \
+        "$TMUX_BIN" -S "$sock" new-session -d -s "$session" \
+        'exec "$TM_EXCLUSIONS_TMUX_WRAPPER"' || launch_rc=$?
+    if [[ "$launch_rc" -ne 0 ]]; then
+        log_error "${MSG_TMUX_FALLBACK}"
+        tmux_cleanup
+        return 1
+    fi
+
+    # From here on the inner run has started: never fall back to a normal run,
+    # that would scan everything a second time. Every later failure is reported
+    # and the inner status (or a failure) is propagated.
+    #
+    # Supervise the left pane: a signal reaching the wrapper before it installed
+    # its traps kills it silently, and the window (and this script) would wait
+    # forever on a live log pane. When the pane is gone, publish its exit status
+    # (remain-on-exit keeps it readable) and close the session.
+    left_pane="$("$TMUX_BIN" -S "$sock" display-message -p -t "$session" '#{pane_id}' 2>/dev/null)"
+    "$TMUX_BIN" -S "$sock" set-option -t "$session" remain-on-exit on 2>/dev/null || true
+    if [[ -n "$left_pane" ]]; then
+        (
+            while :; do
+                dead="$("$TMUX_BIN" -S "$sock" display-message -p -t "$left_pane" '#{pane_dead}' 2>/dev/null)" || break
+                [[ "$dead" = "1" ]] && break
+                sleep 1 2>/dev/null || sleep 1
+            done
+            status="$("$TMUX_BIN" -S "$sock" display-message -p -t "$left_pane" '#{pane_dead_status}' 2>/dev/null)"
+            case "$status" in
+                ''|*[!0-9]*) ;;
+                *) if [[ ! -s "$rc_file" ]]; then printf '%s' "$status" > "$rc_file" 2>/dev/null || true; fi ;;
+            esac
+            "$TMUX_BIN" -S "$sock" kill-session -t "$session" 2>/dev/null || true
+        ) &
+        TMUX_SUP_PID=$!
+    fi
+    #
+    # Log pane (right): follow the debug log. A missing or closed pane costs
+    # only the log view: the inner run keeps appending to the file and can
+    # never block, so no fallback reader is needed.
+    # shellcheck disable=SC2016  # the pane shell expands $TM_EXCLUSIONS_TMUX_LOG
+    if ! "$TMUX_BIN" -S "$sock" split-window -d -t "$session" -h \
+        'tail -n +1 -f -- "$TM_EXCLUSIONS_TMUX_LOG"' 2>/dev/null; then
+        log_error "${MSG_TMUX_NO_PANE}"
+    fi
+
+    # Attach until the wrapper closes the session. The client runs in the
+    # background (same process group, stdin re-opened on the terminal) so that
+    # a signal interrupts `wait` and reaches the cleanup: a foreground
+    # attach-session defers TERM until the user detaches. Re-attach on a plain
+    # detach (Ctrl-b d) while the inner run is still going.
+    local client_pid="" attach_rc=0
+    # The terminal device of this run: a background command would otherwise
+    # read /dev/null, and tmux needs a real tty on stdin (it cannot reuse
+    # /dev/tty when it was opened indirectly).
+    local tty_dev=""
+    tty_dev="$(tty 2>/dev/null)" || tty_dev=""
+    case "$tty_dev" in /dev/*) ;; *) tty_dev="/dev/tty" ;; esac
+    while :; do
+        "$TMUX_BIN" -S "$sock" attach-session -t "$session" < "$tty_dev" 2>/dev/null &
+        client_pid=$!
+        TMUX_CLIENT_PID="$client_pid"
+        attach_rc=0
+        wait "$client_pid" || attach_rc=$?
+        TMUX_CLIENT_PID=""
+        [[ -s "$rc_file" ]] && break
+        if "$TMUX_BIN" -S "$sock" has-session -t "$session" 2>/dev/null; then
+            [[ "$attach_rc" -eq 0 ]] && continue
+            # The interface is gone while the run is still going: stop it and
+            # report, rather than starting a second scan.
+            log_error "${MSG_TMUX_ATTACH_LOST}"
+            tmux_cleanup
+            TMUX_CHILD_RC=1
+            return 0
+        fi
+        break
+    done
+
+    local child_rc=1
+    if [[ -s "$rc_file" ]]; then
+        child_rc="$(cat "$rc_file" 2>/dev/null || echo 1)"
+        case "$child_rc" in ''|*[!0-9]*) child_rc=1 ;; esac
+    else
+        # The wrapper never wrote the inner status (attach-session returned
+        # without it, or the session died early): assume failure and say so.
+        child_rc=1
+        log_error "${MSG_TMUX_NO_STATUS}"
+    fi
+
+    tmux_cleanup
+    TMUX_CHILD_RC="$child_rc"
+    return 0
 }
 
 on_signal() {
@@ -3193,6 +3495,7 @@ show_help() {
     echo "${MSG_HELP_FORCE}"
     echo "${MSG_HELP_DESKTOP_REPORT}"
     echo "${MSG_HELP_LANG}"
+    echo "${MSG_HELP_TMUX}"
     echo "${MSG_HELP_VERSION}"
     echo "${MSG_HELP_HELP}"
     echo "${MSG_HELP_HELP_SHORT}"
@@ -3244,6 +3547,9 @@ parse_args() {
                 ;;
             --quiet|-q)
                 QUIET=1
+                ;;
+            --tmux)
+                TMUX_MODE=1
                 ;;
             --lang)
                 if [[ $# -lt 2 ]]; then
@@ -3380,6 +3686,15 @@ main() {
             exit 0
             ;;
     esac
+
+    # Optional two-pane tmux interface (#14): launch it once and exit with the
+    # inner run's status, or fall back to the normal run when tmux_launch
+    # declines (non-interactive, --quiet, no tmux, or already the child).
+    if [[ "${TMUX_MODE}" -eq 1 ]]; then
+        if tmux_launch "$@"; then
+            exit "${TMUX_CHILD_RC}"
+        fi
+    fi
 
     if [[ -n "${TM_EXCLUSIONS_DEBUG_FIFO:-}" ]]; then
         # FIFO: open read+write so open(2) does not block waiting for a separate reader.

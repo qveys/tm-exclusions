@@ -12,6 +12,7 @@ main()
   ├── detect_language()
   ├── parse_args()
   ├── Handle config commands (--init, --add, --list, --edit, --help, --version)
+  ├── tmux_launch()               ← optional --tmux (interactive TTY only; exits with the inner run's status)
   ├── check_environment()
   ├── load_config()
   │   ├── parse_config_file(default.conf)
@@ -166,6 +167,92 @@ no status lines, and the full report on stdout, as before. All modes save the sa
 complete report; if writing fails, compact output falls back to the full report.
 Debug FD 5 receives undecorated console messages.
 
+### Optional two-pane tmux interface (#14)
+
+`--tmux` (`TMUX_MODE`) requests a two-pane tmux view during an **interactive**
+run. After the config subcommands are handled (so `--help` / `--init` / `--add`
+/ `--list` / `--edit` never launch it), `main()` calls `tmux_launch`, which
+declines — returning 1 and leaving the normal run unchanged — unless all of
+these hold: the flag was passed, stdout **and stdin** are TTYs (attach needs
+both), the run is not `--quiet`, tmux is resolvable (on `PATH` or via
+`TM_EXCLUSIONS_TMUX_BIN`, an escape hatch for tests/unusual installs), and the
+guard `TM_EXCLUSIONS_TMUX_CHILD` is unset (the re-exec inside the pane never
+re-arms). When it launches, it returns 0 and `main` exits with the inner run's
+status, so the wrapper never scans: the scan, exclusions and exit code belong to
+the single inner run.
+
+The wrapper starts a **dedicated** tmux server on a private socket path inside
+this run's work directory (`tmux -S TMP_DIR/s`) with one session, so no other
+server can already own that name and cleanup can only reach this run's server
+(the path is measured in bytes and must stay under the 104-byte macOS
+unix-socket limit; a longer `TMPDIR` keeps the normal single-pane run instead):
+
+- **Left pane** — a generated bash re-exec wrapper (`tmux_wrapper.sh`, written
+  into `TMP_DIR`) that `cd`s to the original working directory and runs the
+  script again through `"$BASH"` with the original arguments minus `--tmux` (the
+  explicit interpreter keeps the same Bash as the outer run). Its stdout is the
+  normal progress/status view. When the run ends it records the exit status,
+  then keeps the summary on screen and waits for a keypress before closing the
+  session (skipped when stdin is not a TTY or `TM_EXCLUSIONS_TMUX_NO_HOLD=1`).
+- **Right pane** — `tail -n +1 -f -- "$TM_EXCLUSIONS_TMUX_LOG"` over the run's
+  debug log (`TMP_DIR/debug.log`). The inner run appends to that file as FD 5
+  through the existing `TM_EXCLUSIONS_DEBUG_FIFO` contract, so the pane streams
+  the same `log_info` lines. A regular file (not a FIFO) is deliberate: no
+  reader can block the run on a full pipe, so a missing pane, or one closed
+  mid-scan, only costs the log view. The split is created with `-d`, so the log
+  pane never takes the keyboard: a `sudo` password typed in the interface stays
+  in the left pane. If the split fails, `MSG_TMUX_NO_PANE` is reported and the
+  run continues in the single left pane (no second scan).
+
+Script path and arguments are `%q`-quoted for the same bash into the wrapper;
+every other path (wrapper, log file, rc file, socket, session) travels through the
+session environment of the `new-session` process only (passed with `env`, never
+`export`ed into this shell), never through a shell command line, so spaces and
+special characters are safe, there is no shell-injection surface, and a failed
+launch cannot leave `TM_EXCLUSIONS_DEBUG_FIFO` (or the other variables) set for
+the fallback run. The wrapper records the inner exit status in `TMP_DIR/tmux.rc`,
+then closes the session. The client runs in the background on an explicit tty
+(a background command otherwise reads `/dev/null`, and tmux cannot use an
+indirect `/dev/tty`) while the outer script `wait`s for it: a signal interrupts
+that `wait`, so cleanup runs immediately instead of after the user detaches
+(a foreground `attach-session` defers `TERM` for its whole lifetime). A plain
+detach (`Ctrl-b d`) is re-attached; losing the client while the run is still
+going stops it with `MSG_TMUX_ATTACH_LOST` and exit status 1 — never a second
+scan, because the fallback only exists before the inner run starts.
+The left pane is supervised from its creation: for the instant before the
+wrapper installed its traps, a signal can kill it silently, and the log pane
+would then keep the session (and this script) alive forever. The supervisor
+polls `#{pane_dead}` (the session uses `remain-on-exit`), publishes the pane's
+`#{pane_dead_status}` when `tmux.rc` is still empty, and closes the session; it
+is stopped and waited for by `tmux_cleanup`.
+
+A signal delivered to the pane (Ctrl-C in the left pane) reaches both the inner
+run and the wrapper: the wrapper has INT/TERM/HUP traps that close the session,
+so the parent never waits for a status that can no longer be written. The status
+is published once: as soon as the scan ends (so a detach at the closing prompt
+returns the real status instead of making the parent re-attach and wait), or at
+session close with 130/143/129 when the signal arrived before the inner run
+reported. The status file itself is the guard (`[ -s tmux.rc ]`): the write goes
+through a temporary file and a rename, so a signal at any point cannot leave an
+empty or half-written status, and a published status is never replaced. `finish`
+ignores INT/TERM/HUP with its very first statement, so the signal sent by the
+parent's cleanup cannot interfere.
+`tmux_cleanup` (run from `cleanup`, so also on EXIT/INT/TERM/HUP) stops the
+client, kills only this run's session and server, and removes the socket file
+that tmux 3.x can leave behind; the log file, wrapper and rc file go with `TMP_DIR`
+when the work directory is removed.
+
+Fallbacks happen only before the inner run starts: no usable tmux →
+`MSG_TMUX_NOT_FOUND`; a failed log-file/`new-session` creation (or a socket path too long
+for the platform) → `MSG_TMUX_FALLBACK`. In both cases the run continues
+normally with one scan and the same exit status. Once the session exists there
+is no fallback — a missing log pane (`MSG_TMUX_NO_PANE`) or a lost client
+(`MSG_TMUX_ATTACH_LOST`) never re-runs the scan. Covered by
+`tests/test_tmux_ui.sh` (`make test`, `make lint`) with a stub tmux (two-pane
+wiring, single scan, exit-code propagation, cleanup) plus an opt-in real-tmux
+check on a dedicated socket, a `split-window` failure that must not double-scan,
+and a `SIGTERM` while attached that must clean up.
+
 Verbose runs prefix every per-path status line with a formatted disk size
 (#45): `process_path()` calls `path_size_column()`, which runs one `du -sk` per
 existing path, records the KiB value in `DU_SIZES`, and returns a string that
@@ -276,7 +363,6 @@ Smoke and safety tests inject fake `tmutil`, `brew` and `sudo` commands and use 
 ## Future Work (v2)
 
 Possible follow-ups:
-- **tmux split-pane** or richer agent-oriented debug UX around `TM_EXCLUSIONS_DEBUG_FIFO`
 - **Watch mode**: detect new regenerable directories and re-apply
 - **Heavier inventory** (recursive scans, tool versions) — intentionally capped today for speed; the PATH survey lists top-level executables only
 

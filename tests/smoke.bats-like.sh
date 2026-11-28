@@ -9,6 +9,10 @@ export LANG=C
 export LC_ALL=C
 # Avoid slow brew enumeration during report smoke (inventory is optional detail)
 export TM_EXCLUSIONS_SKIP_INVENTORY=1
+# Absolute catalog rules (e.g. /Library/Developer/CoreSimulator) would be
+# measured with du on the real machine: minutes per report-only run. Sizes are
+# not asserted here; the size-column block below unsets this to test du itself.
+export TM_EXCLUSIONS_SKIP_DU=1
 
 TEST_HOME="$(mktemp -d)"
 trap 'rm -rf "${TEST_HOME}"' EXIT
@@ -1067,12 +1071,12 @@ EOF
 
 assert_exit_code 0 \
     "--dry-run exits 0 with partially-unreadable path in config" \
-    env HOME="${DU_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${DU_CONF}" \
+    env -u TM_EXCLUSIONS_SKIP_DU HOME="${DU_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${DU_CONF}" \
         bash "$TM_EXCLUSIONS" --verbose --dry-run
 
 assert_exit_code 0 \
     "--report-only exits 0 with partially-unreadable path in config" \
-    env HOME="${DU_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${DU_CONF}" \
+    env -u TM_EXCLUSIONS_SKIP_DU HOME="${DU_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${DU_CONF}" \
         bash "$TM_EXCLUSIONS" --verbose --report-only
 
 chmod 700 "${DU_HOME}/restrictedparent/unreadable_subdir"
@@ -1101,19 +1105,19 @@ EOF
 
 assert_exit_code 0 \
     "--dry-run exits 0 when du -sk returns non-zero (#55)" \
-    env HOME="${FAKE_DU_HOME}" PATH="${FAKE_DU_BIN}:${PATH}" \
+    env -u TM_EXCLUSIONS_SKIP_DU HOME="${FAKE_DU_HOME}" PATH="${FAKE_DU_BIN}:${PATH}" \
         TM_EXCLUSIONS_DEFAULT_CONF="${FAKE_DU_CONF}" \
         bash "$TM_EXCLUSIONS" --verbose --dry-run
 
 assert_output_contains "42K" \
     "report keeps partial du size when du exits 1 (#55)" \
-    env HOME="${FAKE_DU_HOME}" PATH="${FAKE_DU_BIN}:${PATH}" \
+    env -u TM_EXCLUSIONS_SKIP_DU HOME="${FAKE_DU_HOME}" PATH="${FAKE_DU_BIN}:${PATH}" \
         TM_EXCLUSIONS_DEFAULT_CONF="${FAKE_DU_CONF}" \
         bash "$TM_EXCLUSIONS" --verbose --dry-run
 
 assert_output_contains "Total (sum of du -sk, KiB): 42" \
     "du total sums the partial KiB when du exits 1 (#55)" \
-    env HOME="${FAKE_DU_HOME}" PATH="${FAKE_DU_BIN}:${PATH}" \
+    env -u TM_EXCLUSIONS_SKIP_DU HOME="${FAKE_DU_HOME}" PATH="${FAKE_DU_BIN}:${PATH}" \
         TM_EXCLUSIONS_DEFAULT_CONF="${FAKE_DU_CONF}" \
         bash "$TM_EXCLUSIONS" --verbose --dry-run
 
@@ -1155,7 +1159,7 @@ path|${SZ_HOME}/caches/vanish|vanishing cache
 path|${SZ_HOME}/gone|missing path
 EOF
 
-SZ_ENV=(env HOME="${SZ_HOME}" PATH="${SZ_BIN}:${PATH}" TM_EXCLUSIONS_DEFAULT_CONF="${SZ_CONF}")
+SZ_ENV=(env -u TM_EXCLUSIONS_SKIP_DU HOME="${SZ_HOME}" PATH="${SZ_BIN}:${PATH}" TM_EXCLUSIONS_DEFAULT_CONF="${SZ_CONF}")
 SZ_OUT="${TEST_HOME}/sz-out.txt"
 SZ_RC=0
 "${SZ_ENV[@]}" bash "$TM_EXCLUSIONS" --verbose --dry-run > "${SZ_OUT}" 2>&1 || SZ_RC=$?
@@ -1321,7 +1325,11 @@ SZ_REPORT="${TEST_HOME}/sz-report.txt"
 SZ_SUMMARY="${TEST_HOME}/sz-summary.txt"
 SZ_OLD_PATH="${PATH}"
 PATH="${SZ_TM_BIN}:${PATH}"
+# In-process report of precomputed sizes: the smoke-wide SKIP_DU must not hide
+# the very lines asserted below.
+unset TM_EXCLUSIONS_SKIP_DU
 TM_EXCLUSIONS_REPORT="${SZ_REPORT}" generate_report > "${SZ_SUMMARY}" 2>&1 || true
+export TM_EXCLUSIONS_SKIP_DU=1
 PATH="${SZ_OLD_PATH}"
 assert_true "tree mutation point ran after the total (hostname stub invoked, beta removed)" \
     test -f "${SZ_HOST_RAN}" -a ! -e "${SZ_BETA}"

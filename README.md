@@ -110,6 +110,40 @@ lines, but the full report on stdout. Saved reports retain every exclusion,
 prune decision and missing path, regardless of verbosity. Saved reports and
 debug logs always remain plain text. No extra dependencies are required.
 
+## 🖥️ Two-pane tmux interface (`--tmux`)
+
+On an **interactive terminal**, `--tmux` runs the tool inside a dedicated tmux
+session with two panes: the left pane shows the normal progress/status view, the
+right pane streams the debug log (the same `log_info` lines exposed by
+`TM_EXCLUSIONS_DEBUG_FIFO` on FD 5). The session runs on its own private socket,
+so it never touches an existing tmux session; both panes are removed when the
+run ends.
+
+- The flag only takes effect on an interactive TTY. With **stdout redirected**
+  (a pipe, a file) or under **`--quiet`**, the option is ignored and the run
+  behaves exactly as if `--tmux` had not been passed — no tmux is started.
+- If **`tmux` is not installed**, or the interface cannot be started, the tool
+  prints a notice on stderr and falls back to the normal run (same arguments,
+  same exit status, one scan only). Once the session exists there is no
+  fallback: a missing log pane keeps a single pane, and a lost client stops the
+  run instead of scanning twice (its status is then 1).
+- The log pane never takes the keyboard, so a `sudo` password typed in the
+  interface is only echoed in the left pane.
+- `Ctrl-C`/`SIGTERM` stop the run and clean up the dedicated server, session and
+  socket immediately, even while the client is attached.
+- The left pane runs the same script with the same arguments (minus `--tmux`),
+  so the scan, exclusions and exit code are unchanged. The log pane is wired
+  through the existing `TM_EXCLUSIONS_DEBUG_FIFO`/FD 5 mechanism, so a
+  manually-set `TM_EXCLUSIONS_DEBUG_FIFO` is overridden in this mode.
+- When the run finishes, the left pane keeps the final summary on screen and
+  waits for a keypress before closing (set `TM_EXCLUSIONS_TMUX_NO_HOLD=1` to
+  close immediately). The `TM_EXCLUSIONS_TMUX_BIN` variable can point at a
+  specific `tmux` binary (escape hatch for unusual installs and tests).
+
+```bash
+tm-exclusions --tmux --dry-run
+```
+
 ## ✨ Features
 
 | | Feature | Details |
@@ -219,6 +253,7 @@ Other:
   --verbose, -v    Show each path instead of grouped summaries
   --quiet, -q      Quiet mode (no banner, no colors, no spinners)
   --desktop-report Write a report copy to ~/Desktop (default: off; avoids clutter on cron/launchd runs)
+  --tmux           Two-pane tmux interface (progress/status + debug log stream; requires tmux)
   --version        Show version
   --lang <fr|en>   Force language
   --help           Show help
@@ -498,6 +533,8 @@ launchctl load ~/Library/LaunchAgents/com.tm-exclusions.weekly.plist
 | `TM_EXCLUSIONS_SYSTEM_PATHS` | Colon-separated PATH directories treated as system (count only) in the PATH tools survey; default `/bin:/sbin:/usr/bin:/usr/sbin` |
 | `TM_EXCLUSIONS_SKIP_DU=1` | Skip the per-path `du` size column and the disk-usage section in the report |
 | `TM_EXCLUSIONS_DEBUG_FIFO` | Mirror `log_info` output to FD 5 |
+| `TM_EXCLUSIONS_TMUX_BIN` | Use this exact `tmux` binary for `--tmux` (escape hatch for unusual installs and tests; a missing/non-executable path forces the fallback) |
+| `TM_EXCLUSIONS_TMUX_NO_HOLD=1` | Close the `--tmux` panes immediately at the end instead of waiting for a keypress |
 
 ---
 
