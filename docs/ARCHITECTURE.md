@@ -225,8 +225,11 @@ so the parent never waits for a status that can no longer be written. The status
 is published once: as soon as the scan ends (so a detach at the closing prompt
 returns the real status instead of making the parent re-attach and wait), or at
 session close with 130/143/129 when the signal arrived before the inner run
-reported. After that first write no signal can replace it (`published`), and
-the signal sent by the parent's cleanup is ignored (`finished`).
+reported. The status file itself is the guard (`[ -s tmux.rc ]`): the write goes
+through a temporary file and a rename, so a signal at any point cannot leave an
+empty or half-written status, and a published status is never replaced. `finish`
+ignores INT/TERM/HUP with its very first statement, so the signal sent by the
+parent's cleanup cannot interfere.
 `tmux_cleanup` (run from `cleanup`, so also on EXIT/INT/TERM/HUP) stops the
 client, kills only this run's session and server, and removes the socket file
 that tmux 3.x can leave behind; the log file, wrapper and rc file go with `TMP_DIR`

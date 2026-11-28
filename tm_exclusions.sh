@@ -1303,23 +1303,22 @@ tmux_launch() {
         # session close. A signal from the pane (Ctrl-C) after the scan finished
         # therefore keeps the real status, and the second signal the parent's
         # cleanup sends while closing is ignored (finished=1).
-        printf '_rc=""\npublished=0\nfinished=0\n'
+        printf '_rc=""\n'
+        # The status file is the guard: a signal arriving at any point of
+        # publish() cannot leave "published but empty", and a published status
+        # is never replaced. The write goes through a temporary file so readers
+        # never see a half-written value.
         # shellcheck disable=SC2016  # these variables expand in the wrapper
         printf 'publish() {\n'
         # shellcheck disable=SC2016  # these variables expand in the wrapper
-        printf '  [ "$published" -eq 1 ] && return 0\n'
+        printf '  [ -s "$TM_EXCLUSIONS_TMUX_RC" ] && return 0\n'
         # shellcheck disable=SC2016  # these variables expand in the wrapper
-        printf '  published=1\n'
-        # shellcheck disable=SC2016  # these variables expand in the wrapper
-        printf '  printf %%s "$1" > "$TM_EXCLUSIONS_TMUX_RC"\n'
+        printf '  printf %%s "$1" > "$TM_EXCLUSIONS_TMUX_RC.tmp" && mv -f "$TM_EXCLUSIONS_TMUX_RC.tmp" "$TM_EXCLUSIONS_TMUX_RC"\n'
         # shellcheck disable=SC2016  # the closing brace is literal
         printf '}\n'
         # shellcheck disable=SC2016  # these variables expand in the wrapper
         printf 'finish() {\n'
         # shellcheck disable=SC2016  # these variables expand in the wrapper
-        printf '  [ "$finished" -eq 1 ] && exit 0\n'
-        # shellcheck disable=SC2016  # these variables expand in the wrapper
-        printf '  finished=1\n'
         printf '  trap "" INT TERM HUP\n'
         # shellcheck disable=SC2016  # these variables expand in the wrapper
         printf '  [ -n "$_rc" ] || _rc="$1"\n'

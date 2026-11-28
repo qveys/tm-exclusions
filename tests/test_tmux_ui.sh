@@ -352,10 +352,15 @@ else
     assert_eq 0 "$rc" "wrapper: the run still exits 0"
     assert_true "wrapper: the generated script was captured" test -s "$WORK/wrapper.copy"
     # shellcheck disable=SC2016  # the \$ is a literal dollar in the generated wrapper
-    assert_eq 1 "$(grep -c '> "$TM_EXCLUSIONS_TMUX_RC"' "$WORK/wrapper.copy" || true)" \
-        "wrapper: the scan status is written exactly once, so a late signal cannot replace it"
-    assert_true "wrapper: signals are ignored once closing" \
-        grep -q 'trap "" INT TERM HUP' "$WORK/wrapper.copy"
+    assert_eq 1 "$(grep -c '> "$TM_EXCLUSIONS_TMUX_RC.tmp"' "$WORK/wrapper.copy" || true)" \
+        "wrapper: the status is written exactly once, through a temporary file"
+    # No pipe into grep -q: pipefail turns its early exit into a SIGPIPE error.
+    awk '/^finish\(\) \{$/ { getline; print; exit }' "$WORK/wrapper.copy" > "$WORK/finish-first.txt"
+    assert_file_contains "$WORK/finish-first.txt" 'trap "" INT TERM HUP' \
+        "wrapper: signals are ignored before anything else in finish"
+    # shellcheck disable=SC2016  # the \$ is a literal dollar in the generated wrapper
+    assert_true "wrapper: an already published status is never replaced" \
+        grep -q '\[ -s "\$TM_EXCLUSIONS_TMUX_RC" \] && return 0' "$WORK/wrapper.copy"
 
     # --- Exit status propagation: a failing child exits non-zero ---
     echo ""
