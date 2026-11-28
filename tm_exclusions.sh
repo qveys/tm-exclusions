@@ -1384,12 +1384,12 @@ tmux_launch() {
     TMUX_SOCK="$sock"
     TMUX_SESSION="$session"
 
-    local launch_rc=0
+    local launch_rc=0 left_pane
     # Pass the child/pane environment only to the tmux process that creates the
     # session (never to this shell), so a failed launch cannot leave
     # TM_EXCLUSIONS_DEBUG_FIFO (or any other variable) set for the fallback run.
     # shellcheck disable=SC2016  # the pane shell expands $TM_EXCLUSIONS_TMUX_WRAPPER
-    env TM_EXCLUSIONS_TMUX_CHILD=1 \
+    left_pane="$(env TM_EXCLUSIONS_TMUX_CHILD=1 \
         TM_EXCLUSIONS_DEBUG_FIFO="$logfile" \
         TM_EXCLUSIONS_TMUX_LOG="$logfile" \
         TM_EXCLUSIONS_TMUX_WRAPPER="$wrapper" \
@@ -1398,8 +1398,9 @@ tmux_launch() {
         TM_EXCLUSIONS_TMUX_SOCK="$sock" \
         TM_EXCLUSIONS_TMUX_SESSION="$session" \
         TM_EXCLUSIONS_TMUX_DONE_MSG="$MSG_TMUX_DONE" \
-        "$TMUX_BIN" -S "$sock" new-session -d -s "$session" \
-        'exec "$TM_EXCLUSIONS_TMUX_WRAPPER"' || launch_rc=$?
+        "$TMUX_BIN" -S "$sock" start-server \; set-option -gw remain-on-exit on \; \
+        new-session -d -P -F '#{pane_id}' -s "$session" \
+        'exec "$TM_EXCLUSIONS_TMUX_WRAPPER"')" || launch_rc=$?
     if [[ "$launch_rc" -ne 0 ]]; then
         log_error "${MSG_TMUX_FALLBACK}"
         tmux_cleanup
@@ -1410,20 +1411,26 @@ tmux_launch() {
     # that would scan everything a second time. Every later failure is reported
     # and the inner status (or a failure) is propagated.
     #
-    # Supervise the left pane: a signal reaching the wrapper before it installed
-    # its traps kills it silently, and the window (and this script) would wait
-    # forever on a live log pane. When the pane is gone, publish its exit status
-    # (remain-on-exit keeps it readable) and close the session.
-    left_pane="$("$TMUX_BIN" -S "$sock" display-message -p -t "$session" '#{pane_id}' 2>/dev/null)"
-    "$TMUX_BIN" -S "$sock" set-option -t "$session" remain-on-exit on 2>/dev/null || true
+    # The private server retains dead panes before starting the wrapper.
+    # A failed probe can be transient; only a confirmed death closes the session.
     if [[ -n "$left_pane" ]]; then
         (
+            local pane_state dead status signal signal_number
             while :; do
-                dead="$("$TMUX_BIN" -S "$sock" display-message -p -t "$left_pane" '#{pane_dead}' 2>/dev/null)" || break
-                [[ "$dead" = "1" ]] && break
-                sleep 1 2>/dev/null || sleep 1
+                if pane_state="$("$TMUX_BIN" -S "$sock" display-message -p -t "$left_pane" \
+                    '#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}' 2>/dev/null)"; then
+                    IFS='|' read -r dead status signal <<< "$pane_state"
+                    [[ "$dead" = "1" ]] && break
+                fi
+                sleep 1
             done
-            status="$("$TMUX_BIN" -S "$sock" display-message -p -t "$left_pane" '#{pane_dead_status}' 2>/dev/null)"
+            if [[ -z "$status" && -n "$signal" ]] &&
+                signal_number="$(kill -l "$signal" 2>/dev/null)"; then
+                case "$signal_number" in
+                    ''|*[!0-9]*) ;;
+                    *) status=$((128 + signal_number)) ;;
+                esac
+            fi
             case "$status" in
                 ''|*[!0-9]*) ;;
                 *) if [[ ! -s "$rc_file" ]]; then printf '%s' "$status" > "$rc_file" 2>/dev/null || true; fi ;;
@@ -1432,7 +1439,7 @@ tmux_launch() {
         ) &
         TMUX_SUP_PID=$!
     fi
-    #
+
     # Log pane (right): follow the debug log. A missing or closed pane costs
     # only the log view: the inner run keeps appending to the file and can
     # never block, so no fallback reader is needed.
