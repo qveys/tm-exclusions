@@ -179,8 +179,10 @@ UI_DIM=""
 init_ui() {
     if [[ -t 1 && "${TERM:-dumb}" != "dumb" && -z "${NO_COLOR:-}" && "${QUIET}" -eq 0 ]]; then
         UI=1
-        SCAN_COLUMNS="$(tput cols 2>/dev/null || printf 80)"
-        case "$SCAN_COLUMNS" in ''|*[!0-9]*) SCAN_COLUMNS=80 ;; esac
+        # Read the width of stdout itself, including a tmux pane.
+        { SCAN_COLUMNS="$(stty size <&3 2>/dev/null || true)"; } 3>&1
+        SCAN_COLUMNS="${SCAN_COLUMNS##* }"
+        case "$SCAN_COLUMNS" in ''|0|*[!0-9]*) SCAN_COLUMNS=80 ;; esac
         UI_RESET=$'\033[0m'
         UI_CYAN=$'\033[1;36m'
         UI_HEADING=$'\033[1;35m'
@@ -213,7 +215,7 @@ ui_section() {
 }
 
 # Counted stages cache their bar. Unknown totals use a moving marker.
-status_prefix() {
+prepare_status() {
     local meter="$UI_METER"
     if [[ -z "$meter" ]]; then
         local track="...." pos=$((SECONDS % 4))
@@ -224,7 +226,13 @@ status_prefix() {
     else
         STATUS_COLUMNS=$((SCAN_COLUMNS - ${#meter} - 4))
     fi
-    printf '\r\033[2K  %s%s%s ' "$UI_CYAN" "$meter" "$UI_RESET"
+    STATUS_PREFIX="  $UI_CYAN$meter$UI_RESET "
+}
+
+# A pane may shrink between sizing and drawing. Disable automatic wrapping
+# for this frame and restore it in the same write.
+draw_status() {
+    printf '\r\033[2K\033[?7l%s%s\r\033[?7h' "$STATUS_PREFIX" "${1:-}"
     UI_PROGRESS=1
 }
 
@@ -232,14 +240,14 @@ status_prefix() {
 show_scan_path() {
     [[ "${UI}" -eq 1 ]] || return 0
     local display="$1" prefix="${2:-}"
-    status_prefix
+    prepare_status
     local width=$((STATUS_COLUMNS / 2))
     # Printable ASCII occupies one cell per character.
     local ascii='^[ -~]*$'
     if [[ "$display" =~ $ascii ]]; then width=$((STATUS_COLUMNS - 7 - ${#prefix})); fi
     if (( ${#prefix} + 4 > width )); then prefix=""; fi
     width=$((width - ${#prefix}))
-    (( width > 0 )) || return 0
+    if (( width <= 0 )); then draw_status; return 0; fi
     # Literal home abbreviation for display only.
     # shellcheck disable=SC2088
     case "$display" in
@@ -248,10 +256,9 @@ show_scan_path() {
     esac
     display="${display//[[:cntrl:]]/?}"
     if [[ "${#display}" -gt "$width" ]]; then
-        display="…${display: -$((width - 1))}"
+        if (( width == 1 )); then display="…"; else display="…${display: -$((width - 1))}"; fi
     fi
-    printf '%s%s%s%s' "$UI_DIM" "$prefix" "$display" "$UI_RESET"
-    UI_PROGRESS=1
+    draw_status "$UI_DIM$prefix$display$UI_RESET"
 }
 
 # Keep blocking commands in the foreground. Only the elapsed-time display runs
@@ -268,15 +275,14 @@ start_activity() {
         esac
         label="$label ${path//[[:cntrl:]]/?}"
     fi
-    status_prefix
+    prepare_status
     local width=$(((STATUS_COLUMNS - 8) / 2))
     if (( width < 4 )); then width=4; fi
     if (( ${#label} > width )); then
         local half=$(((width - 1) / 2))
         label="${label:0:half}…${label: -half}"
     fi
-    printf '%s%s%s' "$UI_DIM" "$label" "$UI_RESET"
-    UI_PROGRESS=1
+    draw_status "$UI_DIM$label$UI_RESET"
     (
         while sleep 1; do
             elapsed=$((SECONDS - started))
@@ -285,8 +291,8 @@ start_activity() {
                 show_scan_path "$latest" "${elapsed}s · $MSG_UI_LAST_MATCH "
                 continue
             fi
-            status_prefix
-            printf '%s%s · %ss%s' "$UI_DIM" "$label" "$elapsed" "$UI_RESET"
+            prepare_status
+            draw_status "$UI_DIM$label · ${elapsed}s$UI_RESET"
         done
     ) &
     UI_ACTIVITY_PID=$!
@@ -310,7 +316,7 @@ progress_draw() {
     printf -v UI_METER ' %3d%%  %d/%d' "$((UI_DONE * 100 / UI_TOTAL))" "$UI_DONE" "$UI_TOTAL"
     UI_METER_WIDTH=$((cells + ${#UI_METER}))
     UI_METER="$bar$UI_METER"
-    if [[ "$#" -gt 0 ]]; then show_scan_path "$1"; else status_prefix; fi
+    if [[ "$#" -gt 0 ]]; then show_scan_path "$1"; else prepare_status; draw_status; fi
     if [[ "${UI_DONE}" -eq "${UI_TOTAL}" ]]; then
         printf '\n'
         UI_METER=""
@@ -985,7 +991,7 @@ path_size_column() {
             # "mark": remember a partial (du exited non-zero) measurement.
             if [[ "$UI" -eq 1 ]]; then start_activity "$MSG_UI_MEASURE" "$p"; fi
             szk="$(du_size_kb "$np" mark)"
-            if [[ "$UI" -eq 1 ]]; then clear_progress; status_prefix; fi
+            if [[ "$UI" -eq 1 ]]; then clear_progress; prepare_status; draw_status; fi
             du_size_record "$np" "$szk"
             case "$szk" in
                 *'!') szk="${szk%!}" ;;
@@ -2461,12 +2467,7 @@ collect_post_scan_paths() {
     RULE_CONTEXT=""
     RULE_CATEGORY=""
     local line tmp
-    local SCAN_COLUMNS=80
     if [[ "${UI}" -eq 1 ]]; then
-        SCAN_COLUMNS="$(tput cols 2>/dev/null || printf '80')"
-        case "$SCAN_COLUMNS" in
-            ''|*[!0-9]*) SCAN_COLUMNS=80 ;;
-        esac
         start_activity "$MSG_UI_BREW"
     fi
 

@@ -2144,7 +2144,13 @@ UI=1
 SCAN_COLUMNS=30
 show_scan_path "$HOME/a very long directory name/with-tail" > "$3/short-discovery"
 grep -q "with-tail" "$3/short-discovery"
-[[ "$(wc -c < "$3/short-discovery" | tr -d " ")" -lt 30 ]]
+frame=$(cat "$3/short-discovery")
+begin=$(printf "\r\033[2K\033[?7l")
+end=$(printf "\r\033[?7h")
+[[ "$frame" == "$begin"*"$end" ]]
+visible=${frame#"$begin"}
+visible=${visible%"$end"}
+[[ ${#visible} -lt 30 ]]
 clear_progress > /dev/null
 UI=0
 for ((i=0; i<55; i++)); do mkdir "$HOME/image-$i.sparsebundle"; done

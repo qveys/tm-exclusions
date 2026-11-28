@@ -61,7 +61,7 @@ During Homebrew cache lookup, directory-size measurement, the pattern scan and
 inventory collection, a status line shows the current operation and elapsed seconds.
 During the pattern scan, the status shows the latest result when available, then
 the directory being classified or processed and its position in the sorted results.
-The bar stays beside the activity text. A moving marker indicates an unknown total;
+The bar and activity text update on one line, including in narrow tmux panes. A moving marker indicates an unknown total;
 percentages count completed rules or sorted candidates once the total is known. The inventory (including installed
 Homebrew casks and CLI formulae, listed by name in wrapped blocks) is also shown
 inline; disk usage and per-path details remain in the saved report, whose
