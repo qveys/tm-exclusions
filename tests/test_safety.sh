@@ -350,6 +350,20 @@ for config in $'pattern|cache|cache reason\npattern|other|other reason' 'setting
 done
 rm "$TEST_DIR/bin/find"
 
+# A missing required catalog fails closed, including when a custom rule exists.
+printf '%s\n' 'path|~/project|custom path' > "$HOME/.config/tm_exclusions/custom.conf"
+for mode in --report-only ""; do
+    # An empty mode selects the default apply operation.
+    TM_EXCLUSIONS_DEFAULT_CONF="$TEST_DIR/absent.conf" run 1 ${mode:+"$mode"}
+    assert_file_contains "$TM_EXCLUSIONS_REPORT" "Default catalog missing or unreadable: $TEST_DIR/absent.conf" \
+        "missing catalog is named in the report ($mode)"
+    assert_true "missing catalog stops before tmutil ($mode)" test ! -s "$TEST_CALLS"
+done
+: > "$TM_EXCLUSIONS_DEFAULT_CONF"
+run 0 --report-only
+assert_file_contains "$TM_EXCLUSIONS_REPORT" "NEED  $HOME/project " "an empty catalog still loads custom rules"
+: > "$HOME/.config/tm_exclusions/custom.conf"
+
 # Invalid keep input prevents every mutation; CLI --add persists a usable rule.
 printf '%s\n' 'path|~/project|test' 'keep|relative/path|invalid' > "$TM_EXCLUSIONS_DEFAULT_CONF"
 run 1

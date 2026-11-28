@@ -33,6 +33,8 @@ Configuration is loaded and merged in this order:
 2. `~/.config/tm_exclusions/custom.conf` — user-defined rules
 3. (optional) `$TM_EXCLUSIONS_EXTRA_CONF` — additional additive config file
 
+A missing or unreadable default catalog records a configuration error. Custom report settings are still loaded, and the CLI writes the error report before any exclusion processing. An empty default catalog is valid.
+
 After all three config files are parsed, `derive_bak_old_prunes()` runs a one-time pass over `CONF_PATHS`. For every static `path|<P>` rule, it automatically appends `<P>.bak` and `<P>.old` to `CONF_PRUNES` (if not already present). This means common shadow copies produced by tool reinstalls or migrations (e.g. `.bun.bak`, `.npm.bak`, `.cargo.bak`) are silently skipped during the dynamic scan without requiring explicit catalog entries. Only `path|` entries trigger auto-derivation — `pattern|` and `prune|` entries are not processed. The auto-derived prune entries only affect `is_pruned()` / `scan_dynamic_patterns()`; `apply_static_paths()` is unchanged and will never call `tmutil addexclusion` on `.bak`/`.old` paths (which may not exist on most machines).
 
 Strings for **en** / **fr** live in `locales/{en,fr}.sh`; see **`docs/I18N.md`**.

@@ -1963,8 +1963,14 @@ load_config() {
     CONF_REPORT_PATH=""
     CONF_DESKTOP_REPORT=0
 
-    # Load default config first
-    parse_config_file "$(resolve_default_conf)"
+    # The default catalog is required, even on a first run without custom rules.
+    local default_conf
+    default_conf="$(resolve_default_conf)"
+    if [[ -f "$default_conf" && -r "$default_conf" ]]; then
+        parse_config_file "$default_conf"
+    else
+        record_error "$MSG_DEFAULT_CONF_UNREADABLE $default_conf"
+    fi
     # Merge custom config (path/pattern/prune append; setting last-wins)
     parse_config_file "${CUSTOM_CONF}"
     # Extra config last: rules are additive; settings override earlier files.

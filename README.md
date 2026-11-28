@@ -530,7 +530,7 @@ launchctl load ~/Library/LaunchAgents/com.tm-exclusions.weekly.plist
 
 | Variable | Effect |
 |---|---|
-| `TM_EXCLUSIONS_DEFAULT_CONF` | Override default rules file path |
+| `TM_EXCLUSIONS_DEFAULT_CONF` | Override the required default rules file. A missing or unreadable catalog stops the run. An empty file is valid. |
 | `TM_EXCLUSIONS_EXTRA_CONF` | Load an additional config file after default + custom (opt-in cloud-sync prunes, see [Power users](#power-users-cloud-sync-prune-opt-in)) |
 | `TM_EXCLUSIONS_REPORT` | Override report output path (overrides `setting|report_path`) |
 | `TM_EXCLUSIONS_REPORT_DESKTOP=1` | Also write a report copy to `~/Desktop` (opt-in; equivalent to `--desktop-report`; overrides `setting|desktop_report`) |
