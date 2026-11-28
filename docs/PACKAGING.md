@@ -40,6 +40,8 @@ t="$(mktemp)" && \
 
 ### From the tap (`qveys/homebrew-tools`)
 
+When the changelog has no release notes, initial publication uses GitHub-generated notes. Re-running the workflow preserves the existing release body and proceeds to the tap update.
+
 After a **`v*`** tag is pushed, `.github/workflows/release.yml` creates/updates the GitHub Release (injecting release notes extracted directly from `CHANGELOG.md`) and updates **`Formula/tm-exclusions.rb`** in **`qveys/homebrew-tools`** using repository secret **`HOMEBREW_TOKEN`** (PAT with `repo` scope on the tap).
 
 Then:

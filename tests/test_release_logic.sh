@@ -670,4 +670,35 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Run the workflow's actual publish step. The fake gh handles the existence
+# check and prints each argument of the command that creates or edits the release.
+awk '
+    /^      - name: Create or update GitHub Release$/ { step = 1; next }
+    step && /^        run: \|$/ { body = 1; next }
+    body && /^      - / { exit }
+    body { sub(/^          /, ""); print }
+' "$WORKFLOW" > "$WORK/publish.sh"
+mkdir -p "$WORK/publish-bin"
+cat > "$WORK/publish-bin/gh" <<'STUB'
+#!/bin/sh
+if [ "$2" = view ]; then exit "$VIEW_STATUS"; fi
+printf '<%s>\n' "$@"
+STUB
+chmod +x "$WORK/publish-bin/gh"
+for operation in edit create; do
+    for notes in true false; do
+        view_status=0
+        [[ "$operation" = edit ]] || view_status=1
+        expected=(release "$operation" v1.2.3 --title "tm-exclusions v1.2.3")
+        if [[ "$notes" = true ]]; then
+            expected+=(--notes-file release_notes.md)
+        elif [[ "$operation" = create ]]; then
+            expected+=(--generate-notes)
+        fi
+        actual="$(PATH="$WORK/publish-bin" VIEW_STATUS="$view_status" HAS_NOTES="$notes" \
+            TAG=v1.2.3 "$BASH" -e "$WORK/publish.sh")"
+        assert_eq "$(printf '<%s>\n' "${expected[@]}")" "$actual" "release $operation with changelog notes=$notes"
+    done
+done
+
 test_summary
