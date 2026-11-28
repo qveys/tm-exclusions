@@ -91,7 +91,8 @@ TMUX_CHILD_RC=0
 # PID of the attached tmux client, when one is running: cleanup stops it.
 TMUX_CLIENT_PID=""
 # PID of the fallback reader that drains the debug FIFO when the log pane could
-# not be created, so the inner run never blocks on a full pipe.
+# not be created, so the inner run never blocks on a full pipe. FD 6 keeps the
+# FIFO open while it runs.
 TMUX_DRAIN_PID=""
 
 # ---------------------------------------------------------------------------
@@ -1203,8 +1204,14 @@ cleanup() {
 # path is made by this run (mktemp -d), so no other server can sit on it.
 tmux_cleanup() {
     if [[ -n "${TMUX_DRAIN_PID:-}" ]]; then
+        # Wait for the reader: without it a reaped PID could be reused and the
+        # signal would reach an unrelated process.
         kill "${TMUX_DRAIN_PID}" 2>/dev/null || true
+        wait "${TMUX_DRAIN_PID}" 2>/dev/null || true
     fi
+    # Close the read-write end that kept the drain alive; harmless when unused.
+    exec 6>&- 2>/dev/null || true
+    exec 6<&- 2>/dev/null || true
     if [[ -n "${TMUX_BIN:-}" && -n "${TMUX_SOCK:-}" ]]; then
         # Stop our own client first: it would otherwise keep reading the
         # terminal while its session disappears.
@@ -1375,8 +1382,12 @@ tmux_launch() {
         log_error "${MSG_TMUX_NO_PANE}"
         # Without a reader the inner run would block as soon as the pipe buffer
         # fills (8 KiB on macOS): drain the FIFO to /dev/null instead of a pane.
-        cat -- "$fifo" > /dev/null 2>&1 &
-        TMUX_DRAIN_PID=$!
+        # FD 6 holds the FIFO open read-write, so the reader never sees EOF and
+        # exits before cleanup (its PID must still belong to it when stopped).
+        if exec 6<>"${fifo}"; then
+            cat -- "$fifo" > /dev/null 2>&1 &
+            TMUX_DRAIN_PID=$!
+        fi
     fi
 
     # Attach until the wrapper closes the session. The client runs in the

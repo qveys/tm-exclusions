@@ -266,7 +266,8 @@ else
     # --- TMPDIR too long for the platform socket path: normal single-pane run ---
     echo ""
     echo "--- TMPDIR too long for a unix socket: normal run ---"
-    LONG_TMP="$WORK/$(i=0; while [ "$i" -lt 60 ]; do printf 'd'; i=$((i + 1)); done)"
+    # 104 ASCII characters: over the limit even when $WORK is short (/tmp on Linux).
+    LONG_TMP="$WORK/$(i=0; while [ "$i" -lt 104 ]; do printf 'd'; i=$((i + 1)); done)"
     mkdir -p "$LONG_TMP"
     : > "$TMUTIL_CALLS"
     : > "$TMUX_CALLS"
