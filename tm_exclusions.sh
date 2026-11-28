@@ -2012,11 +2012,14 @@ EOF
 # ---------------------------------------------------------------------------
 # Config management commands
 # ---------------------------------------------------------------------------
+# Status: 0 = created, 1 = already there, 2 = could not be written (read-only
+# or missing parent directory). The shell's own redirection error is silenced:
+# callers report the failure with MSG_CONFIG_CREATE_FAILED.
 write_custom_config_if_absent() {
     if [[ -f "${CUSTOM_CONF}" ]]; then
         return 1
     fi
-    cat > "${CUSTOM_CONF}" << 'CONF_EOF'
+    cat 2>/dev/null > "${CUSTOM_CONF}" << 'CONF_EOF'
 # tm-exclusions custom configuration
 # Format: type|target|reason
 # Types: path (static path), pattern (directory name for scan), prune (skip during scan)
@@ -2037,24 +2040,39 @@ write_custom_config_if_absent() {
 # setting|report_path|~/Documents/tm-exclusions-last.txt
 # setting|desktop_report|true
 CONF_EOF
+    # The heredoc redirection above is the command's only failure point.
+    [[ -f "${CUSTOM_CONF}" ]] || return 2
     return 0
 }
 
+# First-run helper for regular runs: a config file that cannot be created (for
+# example a read-only HOME) is reported but never stops the run, which only
+# needs the built-in catalog.
 ensure_custom_conf_exists() {
+    local rc=0
     mkdir -p "${CUSTOM_CONF_DIR}" 2>/dev/null || true
-    if write_custom_config_if_absent; then
-        log_info "${MSG_CONFIG_AUTO_CREATED} ${CUSTOM_CONF}"
-    fi
+    write_custom_config_if_absent || rc=$?
+    case "$rc" in
+        0) log_info "${MSG_CONFIG_AUTO_CREATED} ${CUSTOM_CONF}" ;;
+        2) log_error "${MSG_CONFIG_CREATE_FAILED} ${CUSTOM_CONF}" ;;
+    esac
 }
 
 cmd_config_init() {
     if [[ -d "${CUSTOM_CONF_DIR}" ]]; then
         log_info "${MSG_CONFIG_EXISTS} ${CUSTOM_CONF_DIR}"
-    else
-        mkdir -p "${CUSTOM_CONF_DIR}"
+    elif mkdir -p "${CUSTOM_CONF_DIR}" 2>/dev/null; then
         log_info "${MSG_CONFIG_CREATED} ${CUSTOM_CONF_DIR}"
+    else
+        log_error "${MSG_CONFIG_CREATE_FAILED} ${CUSTOM_CONF_DIR}"
+        exit 1
     fi
-    write_custom_config_if_absent || true
+    local rc=0
+    write_custom_config_if_absent || rc=$?
+    if [[ "$rc" -eq 2 ]]; then
+        log_error "${MSG_CONFIG_CREATE_FAILED} ${CUSTOM_CONF}"
+        exit 1
+    fi
 }
 
 cmd_config_add() {

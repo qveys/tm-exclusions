@@ -78,4 +78,29 @@ assert_file_contains "$WORK/nl.out" "Applying exclusion: $NL_HOME/proj/node_modu
 assert_file_lacks_regex "$WORK/nl.out" 'exclusion: b/node_modules'     "the tail of a newline-split path is not processed as a relative path"
 assert_file_lacks_regex "$WORK/nl.calls" '^isexcluded b/node_modules'     "tmutil is never asked about a path relative to the cwd"
 
+# ---------------------------------------------------------------------------
+# A configuration directory that cannot be created
+# ---------------------------------------------------------------------------
+# $HOME/.config is a regular file, so neither the directory nor the default
+# custom.conf can be created (also true when the suite runs as root). The first
+# run notice must not claim success, and no raw shell error may leak.
+RO_HOME="$WORK/ro-home"
+mkdir -p "$RO_HOME"
+: > "$RO_HOME/.config"
+HOME="$RO_HOME" run_tm "$WORK/ro.out" --lang en --list
+assert_eq "1" "$TM_RC" "--list fails when the custom config cannot exist"
+assert_file_lacks_regex "$WORK/ro.out" 'Created default custom config'     "no false 'created' notice when the config file could not be written"
+assert_file_contains "$WORK/ro.out" "Could not create the default custom config"     "the failure is reported in English"
+assert_file_lacks_regex "$WORK/ro.out" 'Not a directory|No such file'     "no raw shell error leaks"
+HOME="$RO_HOME" run_tm "$WORK/ro_fr.out" --lang fr --list
+assert_file_contains "$WORK/ro_fr.out" "Impossible de créer la configuration personnalisée"     "the failure is reported in French"
+HOME="$RO_HOME" run_tm "$WORK/ro_init.out" --lang en --init
+assert_eq "1" "$TM_RC" "--init exits 1 when the config directory cannot be created"
+assert_file_contains "$WORK/ro_init.out" "Could not create the default custom config"     "--init reports the failure instead of a raw mkdir error"
+# The scan itself does not need the file: a run still reaches its report.
+HOME="$RO_HOME" TM_EXCLUSIONS_REPORT="$WORK/ro_report.txt" \
+    run_tm "$WORK/ro_run.out" --lang en --report-only
+assert_eq "0" "$TM_RC" "a report-only run does not need a writable config directory"
+assert_file_lacks_regex "$WORK/ro_run.out" 'Created default custom config'     "a run without a writable config directory does not claim to have created it"
+
 test_summary
