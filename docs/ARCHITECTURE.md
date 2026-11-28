@@ -136,10 +136,11 @@ Some exclusions applied via `tmutil addexclusion` (user-level "sticky" exclusion
 `init_ui()` enables presentation only for a TTY stdout, a non-dumb `TERM`,
 non-quiet output and no non-empty `NO_COLOR`. Section headings and status logs
 use ANSI colors and Unicode icons. `progress_start` / `progress_step` count
-static rules, discovered extra paths, and completed dynamic scan patterns;
-percentages describe work items, not time or discovered-directory counts.
-Progress lines are cleared before messages and on cleanup; no cursor hiding or
-background animation process is used. Opt-in image discovery streams visited directories and
+static rules and discovered extra paths. The dynamic scan displays the last path
+written by find, samples the classification path, and numbers sorted candidates
+as they enter processing.
+Blocking stages display elapsed seconds using a background timer joined by
+`clear_progress` before the next output and on cleanup. Opt-in image discovery streams visited directories and
 matching images from one NUL-delimited `find` traversal. `show_scan_path()`
 rewrites one status line, abbreviates HOME, sanitizes control characters and
 truncates long paths to fit the terminal (allowing two cells per character).

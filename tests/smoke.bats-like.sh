@@ -2070,8 +2070,24 @@ init_ui
 UI=1
 UI_CYAN=$(printf "\033[36m")
 UI_RESET=$(printf "\033[0m")
+UI_HEADING=$(printf "\033[1;35m")
+ui_section "📁" "Section" > "$3/heading"
+ui_category "Category" >> "$3/heading"
+grep -Fq "$UI_HEADING  ━━ 📁  Section$UI_RESET" "$3/heading"
+grep -Fq "${UI_HEADING}══ Category ══$UI_RESET" "$3/heading"
 progress_start "$(printf "one\ntwo")" > "$3/progress"
 progress_step >> "$3/progress"
+start_activity "Measuring" > "$3/counted-activity"
+sleep 2
+clear_progress >/dev/null
+grep -Eq "50%  1/2.*Measuring.*[1-9]s" "$3/counted-activity"
+SCAN_COLUMNS=22
+progress_draw >/dev/null
+start_activity "Measuring directory" > "$3/narrow"
+sleep 2
+clear_progress >/dev/null
+grep -Eq "50%.*[1-9]s .*ry" "$3/narrow"
+SCAN_COLUMNS=80
 progress_step >> "$3/progress"
 grep -q "100%  2/2" "$3/progress"
 [[ "$UI_PROGRESS" -eq 0 ]]
@@ -2121,10 +2137,33 @@ collect_post_scan_paths > "$3/live-discovery"
 [[ "$EXTRA_PATHS" = "$expected" && "$UI_PROGRESS" -eq 0 ]]
 grep -q "project with spaces/subdir" "$3/live-discovery"
 [[ "$(wc -l < "$3/live-discovery" | tr -d " ")" = 0 ]]
+printf "%s\n" "$HOME/repo/node_modules" > "$3/scan-results"
+start_activity "$MSG_SCANNING" "$HOME" "$3/scan-results" > "$3/activity"
+sleep 2
+clear_progress > /dev/null
+[[ -z "$UI_ACTIVITY_PID" && "$UI_PROGRESS" -eq 0 ]]
+grep -q "Last match ~/repo/node_modules" "$3/activity"
+grep -Eq "[1-9][0-9]*s" "$3/activity"
+UI=0
+start_activity "$MSG_UI_MEASURE" > "$3/activity-plain"
+[[ ! -s "$3/activity-plain" && -z "$UI_ACTIVITY_PID" ]]
+UI=1
+SCAN_COLUMNS=22
+show_scan_path "$HOME/repo/node_modules" "1s · Last match " "1s " > "$3/narrow-match"
+grep -q "1s .*ules" "$3/narrow-match"
+SCAN_COLUMNS=15
+show_scan_path "$HOME/repo/node_modules" "1s · Last match " "1s " > "$3/tiny-match"
+grep -q "1s" "$3/tiny-match"
 SCAN_COLUMNS=30
 show_scan_path "$HOME/a very long directory name/with-tail" > "$3/short-discovery"
 grep -q "with-tail" "$3/short-discovery"
-[[ "$(wc -c < "$3/short-discovery" | tr -d " ")" -lt 30 ]]
+frame=$(cat "$3/short-discovery")
+begin=$(printf "\r\033[2K\033[?7l")
+end=$(printf "\r\033[?7h")
+[[ "$frame" == "$begin"*"$end" ]]
+visible=${frame#"$begin"}
+visible=${visible%"$end"}
+[[ ${#visible} -lt 30 ]]
 clear_progress > /dev/null
 UI=0
 for ((i=0; i<55; i++)); do mkdir "$HOME/image-$i.sparsebundle"; done
