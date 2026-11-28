@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixes
 
+- Accept `--lang=en` and `--lang=fr`, and allow language flags after the three `--add` operands.
 - `--add` rejects empty targets and directory patterns containing `/` before appending a rule.
 
 - **Hugging Face and Claude VM exclusions only take regenerable data**: `~/.cache/huggingface` was excluded as a whole, taking the login token and user `assets` out of backups; only `hub/` and `xet/` ship now. `Library/Application Support/Claude/vm_bundles` is narrowed to `claudevm.bundle/rootfs.img`, so `sessiondata.img` stays backed up (a `keep` rule is documented for the whole image). Exclusions left by an older catalog on the two former parents are dropped by the retired-parent migration.

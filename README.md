@@ -255,7 +255,7 @@ Other:
   --desktop-report Write a report copy to ~/Desktop (default: off; avoids clutter on cron/launchd runs)
   --tmux           Two-pane tmux interface (progress/status + debug log stream; requires tmux)
   --version        Show version
-  --lang <fr|en>   Force language
+  --lang <fr|en>, --lang=<fr|en>  Force language
   --help           Show help
 ```
 
@@ -400,6 +400,7 @@ setting|desktop_report|true
 
 `--add` accepts `path`, `pattern`, `prune`, and `keep`. Add `setting` lines with `--edit` or by editing `custom.conf`.
 A target must be non-empty, and a `pattern` target must be a directory name glob without `/`.
+Pass `--lang fr` or `--lang=fr` before or after the three `--add` operands.
 
 ### Add custom exclusions
 

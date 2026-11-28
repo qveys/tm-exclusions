@@ -495,6 +495,14 @@ assert_output_contains "Utilisation" \
     "--lang fr shows French help" \
     bash "$TM_EXCLUSIONS" --lang fr --help
 
+assert_output_contains "Utilisation" \
+    "--lang=fr shows French help" \
+    bash "$TM_EXCLUSIONS" --lang=fr --help
+
+assert_exit_code 1 \
+    "--lang= rejects an empty language" \
+    bash "$TM_EXCLUSIONS" --lang= --help
+
 assert_output_contains "Usage:" \
     "--lang en shows English help" \
     bash "$TM_EXCLUSIONS" --lang en --help
@@ -559,6 +567,18 @@ assert_exit_code 1 \
 assert_output_not_contains "slash in pattern" \
     "--add leaves invalid patterns out of the custom config" \
     cat "$HOME/.config/tm_exclusions/custom.conf"
+
+assert_output_contains "Règle ajoutée" \
+    "--lang fr after --add localizes the confirmation" \
+    bash "$TM_EXCLUSIONS" --add pattern "localized cache" "test reason" --lang fr
+
+assert_output_contains "Rule added" \
+    "--add treats an option-shaped reason as literal text" \
+    bash "$TM_EXCLUSIONS" --lang en --add pattern "literal reason cache" --quiet
+
+assert_output_contains "Langue non supportée" \
+    "--lang= validates a trailing language after --add" \
+    bash "$TM_EXCLUSIONS" --lang fr --add pattern "invalid language cache" "test reason" --lang=de --lang=fr
 
 # Test invalid type
 assert_exit_code 1 \

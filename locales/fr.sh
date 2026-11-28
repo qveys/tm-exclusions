@@ -45,7 +45,7 @@ declare_i18n_fr() {
     MSG_CATEGORY_DEFAULT="Sans catégorie"
     MSG_HELP_FORCE="  --force            Avec --uninstall, supprimer aussi les chemins correspondants absents"
     MSG_HELP_DESKTOP_REPORT="  --desktop-report   Écrire une copie du rapport sur le Bureau (défaut : désactivé)"
-    MSG_HELP_LANG="  --lang <en|fr>     Langue de sortie"
+    MSG_HELP_LANG="  --lang <en|fr>, --lang=<en|fr>  Langue de sortie"
     MSG_HELP_TMUX="  --tmux             Interface tmux à deux volets (progression + flux de logs ; nécessite tmux)"
     MSG_HELP_VERSION="  --version          Afficher la version"
     MSG_HELP_HELP="  --help             Afficher cette aide"

@@ -45,7 +45,7 @@ declare_i18n_en() {
     MSG_CATEGORY_DEFAULT="Uncategorized"
     MSG_HELP_FORCE="  --force            With --uninstall, also remove matched paths that no longer exist"
     MSG_HELP_DESKTOP_REPORT="  --desktop-report   Write a report copy to ~/Desktop (default: off)"
-    MSG_HELP_LANG="  --lang <en|fr>     Set output language"
+    MSG_HELP_LANG="  --lang <en|fr>, --lang=<en|fr>  Set output language"
     MSG_HELP_TMUX="  --tmux             Run in a two-pane tmux interface (progress + log stream; requires tmux)"
     MSG_HELP_VERSION="  --version          Show version"
     MSG_HELP_HELP="  --help             Show this help"

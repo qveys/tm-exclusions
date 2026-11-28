@@ -328,7 +328,7 @@ Uninstall is idempotent: removing a non-excluded path is a no-op.
 
 ## Language Detection / Override
 
-1. If `--lang en` or `--lang fr` is passed, use that language.
+1. Use the last language specified with `--lang <en|fr>` or `--lang=<en|fr>`. The pre-scan skips the three literal `--add` operands and accepts a language flag after them.
 2. Otherwise, check locale env vars (`LC_ALL`, `LC_MESSAGES`, `LC_CTYPE`, then `LANG`).
 3. Default to English.
 
