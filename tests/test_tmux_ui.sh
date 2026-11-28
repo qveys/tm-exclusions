@@ -63,8 +63,10 @@ PTY_RUNNER="$WORK/pty_runner.py"
 if command -v python3 >/dev/null 2>&1; then
     HAVE_PTY=1
     cat > "$PTY_RUNNER" <<'PYEOF'
-import os, pty, sys, errno
+import os, pty, sys, errno, select, signal, time
 argv = sys.argv[1:]
+delay = float(os.environ.get("PTY_SIGNAL_AFTER") or 0)
+signame = os.environ.get("PTY_SIGNAL") or "TERM"
 pid, fd = pty.fork()
 if pid == 0:
     try:
@@ -76,7 +78,21 @@ if pid == 0:
 # Drain the master pty to stdout until end-of-stream. On Linux, reading the
 # master after the slave side closes raises EIO instead of returning b""; that
 # is the normal end, not an error, and must not lose the child's exit status.
+# With PTY_SIGNAL_AFTER=<seconds>, the child receives PTY_SIGNAL once, then the
+# drain continues: used to prove a signal reaches the CLI's cleanup.
+sent = False
+start = time.time()
 while True:
+    if delay and not sent and time.time() - start >= delay:
+        try:
+            os.kill(pid, getattr(signal, "SIG" + signame))
+        except OSError:
+            pass
+        sent = True
+    if delay and not sent:
+        ready, _, _ = select.select([fd], [], [], 0.05)
+        if not ready:
+            continue
     try:
         data = os.read(fd, 65536)
     except OSError as exc:
@@ -100,20 +116,22 @@ run_pty() {
     python3 "$PTY_RUNNER" "$@" > "$out" 2>&1
 }
 
-# Stub tmux: parses "-L <sock> <subcommand> ..." and records the subcommand, its
-# arguments and the pane environment it would have received. It emulates the
+# Stub tmux: parses "-S <socket> <subcommand> ..." and records the subcommand,
+# its arguments and the pane environment it would have received. It emulates the
 # left pane (runs the re-exec wrapper), the right pane (nothing to read) and
 # attach-session (blocks until the wrapper writes the exit-status file). On
-# TMUX_FAIL_NEW_SESSION=1 it fails new-session like an unavailable tmux.
+# TMUX_FAIL_NEW_SESSION=1 it fails new-session like an unavailable tmux; on
+# TMUX_FAIL_SPLIT=1 it fails the log pane after the run has started.
 STUB_TMUX_DIR="$WORK/tmux-stub"
 mkdir -p "$STUB_TMUX_DIR"
 cat > "$STUB_TMUX_DIR/tmux" <<'STUB'
 #!/bin/sh
-if [ "$1" = -L ]; then shift 2; fi
+if [ "$1" = -L ] || [ "$1" = -S ]; then shift 2; fi
 sub="$1"
-printf 'SUB=%s ARGS=%s FIFO=%s DEBUG_FIFO=%s\n' \
-    "$sub" "$*" "${TM_EXCLUSIONS_TMUX_FIFO:-}" "${TM_EXCLUSIONS_DEBUG_FIFO:-}" >> "$TMUX_CALLS"
+printf 'SUB=%s ARGS=%s FIFO=%s DEBUG_FIFO=%s SOCK=%s\n' \
+    "$sub" "$*" "${TM_EXCLUSIONS_TMUX_FIFO:-}" "${TM_EXCLUSIONS_DEBUG_FIFO:-}" "${TM_EXCLUSIONS_TMUX_SOCK:-}" >> "$TMUX_CALLS"
 if [ "${TMUX_FAIL_NEW_SESSION:-0}" = 1 ] && [ "$sub" = new-session ]; then exit 1; fi
+if [ "${TMUX_FAIL_SPLIT:-0}" = 1 ] && [ "$sub" = split-window ]; then exit 1; fi
 case "$sub" in
     new-session)
         # stdin from /dev/null so the wrapper's "press Enter" read never blocks
@@ -121,6 +139,7 @@ case "$sub" in
         "${TM_EXCLUSIONS_TMUX_WRAPPER}" < /dev/null &
         ;;
     attach-session)
+        if [ -n "${TMUX_SLOW_ATTACH:-}" ]; then sleep "$TMUX_SLOW_ATTACH"; exit 0; fi
         i=0
         while [ ! -s "${TM_EXCLUSIONS_TMUX_RC}" ] && [ "$i" -lt 400 ]; do
             sleep 0.05 2>/dev/null || sleep 1
@@ -204,6 +223,23 @@ else
         "tmux new-session failure: the fallback is announced"
     assert_eq 1 "$(isexcluded_count)" "tmux new-session failure: the scan ran exactly once (no double scan)"
 
+    # --- log pane failure after the run started: no fallback, no second scan ---
+    echo ""
+    echo "--- log pane failure: single pane, no fallback ---"
+    : > "$TMUTIL_CALLS"
+    : > "$TMUX_CALLS"
+    rc=0
+    run_pty "$WORK/out-split-fail" \
+        env HOME="$B_HOME" PATH="$STUB_TMUX_DIR:$B_BIN:$PATH" TERM=xterm \
+            TM_EXCLUSIONS_DEFAULT_CONF="$CONF" TMUX_CALLS="$TMUX_CALLS" TMUX_FAIL_SPLIT=1 \
+            bash "$TM_EXCLUSIONS" --tmux --dry-run || rc=$?
+    assert_eq 0 "$rc" "log pane failure: the run still exits 0"
+    assert_file_contains "$WORK/out-split-fail" "single tmux pane" \
+        "log pane failure: the missing pane is reported"
+    assert_eq 1 "$(isexcluded_count)" "log pane failure: the scan ran exactly once (no second scan)"
+    assert_true "log pane failure: the client was still attached to the running session" \
+        grep -q '^SUB=attach-session' "$TMUX_CALLS"
+
     # --- Interactive two panes (stub): wiring, single scan, exit code, cleanup ---
     echo ""
     echo "--- Interactive two panes (stub tmux) ---"
@@ -223,6 +259,10 @@ else
     # shellcheck disable=SC2016  # the \$ is a literal dollar in the recorded pane command
     assert_true "the right pane command tails the dedicated FIFO" \
         grep -q 'SUB=split-window ARGS=.*cat -- "\$TM_EXCLUSIONS_TMUX_FIFO"' "$TMUX_CALLS"
+    assert_true "the log pane never takes the keyboard (split-window -d)" \
+        grep -q 'SUB=split-window ARGS=.*-d.*' "$TMUX_CALLS"
+    assert_true "the dedicated server uses a private socket path (-S inside the work dir)" \
+        grep -q 'SOCK=/.*tm_exc_work\.[A-Za-z0-9]*/s' "$TMUX_CALLS"
     assert_true "the child receives a non-empty TM_EXCLUSIONS_DEBUG_FIFO (log stream)" \
         grep -q 'DEBUG_FIFO=/.*debug\.fifo' "$TMUX_CALLS"
     assert_eq 1 "$(isexcluded_count)" "interactive two panes: the scan ran exactly once (no double scan)"
@@ -266,30 +306,46 @@ else
     assert_eq 1 "$(isexcluded_count)" "script in a spaced path: the scan ran exactly once"
     assert_true "script in a spaced path: the wrapper ran the child" grep -q '^SUB=new-session' "$TMUX_CALLS"
 
+    # --- SIGTERM while attached: cleanup runs, nothing is left behind ---
+    echo ""
+    echo "--- SIGTERM while attached: cleanup ---"
+    # Short TMPDIR: the private tmux socket path must stay under macOS's
+    # 104-byte unix-socket limit, or the interface falls back by design.
+    TERM_TMP="$WORK/t"
+    mkdir -p "$TERM_TMP"
+    : > "$TMUTIL_CALLS"
+    : > "$TMUX_CALLS"
+    rc=0
+    export PTY_SIGNAL_AFTER=1 PTY_SIGNAL=TERM
+    run_pty "$WORK/out-term" \
+        env HOME="$B_HOME" PATH="$STUB_TMUX_DIR:$B_BIN:$PATH" TERM=xterm TMPDIR="$TERM_TMP" \
+            TM_EXCLUSIONS_DEFAULT_CONF="$CONF" TMUX_CALLS="$TMUX_CALLS" TMUX_SLOW_ATTACH=30 \
+            bash "$TM_EXCLUSIONS" --tmux --dry-run || rc=$?
+    unset PTY_SIGNAL_AFTER PTY_SIGNAL
+    assert_eq 143 "$rc" "SIGTERM while attached: the CLI exits 143 instead of waiting for the client"
+    assert_eq 0 "$(find "$TERM_TMP" -mindepth 1 2>/dev/null | wc -l | tr -d ' ')" \
+        "SIGTERM while attached: the private work directory is gone"
+    assert_true "SIGTERM while attached: the attached client was stopped" \
+        grep -q '^SUB=attach-session' "$TMUX_CALLS"
+    assert_true "SIGTERM while attached: the dedicated server was killed" \
+        grep -q '^SUB=kill-server' "$TMUX_CALLS"
+
     # --- Real tmux (opt-in, isolated socket): two panes and full cleanup ---
     echo ""
-    echo "--- Real tmux on a dedicated -L socket (skipped when tmux absent) ---"
+    echo "--- Real tmux on a dedicated socket (skipped when tmux absent) ---"
     if command -v tmux >/dev/null 2>&1; then
-        SOCK_DIR="${TMUX_TMPDIR:-/tmp}/tmux-${UID:-0}"
-        count_tm_exc() {
-            local n=0 f
-            for f in "$SOCK_DIR"/tm-exc-*; do
-                [ -e "$f" ] || continue
-                n=$((n + 1))
-            done
-            printf '%s' "$n"
-        }
-        before="$(count_tm_exc)"
+        REAL_TMP="$WORK/r"
+        mkdir -p "$REAL_TMP"
         : > "$TMUTIL_CALLS"
         rc=0
         run_pty "$WORK/out-real-tmux" \
             env HOME="$B_HOME" PATH="$B_BIN:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" TERM=xterm \
-                TM_EXCLUSIONS_DEFAULT_CONF="$CONF" TM_EXCLUSIONS_TMUX_NO_HOLD=1 \
+                TMPDIR="$REAL_TMP" TM_EXCLUSIONS_DEFAULT_CONF="$CONF" TM_EXCLUSIONS_TMUX_NO_HOLD=1 \
                 bash "$TM_EXCLUSIONS" --tmux --dry-run || rc=$?
         assert_eq 0 "$rc" "real tmux: --tmux --dry-run exits 0"
         assert_eq 1 "$(isexcluded_count)" "real tmux: the scan ran exactly once"
-        after="$(count_tm_exc)"
-        assert_eq "$before" "$after" "real tmux: no dedicated socket left behind"
+        assert_eq 0 "$(find "$REAL_TMP" -mindepth 1 2>/dev/null | wc -l | tr -d ' ')" \
+            "real tmux: no socket or work directory left behind"
     else
         echo "  SKIP real tmux: tmux not installed"
     fi

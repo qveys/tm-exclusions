@@ -98,6 +98,8 @@ declare_i18n_fr() {
     MSG_ERROR_NO_TMUTIL="Attention : tmutil introuvable. Mode simulation activé."
     MSG_TMUX_NOT_FOUND="tmux introuvable ; exécution sans l'interface à deux volets"
     MSG_TMUX_FALLBACK="Impossible de démarrer l'interface tmux ; exécution normale"
+    MSG_TMUX_NO_PANE="Impossible de créer le volet de logs ; poursuite dans un seul volet tmux"
+    MSG_TMUX_ATTACH_LOST="Client tmux perdu pendant l'exécution ; arrêt de l'exécution"
     MSG_TMUX_NO_STATUS="Le wrapper tmux a terminé sans rapporter le code de sortie interne ; échec supposé"
     MSG_TMUX_DONE="Exécution terminée — appuyez sur Entrée pour fermer"
     MSG_ERROR_EMPTY_REPORT_PATH="Attention : report_path vide à"

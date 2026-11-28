@@ -88,6 +88,8 @@ TMUX_BIN=""
 TMUX_SOCK=""
 TMUX_SESSION=""
 TMUX_CHILD_RC=0
+# PID of the attached tmux client, when one is running: cleanup stops it.
+TMUX_CLIENT_PID=""
 
 # ---------------------------------------------------------------------------
 # i18n locale resolution
@@ -1192,22 +1194,28 @@ cleanup() {
     cleanup_tmp_files
 }
 
-# Remove only the tmux resources this run created: its own dedicated server
-# socket and session. Never touches an existing tmux server or session.
+# Remove only the tmux resources this run created: its own dedicated server, on
+# a private socket path inside the run's work directory, its session and its
+# attached client. Never touches an existing tmux server or session: the socket
+# path is made by this run (mktemp -d), so no other server can sit on it.
 tmux_cleanup() {
     if [[ -n "${TMUX_BIN:-}" && -n "${TMUX_SOCK:-}" ]]; then
-        if [[ -n "${TMUX_SESSION:-}" ]]; then
-            "$TMUX_BIN" -L "$TMUX_SOCK" kill-session -t "$TMUX_SESSION" 2>/dev/null || true
+        # Stop our own client first: it would otherwise keep reading the
+        # terminal while its session disappears.
+        if [[ -n "${TMUX_CLIENT_PID:-}" ]]; then
+            kill "${TMUX_CLIENT_PID}" 2>/dev/null || true
         fi
-        "$TMUX_BIN" -L "$TMUX_SOCK" kill-server 2>/dev/null || true
-        # tmux 3.x can leave its dedicated socket file behind after kill-server.
-        # Remove only this run's own socket (unique tm-exc-<pid> name), never a
-        # foreign one; the FIFO lives in TMP_DIR and goes with it.
-        local sdir="${TMUX_TMPDIR:-/tmp}/tmux-${UID:-0}"
-        if [[ -S "${sdir}/${TMUX_SOCK}" ]]; then
-            rm -f -- "${sdir}/${TMUX_SOCK}" 2>/dev/null || true
+        if [[ -n "${TMUX_SESSION:-}" ]]; then
+            "$TMUX_BIN" -S "$TMUX_SOCK" kill-session -t "$TMUX_SESSION" 2>/dev/null || true
+        fi
+        "$TMUX_BIN" -S "$TMUX_SOCK" kill-server 2>/dev/null || true
+        # tmux can leave its socket file behind after kill-server; only this
+        # run's path (inside TMP_DIR) is ever removed.
+        if [[ -S "${TMUX_SOCK}" ]]; then
+            rm -f -- "${TMUX_SOCK}" 2>/dev/null || true
         fi
     fi
+    TMUX_CLIENT_PID=""
     TMUX_SOCK=""
     TMUX_SESSION=""
 }
@@ -1256,10 +1264,19 @@ tmux_launch() {
     local fifo="${TMP_DIR}/debug.fifo"
     local rc_file="${TMP_DIR}/tmux.rc"
     local wrapper="${TMP_DIR}/tmux_wrapper.sh"
-    local sock="tm-exc-$$"
-    local session="tm-exclusions-$$"
+    # Socket path: inside this run's private work directory, so no other tmux
+    # server can already own it (a PID-derived server name could be reused) and
+    # cleanup can only ever reach this run's server. macOS caps a unix socket
+    # path at 104 bytes; a TMPDIR long enough to overflow it keeps the normal
+    # single-pane run instead of a broken interface.
+    local sock="${TMP_DIR}/s"
+    local session="tm-exclusions"
     local script_path
     script_path="$(resolve_script_dir)/$(basename "${BASH_SOURCE[0]}")"
+    if [[ "${#sock}" -gt 100 ]]; then
+        log_error "${MSG_TMUX_FALLBACK}"
+        return 1
+    fi
 
     mkfifo -- "$fifo" 2>/dev/null || {
         log_error "${MSG_TMUX_FALLBACK}"
@@ -1295,7 +1312,7 @@ tmux_launch() {
         printf '  read -r _key 2>/dev/null || true\n'
         printf 'fi\n'
         # shellcheck disable=SC2016  # the wrapper's shell expands these variables
-        printf 'exec "$TM_EXCLUSIONS_TMUX_BIN" -L "$TM_EXCLUSIONS_TMUX_SOCK" kill-session -t "$TM_EXCLUSIONS_TMUX_SESSION"\n'
+        printf 'exec "$TM_EXCLUSIONS_TMUX_BIN" -S "$TM_EXCLUSIONS_TMUX_SOCK" kill-session -t "$TM_EXCLUSIONS_TMUX_SESSION"\n'
     } > "$wrapper" || {
         log_error "${MSG_TMUX_FALLBACK}"
         return 1
@@ -1326,7 +1343,7 @@ tmux_launch() {
         TM_EXCLUSIONS_TMUX_SOCK="$sock" \
         TM_EXCLUSIONS_TMUX_SESSION="$session" \
         TM_EXCLUSIONS_TMUX_DONE_MSG="$MSG_TMUX_DONE" \
-        "$TMUX_BIN" -L "$sock" new-session -d -s "$session" \
+        "$TMUX_BIN" -S "$sock" new-session -d -s "$session" \
         'exec "$TM_EXCLUSIONS_TMUX_WRAPPER"' || launch_rc=$?
     if [[ "$launch_rc" -ne 0 ]]; then
         log_error "${MSG_TMUX_FALLBACK}"
@@ -1334,28 +1351,47 @@ tmux_launch() {
         return 1
     fi
 
-    # Log pane (right): stream the debug FIFO. Fail loudly: without a reader on
-    # the FIFO the child would block once the pipe buffer fills.
+    # From here on the inner run has started: never fall back to a normal run,
+    # that would scan everything a second time. Every later failure is reported
+    # and the inner status (or a failure) is propagated.
+    #
+    # Log pane (right): stream the debug FIFO. Without a reader the child would
+    # block once the pipe buffer fills, so its absence is reported loudly, but
+    # the run continues in the single left pane.
     # shellcheck disable=SC2016  # the pane shell expands $TM_EXCLUSIONS_TMUX_FIFO
-    if ! "$TMUX_BIN" -L "$sock" split-window -t "$session" -h \
+    if ! "$TMUX_BIN" -S "$sock" split-window -d -t "$session" -h \
         'cat -- "$TM_EXCLUSIONS_TMUX_FIFO"' 2>/dev/null; then
-        log_error "${MSG_TMUX_FALLBACK}"
-        tmux_cleanup
-        return 1
+        log_error "${MSG_TMUX_NO_PANE}"
     fi
 
-    # Attach until the wrapper closes the session. Re-attach on a plain detach
-    # (Ctrl-b d) while the inner run is still going; a real attach failure with
-    # no inner status falls back to a normal run instead of exiting 1.
-    local attach_rc=0
+    # Attach until the wrapper closes the session. The client runs in the
+    # background (same process group, stdin re-opened on the terminal) so that
+    # a signal interrupts `wait` and reaches the cleanup: a foreground
+    # attach-session defers TERM until the user detaches. Re-attach on a plain
+    # detach (Ctrl-b d) while the inner run is still going.
+    local client_pid="" attach_rc=0
+    # The terminal device of this run: a background command would otherwise
+    # read /dev/null, and tmux needs a real tty on stdin (it cannot reuse
+    # /dev/tty when it was opened indirectly).
+    local tty_dev=""
+    tty_dev="$(tty 2>/dev/null)" || tty_dev=""
+    case "$tty_dev" in /dev/*) ;; *) tty_dev="/dev/tty" ;; esac
     while :; do
-        "$TMUX_BIN" -L "$sock" attach-session -t "$session" 2>/dev/null || attach_rc=$?
+        "$TMUX_BIN" -S "$sock" attach-session -t "$session" < "$tty_dev" 2>/dev/null &
+        client_pid=$!
+        TMUX_CLIENT_PID="$client_pid"
+        attach_rc=0
+        wait "$client_pid" || attach_rc=$?
+        TMUX_CLIENT_PID=""
         [[ -s "$rc_file" ]] && break
-        if "$TMUX_BIN" -L "$sock" has-session -t "$session" 2>/dev/null; then
+        if "$TMUX_BIN" -S "$sock" has-session -t "$session" 2>/dev/null; then
             [[ "$attach_rc" -eq 0 ]] && continue
-            log_error "${MSG_TMUX_FALLBACK}"
+            # The interface is gone while the run is still going: stop it and
+            # report, rather than starting a second scan.
+            log_error "${MSG_TMUX_ATTACH_LOST}"
             tmux_cleanup
-            return 1
+            TMUX_CHILD_RC=1
+            return 0
         fi
         break
     done

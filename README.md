@@ -124,7 +124,13 @@ run ends.
   behaves exactly as if `--tmux` had not been passed — no tmux is started.
 - If **`tmux` is not installed**, or the interface cannot be started, the tool
   prints a notice on stderr and falls back to the normal run (same arguments,
-  same exit status, one scan only).
+  same exit status, one scan only). Once the session exists there is no
+  fallback: a missing log pane keeps a single pane, and a lost client stops the
+  run instead of scanning twice (its status is then 1).
+- The log pane never takes the keyboard, so a `sudo` password typed in the
+  interface is only echoed in the left pane.
+- `Ctrl-C`/`SIGTERM` stop the run and clean up the dedicated server, session and
+  socket immediately, even while the client is attached.
 - The left pane runs the same script with the same arguments (minus `--tmux`),
   so the scan, exclusions and exit code are unchanged. The log pane is wired
   through the existing `TM_EXCLUSIONS_DEBUG_FIFO`/FD 5 mechanism, so a
