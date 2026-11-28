@@ -83,6 +83,8 @@ The scan used to filter after discovery: `find` walked every directory under `$H
 | 2. Static exclusions | `-path <path> -prune` | everything under an existing `path` rule not blocked by a `keep` (the tree is excluded wholesale, so nested matches are redundant) | not in `--uninstall` |
 | 3. Unconditional matches | `-name <pattern> -print -prune` | everything below a directory matched by a pattern with no match guard (e.g. below `node_modules`: `.pnpm/*/node_modules`) | not in `--uninstall`, and only when no `keep` rule exists |
 
+Paths containing newlines are pruned before discovery output reaches the line-based classifier.
+
 - **Layer 1** prints each zone root once before pruning it; the scan reports one `Pruning (skipping scan of):` entry per zone root (and the grouped `Pruned:` counter counts zones). Before #13 it reported one entry per nested match, which the traversal no longer visits. The zone is still never excluded from Time Machine.
 - **Layer 2** reuses the kept-file seed of the prefix-prune (#23): a static path seeded there already covers all of its descendants, so descending adds nothing. Static paths protected by (or protecting) a `keep` are not seeded and not pruned.
 - **Layer 3** is limited to patterns that `pattern_match_allowed()` never rejects. Guarded patterns (`target`, `worktrees`, `site-packages`, `.gradle`, `venv`, `virtualenv`, `Pods`, `.output`, listed in `pattern_is_guarded()`; a test keeps both lists in sync) may be dropped after discovery, so their subtrees keep being traversed. With any `keep` rule configured the layer is off: a `keep` decides per match whether a directory is excluded, so nothing can be assumed covered.

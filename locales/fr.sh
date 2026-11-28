@@ -87,6 +87,7 @@ declare_i18n_fr() {
     MSG_CONFIG_CREATED="Répertoire de configuration créé :"
     MSG_CONFIG_EXISTS="Répertoire de configuration existant :"
     MSG_CONFIG_AUTO_CREATED="Configuration personnalisée par défaut créée (premier lancement) :"
+    MSG_CONFIG_CREATE_FAILED="Impossible de créer la configuration personnalisée :"
     MSG_CONFIG_ADDED="Règle ajoutée à la configuration :"
     MSG_CONFIG_EMPTY="Aucune règle personnalisée trouvée."
     MSG_CONFIG_NO_FILE="Fichier de configuration non trouvé. Exécutez --init d'abord."

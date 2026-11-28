@@ -87,6 +87,7 @@ declare_i18n_en() {
     MSG_CONFIG_CREATED="Custom config directory created:"
     MSG_CONFIG_EXISTS="Custom config directory already exists:"
     MSG_CONFIG_AUTO_CREATED="Created default custom config (first run):"
+    MSG_CONFIG_CREATE_FAILED="Could not create the default custom config:"
     MSG_CONFIG_ADDED="Rule added to custom config:"
     MSG_CONFIG_EMPTY="No custom rules found."
     MSG_CONFIG_NO_FILE="Custom config file not found. Run --init first."
