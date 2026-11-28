@@ -128,8 +128,8 @@ cat > "$STUB_TMUX_DIR/tmux" <<'STUB'
 #!/bin/sh
 if [ "$1" = -L ] || [ "$1" = -S ]; then shift 2; fi
 sub="$1"
-printf 'SUB=%s ARGS=%s FIFO=%s DEBUG_FIFO=%s SOCK=%s\n' \
-    "$sub" "$*" "${TM_EXCLUSIONS_TMUX_FIFO:-}" "${TM_EXCLUSIONS_DEBUG_FIFO:-}" "${TM_EXCLUSIONS_TMUX_SOCK:-}" >> "$TMUX_CALLS"
+printf 'SUB=%s ARGS=%s LOG=%s DEBUG_LOG=%s SOCK=%s\n' \
+    "$sub" "$*" "${TM_EXCLUSIONS_TMUX_LOG:-}" "${TM_EXCLUSIONS_DEBUG_FIFO:-}" "${TM_EXCLUSIONS_TMUX_SOCK:-}" >> "$TMUX_CALLS"
 if [ "${TMUX_FAIL_NEW_SESSION:-0}" = 1 ] && [ "$sub" = new-session ]; then exit 1; fi
 if [ "${TMUX_FAIL_SPLIT:-0}" = 1 ] && [ "$sub" = split-window ]; then exit 1; fi
 case "$sub" in
@@ -260,11 +260,12 @@ else
     assert_true "log pane failure: the client was still attached to the running session" \
         grep -q '^SUB=attach-session' "$TMUX_CALLS"
 
-    # --- log pane failure with a run larger than the pipe buffer (8 KiB) ---
-    # Without a fallback reader the inner run blocks once the FIFO buffer fills;
-    # the PTY watchdog turns such a hang into exit 143 instead of a dead test.
+    # --- no log pane at all with a run larger than any pipe buffer ---
+    # The log target is a regular file, so neither a missing pane nor a closed
+    # one can block the inner run; the PTY watchdog turns a regression (a FIFO
+    # without a reader) into exit 143 instead of a dead test.
     echo ""
-    echo "--- log pane failure: FIFO drained, no blocking ---"
+    echo "--- no log pane: a large run never blocks ---"
     BIG_CONF="$WORK/big.conf"
     : > "$BIG_CONF"
     bi=0
@@ -281,7 +282,7 @@ else
             TM_EXCLUSIONS_DEFAULT_CONF="$BIG_CONF" TMUX_CALLS="$TMUX_CALLS" TMUX_FAIL_SPLIT=1 \
             bash "$TM_EXCLUSIONS" --tmux --dry-run --verbose || rc=$?
     unset PTY_SIGNAL_AFTER PTY_SIGNAL
-    assert_eq 0 "$rc" "log pane failure: a run larger than the pipe buffer still finishes"
+    assert_eq 0 "$rc" "no log pane: a verbose run of 400 paths still finishes"
 
     # --- TMPDIR too long for the platform socket path: normal single-pane run ---
     echo ""
@@ -312,19 +313,22 @@ else
             bash "$TM_EXCLUSIONS" --tmux --dry-run || rc=$?
     assert_eq 0 "$rc" "interactive --tmux --dry-run exits 0 (child status preserved)"
     assert_true "left pane: new-session runs the re-exec wrapper" grep -q '^SUB=new-session' "$TMUX_CALLS"
-    assert_true "right pane: split-window streams the debug FIFO" grep -q '^SUB=split-window' "$TMUX_CALLS"
+    assert_true "right pane: split-window follows the debug log" grep -q '^SUB=split-window' "$TMUX_CALLS"
     # shellcheck disable=SC2016  # the \$ is a literal dollar in the recorded pane command
-    assert_true "the two destinations differ: left runs the wrapper, right tails the FIFO" \
+    assert_true "the two destinations differ: left runs the wrapper, right follows the log" \
         grep -q 'SUB=new-session ARGS=.*exec "\$TM_EXCLUSIONS_TMUX_WRAPPER"' "$TMUX_CALLS"
     # shellcheck disable=SC2016  # the \$ is a literal dollar in the recorded pane command
-    assert_true "the right pane command tails the dedicated FIFO" \
-        grep -q 'SUB=split-window ARGS=.*cat -- "\$TM_EXCLUSIONS_TMUX_FIFO"' "$TMUX_CALLS"
+    assert_true "the right pane follows the run's debug log" \
+        grep -q 'SUB=split-window ARGS=.*tail -n +1 -f' "$TMUX_CALLS"
+    # shellcheck disable=SC2016  # the \$ is a literal dollar in the recorded pane command
+    assert_true "the log pane follows the file the inner run appends to" \
+        grep -q 'SUB=split-window ARGS=.*"\$TM_EXCLUSIONS_TMUX_LOG"' "$TMUX_CALLS"
     assert_true "the log pane never takes the keyboard (split-window -d)" \
         grep -q 'SUB=split-window ARGS=.*-d.*' "$TMUX_CALLS"
     assert_true "the dedicated server uses a private socket path (-S inside the work dir)" \
         grep -q 'SOCK=/.*tm_exc_work\.[A-Za-z0-9]*/s' "$TMUX_CALLS"
-    assert_true "the child receives a non-empty TM_EXCLUSIONS_DEBUG_FIFO (log stream)" \
-        grep -q 'DEBUG_FIFO=/.*debug\.fifo' "$TMUX_CALLS"
+    assert_true "the child writes its log lines to the run's log file" \
+        grep -q 'DEBUG_LOG=/.*debug\.log' "$TMUX_CALLS"
     assert_eq 1 "$(isexcluded_count)" "interactive two panes: the scan ran exactly once (no double scan)"
     assert_eq 0 "$(grep -c '^addexclusion$' "$TMUTIL_CALLS" || true)" \
         "interactive two panes: --dry-run preserved (no mutation)"

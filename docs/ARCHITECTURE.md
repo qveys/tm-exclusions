@@ -194,18 +194,18 @@ unix-socket limit; a longer `TMPDIR` keeps the normal single-pane run instead):
   normal progress/status view. When the run ends it records the exit status,
   then keeps the summary on screen and waits for a keypress before closing the
   session (skipped when stdin is not a TTY or `TM_EXCLUSIONS_TMUX_NO_HOLD=1`).
-- **Right pane** — `cat -- "$TM_EXCLUSIONS_TMUX_FIFO"` over a FIFO
-  (`TMP_DIR/debug.fifo`); the inner run opens that FIFO as FD 5 through the
-  existing `TM_EXCLUSIONS_DEBUG_FIFO` contract, so the pane streams the same
-  `log_info` lines as a debug log. The split is created with `-d`, so the log
+- **Right pane** — `tail -n +1 -f -- "$TM_EXCLUSIONS_TMUX_LOG"` over the run's
+  debug log (`TMP_DIR/debug.log`). The inner run appends to that file as FD 5
+  through the existing `TM_EXCLUSIONS_DEBUG_FIFO` contract, so the pane streams
+  the same `log_info` lines. A regular file (not a FIFO) is deliberate: no
+  reader can block the run on a full pipe, so a missing pane, or one closed
+  mid-scan, only costs the log view. The split is created with `-d`, so the log
   pane never takes the keyboard: a `sudo` password typed in the interface stays
-  in the left pane. If the split fails, `MSG_TMUX_NO_PANE` is reported, a
-  fallback `cat` drains the FIFO to `/dev/null` (stopped by `tmux_cleanup`) so
-  the inner run never blocks on a full pipe, and the run continues in the single
-  left pane (no second scan).
+  in the left pane. If the split fails, `MSG_TMUX_NO_PANE` is reported and the
+  run continues in the single left pane (no second scan).
 
 Script path and arguments are `%q`-quoted for the same bash into the wrapper;
-every other path (wrapper, FIFO, rc file, socket, session) travels through the
+every other path (wrapper, log file, rc file, socket, session) travels through the
 session environment of the `new-session` process only (passed with `env`, never
 `export`ed into this shell), never through a shell command line, so spaces and
 special characters are safe, there is no shell-injection surface, and a failed
@@ -225,7 +225,7 @@ that tmux 3.x can leave behind; the FIFO, wrapper and rc file go with `TMP_DIR`
 when the work directory is removed.
 
 Fallbacks happen only before the inner run starts: no usable tmux →
-`MSG_TMUX_NOT_FOUND`; a failed `mkfifo`/`new-session` (or a socket path too long
+`MSG_TMUX_NOT_FOUND`; a failed log-file/`new-session` creation (or a socket path too long
 for the platform) → `MSG_TMUX_FALLBACK`. In both cases the run continues
 normally with one scan and the same exit status. Once the session exists there
 is no fallback — a missing log pane (`MSG_TMUX_NO_PANE`) or a lost client

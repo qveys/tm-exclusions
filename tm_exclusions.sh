@@ -77,7 +77,8 @@ SUDO_KEEPALIVE_PID=""
 # holds every temporary file (see ensure_tmp_dir)
 TMP_FILES=""
 TMP_DIR=""
-# When 1, log_info also appends to FD 5 (opened from TM_EXCLUSIONS_DEBUG_FIFO)
+# When 1, log_info also appends to FD 5 (opened from TM_EXCLUSIONS_DEBUG_FIFO,
+# a FIFO or, in --tmux mode, the run's debug log file)
 DEBUG_LOG_FD=0
 # Optional two-pane tmux interface (#14), requested with --tmux. TMUX_MODE marks
 # the flag; TMUX_BIN/SOCK/SESSION name the resources the wrapper creates (so
@@ -90,10 +91,6 @@ TMUX_SESSION=""
 TMUX_CHILD_RC=0
 # PID of the attached tmux client, when one is running: cleanup stops it.
 TMUX_CLIENT_PID=""
-# PID of the fallback reader that drains the debug FIFO when the log pane could
-# not be created, so the inner run never blocks on a full pipe. FD 6 keeps the
-# FIFO open while it runs.
-TMUX_DRAIN_PID=""
 
 # ---------------------------------------------------------------------------
 # i18n locale resolution
@@ -1203,12 +1200,6 @@ cleanup() {
 # attached client. Never touches an existing tmux server or session: the socket
 # path is made by this run (mktemp -d), so no other server can sit on it.
 tmux_cleanup() {
-    if [[ -n "${TMUX_DRAIN_PID:-}" ]]; then
-        # Wait for the reader: without it a reaped PID could be reused and the
-        # signal would reach an unrelated process.
-        kill "${TMUX_DRAIN_PID}" 2>/dev/null || true
-        wait "${TMUX_DRAIN_PID}" 2>/dev/null || true
-    fi
     if [[ -n "${TMUX_BIN:-}" && -n "${TMUX_SOCK:-}" ]]; then
         # Stop our own client first: it would otherwise keep reading the
         # terminal while its session disappears.
@@ -1226,7 +1217,6 @@ tmux_cleanup() {
         fi
     fi
     TMUX_CLIENT_PID=""
-    TMUX_DRAIN_PID=""
     TMUX_SOCK=""
     TMUX_SESSION=""
 }
@@ -1234,7 +1224,7 @@ tmux_cleanup() {
 # Optional two-pane tmux interface (#14). Launched once, from an explicit --tmux
 # flag, an interactive TTY, with tmux present, and never from the child re-exec
 # (guard TM_EXCLUSIONS_TMUX_CHILD). Left pane runs the script normally (its
-# stdout = progress/state); right pane streams the debug FIFO (log_info → FD 5,
+# stdout = progress/state); right pane follows the debug log (log_info → FD 5,
 # the existing TM_EXCLUSIONS_DEBUG_FIFO contract). Returns 0 when it launched
 # (the caller exits with TMUX_CHILD_RC) and 1 when it fell back to a normal run.
 tmux_launch() {
@@ -1272,7 +1262,10 @@ tmux_launch() {
         return 1
     }
 
-    local fifo="${TMP_DIR}/debug.fifo"
+    # Debug log target: a regular file, not a FIFO. The inner run appends to it
+    # (FD 5) and the log pane follows it with tail -f, so neither a closed pane
+    # nor a missing reader can ever block the run on a full pipe.
+    local logfile="${TMP_DIR}/debug.log"
     local rc_file="${TMP_DIR}/tmux.rc"
     local wrapper="${TMP_DIR}/tmux_wrapper.sh"
     # Socket path: inside this run's private work directory, so no other tmux
@@ -1293,7 +1286,7 @@ tmux_launch() {
         return 1
     fi
 
-    mkfifo -- "$fifo" 2>/dev/null || {
+    : > "$logfile" 2>/dev/null || {
         log_error "${MSG_TMUX_FALLBACK}"
         return 1
     }
@@ -1350,8 +1343,8 @@ tmux_launch() {
     # TM_EXCLUSIONS_DEBUG_FIFO (or any other variable) set for the fallback run.
     # shellcheck disable=SC2016  # the pane shell expands $TM_EXCLUSIONS_TMUX_WRAPPER
     env TM_EXCLUSIONS_TMUX_CHILD=1 \
-        TM_EXCLUSIONS_DEBUG_FIFO="$fifo" \
-        TM_EXCLUSIONS_TMUX_FIFO="$fifo" \
+        TM_EXCLUSIONS_DEBUG_FIFO="$logfile" \
+        TM_EXCLUSIONS_TMUX_LOG="$logfile" \
         TM_EXCLUSIONS_TMUX_WRAPPER="$wrapper" \
         TM_EXCLUSIONS_TMUX_RC="$rc_file" \
         TM_EXCLUSIONS_TMUX_BIN="$TMUX_BIN" \
@@ -1370,19 +1363,13 @@ tmux_launch() {
     # that would scan everything a second time. Every later failure is reported
     # and the inner status (or a failure) is propagated.
     #
-    # Log pane (right): stream the debug FIFO. Without a reader the child would
-    # block once the pipe buffer fills, so its absence is reported loudly, but
-    # the run continues in the single left pane.
-    # shellcheck disable=SC2016  # the pane shell expands $TM_EXCLUSIONS_TMUX_FIFO
+    # Log pane (right): follow the debug log. A missing or closed pane costs
+    # only the log view: the inner run keeps appending to the file and can
+    # never block, so no fallback reader is needed.
+    # shellcheck disable=SC2016  # the pane shell expands $TM_EXCLUSIONS_TMUX_LOG
     if ! "$TMUX_BIN" -S "$sock" split-window -d -t "$session" -h \
-        'cat -- "$TM_EXCLUSIONS_TMUX_FIFO"' 2>/dev/null; then
+        'tail -n +1 -f -- "$TM_EXCLUSIONS_TMUX_LOG"' 2>/dev/null; then
         log_error "${MSG_TMUX_NO_PANE}"
-        # Without a reader the inner run would block as soon as the pipe buffer
-        # fills (8 KiB on macOS): drain the FIFO to /dev/null instead of a pane.
-        # The reader opens the FIFO itself, read-write (<&6), so it never sees
-        # EOF, exits with the run, and the parent keeps no extra descriptor.
-        cat 6<>"${fifo}" <&6 > /dev/null 2>&1 &
-        TMUX_DRAIN_PID=$!
     fi
 
     # Attach until the wrapper closes the session. The client runs in the
