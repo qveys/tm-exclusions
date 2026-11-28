@@ -1895,6 +1895,9 @@ ${entry_target}"
                 fi
                 ;;
             prune)
+                # Keep literal names for find -path; directory separators at
+                # the end do not change the zone, including the root itself.
+                while [[ "$entry_target" == ?*/ ]]; do entry_target="${entry_target%/}"; done
                 if [[ -z "${CONF_PRUNES}" ]]; then
                     CONF_PRUNES="${entry_target}"
                 else
@@ -2352,7 +2355,7 @@ is_pruned() {
     while IFS= read -r prune_entry; do
         [[ -z "$prune_entry" ]] && continue
         # Check if check_path starts with prune_entry
-        if [[ "$check_path" == "$prune_entry" || "$check_path" == "$prune_entry/"* ]]; then
+        if path_under "$check_path" "$prune_entry"; then
             return 0
         fi
     done <<EOF

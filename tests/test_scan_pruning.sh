@@ -89,6 +89,7 @@ build_tree() {
     mkdir -p "$h/.config/tm_exclusions"
     # layer 1: prune zones (one with glob metacharacters in its name)
     mkdir -p "$h/zone/a/node_modules/deep" "$h/zo*ne[1]/b/node_modules/deep"
+    mkdir -p "$h/zone-sibling/node_modules"
     # layer 2: static exclusion with nested matches and deep dirs
     mkdir -p "$h/staticdir/p/node_modules/q" "$h/staticdir/deep/er"
     # layer 3: unconditional match with nested matches below it
@@ -205,6 +206,17 @@ assert_true "pruned traversal visits strictly fewer directories ($PRUNED_N < $FU
     test "$PRUNED_N" -lt "$FULL_N"
 
 # ---------------------------------------------------------------------------
+# A trailing slash denotes the same zone for both traversals. A sibling
+# sharing the same prefix must still be scanned and excluded normally.
+sed 's|/zone|/zone///|' "$CONF" > "$TEST_DIR/slash.conf"
+for no_prune in 0 1; do
+    run_scan "$H" "$TEST_DIR/slash.conf" "slash$no_prune" "$BASH32" "$no_prune"
+    assert_file_lacks_regex "$TEST_DIR/calls.slash$no_prune" '/zone/' \
+        "zone with trailing slashes is respected (no_prune=$no_prune)"
+    assert_file_contains "$TEST_DIR/calls.slash$no_prune" "addexclusion $H/zone-sibling/node_modules" \
+        "zone with trailing slashes leaves its sibling alone (no_prune=$no_prune)"
+done
+
 # --uninstall: layers 2 and 3 are off (every nested exclusion must be found)
 # ---------------------------------------------------------------------------
 echo ""

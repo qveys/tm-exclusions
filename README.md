@@ -289,7 +289,7 @@ setting|desktop_report|true
 |---|---|
 | `path` | 🎯 Static exclusion → `tmutil addexclusion` (targets may include `*` `?` `[` globs, expanded at load time) |
 | `pattern` | 🔍 Directory name matched by `find -name` during scan |
-| `prune` | ✂️ Path ignored by scan (no TM exclusion applied) |
+| `prune` | ✂️ Directory ignored by the scan, with or without a trailing `/` (no TM exclusion applied) |
 | `keep` | Protect a literal path and its descendants; blocks exclusions of ancestors too |
 | `setting` | ⚙️ Preference (`report_path`, `desktop_report`, `scan_images`); not a Time Machine rule |
 

@@ -97,7 +97,7 @@ Reproducible before/after numbers: `scripts/measure-scan.sh` builds a fake tree 
 
 ## Prune Logic
 
-Prune entries prevent the scanner from processing found directories under certain trees. For example, `prune|~/Library` prevents the tool from applying exclusions to `node_modules` directories inside `~/Library`, which are better handled by static path rules.
+The config loader strips trailing slashes from prune zones and preserves the filesystem root. Prune entries prevent the scanner from processing found directories under certain trees. For example, `prune|~/Library` prevents the tool from applying exclusions to `node_modules` directories inside `~/Library`, which are better handled by static path rules.
 
 Prune does NOT apply a Time Machine exclusion. It only keeps the dynamic scan out of the zone: `find` does not descend into it (layer 1 above), and `is_pruned` remains as a post-filter for anything that still reaches it. Each zone root emits one `MSG_PRUNE_SKIP` log message; paths pruned by prefix are dropped silently.
 
