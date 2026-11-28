@@ -67,6 +67,7 @@ import os, pty, sys, errno, select, signal, time
 argv = sys.argv[1:]
 delay = float(os.environ.get("PTY_SIGNAL_AFTER") or 0)
 signame = os.environ.get("PTY_SIGNAL") or "TERM"
+ready_file = os.environ.get("PTY_SIGNAL_READY")
 pid, fd = pty.fork()
 if pid == 0:
     try:
@@ -81,9 +82,12 @@ if pid == 0:
 # With PTY_SIGNAL_AFTER=<seconds>, the child receives PTY_SIGNAL once, then the
 # drain continues: used to prove a signal reaches the CLI's cleanup.
 sent = False
-start = time.time()
+deadline = time.monotonic() + delay
+missed_ready = False
 while True:
-    if delay and not sent and time.time() - start >= delay:
+    ready_to_signal = ready_file and os.path.exists(ready_file)
+    if delay and not sent and (ready_to_signal or time.monotonic() >= deadline):
+        missed_ready = ready_file and not ready_to_signal
         try:
             os.kill(pid, getattr(signal, "SIG" + signame))
         except OSError:
@@ -104,6 +108,8 @@ while True:
     sys.stdout.buffer.write(data)
 
 _, status = os.waitpid(pid, 0)
+if missed_ready:
+    sys.exit("timed out waiting for the attached client")
 if os.WIFEXITED(status):
     sys.exit(os.WEXITSTATUS(status))
 sys.exit(128 + (os.WTERMSIG(status) if os.WIFSIGNALED(status) else 1))
@@ -119,14 +125,16 @@ run_pty() {
 # Stub tmux: parses "-S <socket> <subcommand> ..." and records the subcommand,
 # its arguments and the pane environment it would have received. It emulates the
 # left pane (runs the re-exec wrapper), the right pane (nothing to read) and
-# attach-session (blocks until the wrapper writes the exit-status file). On
+# attach-session (blocks until kill-session on this socket). On
 # TMUX_FAIL_NEW_SESSION=1 it fails new-session like an unavailable tmux; on
 # TMUX_FAIL_SPLIT=1 it fails the log pane after the run has started.
 STUB_TMUX_DIR="$WORK/tmux-stub"
 mkdir -p "$STUB_TMUX_DIR"
 cat > "$STUB_TMUX_DIR/tmux" <<'STUB'
 #!/bin/sh
-if [ "$1" = -L ] || [ "$1" = -S ]; then shift 2; fi
+[ "$1" = -S ] || exit 1
+closed="$2.closed"
+shift 2
 sub="$1"
 printf 'SUB=%s ARGS=%s LOG=%s DEBUG_LOG=%s SOCK=%s\n' \
     "$sub" "$*" "${TM_EXCLUSIONS_TMUX_LOG:-}" "${TM_EXCLUSIONS_DEBUG_FIFO:-}" "${TM_EXCLUSIONS_TMUX_SOCK:-}" >> "$TMUX_CALLS"
@@ -144,19 +152,33 @@ case "$sub" in
     set-option) exit 0 ;;
 esac
 case "$sub" in
+    kill-session)
+        : > "$closed"
+        ;;
     new-session)
+        # In this scenario the pane dies before the wrapper runs its traps.
+        [ -z "${TMUX_PANE_DIES:-}" ] || exit 0
         if [ -n "${TMUX_KEEP_WRAPPER:-}" ]; then cp "$TM_EXCLUSIONS_TMUX_WRAPPER" "$TMUX_KEEP_WRAPPER" 2>/dev/null; fi
         # stdin from /dev/null so the wrapper's "press Enter" read never blocks
         # this stub (the real tmux pane provides a TTY instead).
         "${TM_EXCLUSIONS_TMUX_WRAPPER}" < /dev/null &
         ;;
     attach-session)
-        if [ -n "${TMUX_SLOW_ATTACH:-}" ]; then sleep "$TMUX_SLOW_ATTACH"; exit 0; fi
+        if [ -n "${TMUX_SLOW_ATTACH:-}" ]; then
+            printf '%s\n' "$$" > "$PTY_SIGNAL_READY"
+            exec sleep "$TMUX_SLOW_ATTACH"
+        fi
         i=0
-        while [ ! -s "${TM_EXCLUSIONS_TMUX_RC}" ] && [ "$i" -lt 400 ]; do
+        # The pane environment belongs to new-session. The separate client
+        # sees session closure through its socket, just like real tmux.
+        while [ ! -e "$closed" ] && [ "$i" -lt 400 ]; do
             sleep 0.05 2>/dev/null || sleep 1
             i=$((i + 1))
         done
+        if [ ! -e "$closed" ]; then
+            printf '%s\n' "$closed" >> "$TMUX_STUB_TIMEOUTS"
+            exit 1
+        fi
         ;;
 esac
 exit 0
@@ -165,7 +187,7 @@ chmod +x "$STUB_TMUX_DIR/tmux"
 
 # Exported so the stub tmux (spawned by tmux_launch) always finds the log path,
 # even in the help/redirect/--quiet scenarios that pass no explicit TMUX_CALLS.
-export TMUX_CALLS="$WORK/tmux.calls"
+export TMUX_CALLS="$WORK/tmux.calls" TMUX_STUB_TIMEOUTS="$WORK/attach-timeouts"
 
 echo "tm-exclusions optional tmux interface tests (#14)"
 echo "========================================"
@@ -433,17 +455,20 @@ else
     : > "$TMUTIL_CALLS"
     : > "$TMUX_CALLS"
     rc=0
-    export PTY_SIGNAL_AFTER=1 PTY_SIGNAL=TERM
+    export PTY_SIGNAL_READY="$WORK/attached.pid" PTY_SIGNAL_AFTER=10 PTY_SIGNAL=TERM
     run_pty "$WORK/out-term" \
         env HOME="$B_HOME" PATH="$STUB_TMUX_DIR:$B_BIN:$PATH" TERM=xterm TMPDIR="$TERM_TMP" \
             TM_EXCLUSIONS_DEFAULT_CONF="$CONF" TMUX_CALLS="$TMUX_CALLS" TMUX_SLOW_ATTACH=30 \
             bash "$TM_EXCLUSIONS" --tmux --dry-run || rc=$?
-    unset PTY_SIGNAL_AFTER PTY_SIGNAL
+    unset PTY_SIGNAL_READY PTY_SIGNAL_AFTER PTY_SIGNAL
     assert_eq 143 "$rc" "SIGTERM while attached: the CLI exits 143 instead of waiting for the client"
     assert_eq 0 "$(find "$TERM_TMP" -mindepth 1 2>/dev/null | wc -l | tr -d ' ')" \
         "SIGTERM while attached: the private work directory is gone"
     assert_true "SIGTERM while attached: the attached client was stopped" \
         grep -q '^SUB=attach-session' "$TMUX_CALLS"
+    client_pid="$(cat "$WORK/attached.pid")"
+    assert_true "SIGTERM while attached: the client PID has exited" not kill -0 "$client_pid" 2>/dev/null
+    assert_true "stub tmux clients observed session closure within the deadline" test ! -s "$TMUX_STUB_TIMEOUTS"
     assert_true "SIGTERM while attached: the dedicated server was killed" \
         grep -q '^SUB=kill-server' "$TMUX_CALLS"
 
@@ -461,6 +486,7 @@ else
         cp "$B_BIN/tmutil" "$B_BIN/sudo" "$B_BIN/brew" "$CT_BIN/"
         cat > "$CT_BIN/tmutil" <<'CTSTUB'
 #!/bin/sh
+: > "$CT_READY"
 sleep 5
 printf '[Included] %s\n' "$2"
 exit 0
@@ -469,7 +495,7 @@ CTSTUB
         : > "$TMUTIL_CALLS"
         run_pty "$WORK/out-ctrlc" \
             env HOME="$B_HOME" PATH="$CT_BIN:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" TERM=xterm \
-                TMPDIR="$CT_TMP" TM_EXCLUSIONS_DEFAULT_CONF="$CONF" \
+                CT_READY="$WORK/ct.ready" TMPDIR="$CT_TMP" TM_EXCLUSIONS_DEFAULT_CONF="$CONF" \
                 bash "$TM_EXCLUSIONS" --tmux --dry-run &
         ct_runner=$!
         ct_sock=""
@@ -480,7 +506,12 @@ CTSTUB
             ct_i=$((ct_i + 1))
         done
         assert_true "real tmux Ctrl-C: the private socket appears" test -n "$ct_sock"
-        sleep 1
+        ct_i=0
+        while [ ! -e "$WORK/ct.ready" ] && [ "$ct_i" -lt 100 ]; do
+            sleep 0.1
+            ct_i=$((ct_i + 1))
+        done
+        assert_true "real tmux Ctrl-C: tmutil is running before interrupt" test -e "$WORK/ct.ready"
         # Left pane = the first pane of the window (the wrapper); address it by
         # its pane id, since the window index is not guaranteed.
         ct_pane="$(tmux -S "$ct_sock" list-panes -F '#{pane_id}' 2>/dev/null | head -1)"
