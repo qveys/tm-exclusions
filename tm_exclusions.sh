@@ -2073,6 +2073,14 @@ cmd_config_add() {
         log_error "$MSG_INVALID_RULE"
         exit 1
     fi
+    if [[ -z "$entry_path" ]]; then
+        log_error "$MSG_ERROR_EMPTY_TARGET"
+        exit 1
+    fi
+    if [[ "$entry_type" = pattern && "$entry_path" == */* ]]; then
+        log_error "$MSG_ERROR_PATTERN_SLASH"
+        exit 1
+    fi
     # Literal config placeholders are expanded when loading.
     # shellcheck disable=SC2088,SC2016
     if [[ "$entry_type" = keep && "$entry_path" != /* && "$entry_path" != '~' && "$entry_path" != '~/'* && "$entry_path" != '$HOME' && "$entry_path" != '$HOME/'* ]]; then

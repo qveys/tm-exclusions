@@ -399,6 +399,7 @@ setting|desktop_report|true
 4. Built-in default: `~/.config/tm_exclusions/last_report.txt` (Desktop copy off)
 
 `--add` accepts `path`, `pattern`, `prune`, and `keep`. Add `setting` lines with `--edit` or by editing `custom.conf`.
+A target must be non-empty, and a `pattern` target must be a directory name glob without `/`.
 
 ### Add custom exclusions
 

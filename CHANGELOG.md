@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixes
 
+- `--add` rejects empty targets and directory patterns containing `/` before appending a rule.
+
 - **Hugging Face and Claude VM exclusions only take regenerable data**: `~/.cache/huggingface` was excluded as a whole, taking the login token and user `assets` out of backups; only `hub/` and `xet/` ship now. `Library/Application Support/Claude/vm_bundles` is narrowed to `claudevm.bundle/rootfs.img`, so `sessiondata.img` stays backed up (a `keep` rule is documented for the whole image). Exclusions left by an older catalog on the two former parents are dropped by the retired-parent migration.
 - **JetBrains `Toolbox/plugins` is no longer excluded**: the `JetBrains/*/plugins` glob also matched JetBrains Toolbox's own `plugins` directory, which holds the user's installed plugin payloads and their state. The rule now lists the versioned IDE folders (`IntelliJIdea2024.*`, `IdeaIC2024.*`, `PyCharm2024.*`, …), so IDE plugin caches stay excluded and Toolbox keeps its data; an exclusion left on `Toolbox/plugins` is dropped by the migration. Other versioned folders the old glob covered (Fleet, …) keep their existing exclusion, which loses nothing.
 - **Read-only status checks never call `sudo`**: `tmutil isexcluded` is now read unprivileged, so `--dry-run` and `--report-only` never escalate; an unreadable status is still an error (exit 2), never silently "included". The privileged check moved to the add/remove branches of `process_path()`, where a mutation outside `$HOME` needs it, and the retired-parent migration relies on the same read.

@@ -111,6 +111,8 @@ declare_i18n_en() {
     MSG_SKIP_PRIVILEGED="Skipping (non-interactive / no sudo cache) for system path:"
     MSG_RETIRED_EXCLUSION="Dropping retired exclusion:"
     MSG_INVALID_KEEP="Invalid keep rule: use an absolute path, ~ or \$HOME."
+    MSG_ERROR_EMPTY_TARGET="The target must not be empty."
+    MSG_ERROR_PATTERN_SLASH="A pattern must be a directory name without '/'."
     MSG_INVALID_RULE="Invalid rule: separators or control characters in target."
     MSG_INVALID_IMAGES="Invalid scan_images value (true/false):"
     MSG_KEEP_EXCLUDED="Protected path is still excluded (possibly by an ancestor); remove that exclusion manually:"

@@ -111,6 +111,8 @@ declare_i18n_fr() {
     MSG_SKIP_PRIVILEGED="Ignoré (non interactif / pas de cache sudo) pour chemin système :"
     MSG_RETIRED_EXCLUSION="Suppression d'une exclusion retirée :"
     MSG_INVALID_KEEP="Règle keep invalide : utiliser un chemin absolu, ~ ou \$HOME."
+    MSG_ERROR_EMPTY_TARGET="La cible doit être renseignée."
+    MSG_ERROR_PATTERN_SLASH="Un motif doit être un nom de dossier sans « / »."
     MSG_INVALID_RULE="Règle invalide : séparateurs ou caractères de contrôle dans la cible."
     MSG_INVALID_IMAGES="Valeur scan_images invalide (true/false) :"
     MSG_KEEP_EXCLUDED="Chemin protégé encore exclu (éventuellement par un parent) ; retirer cette exclusion manuellement :"

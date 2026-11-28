@@ -548,6 +548,18 @@ assert_output_contains "/tmp/test" \
     "--list shows added rule" \
     bash "$TM_EXCLUSIONS" --list
 
+assert_exit_code 1 \
+    "--add rejects an empty target" \
+    bash "$TM_EXCLUSIONS" --add pattern "" "empty target"
+
+assert_exit_code 1 \
+    "--add rejects a pattern with a slash" \
+    bash "$TM_EXCLUSIONS" --add pattern "a/b" "slash in pattern"
+
+assert_output_not_contains "slash in pattern" \
+    "--add leaves invalid patterns out of the custom config" \
+    cat "$HOME/.config/tm_exclusions/custom.conf"
+
 # Test invalid type
 assert_exit_code 1 \
     "--add invalid type exits 1" \
