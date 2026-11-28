@@ -38,7 +38,7 @@ Strings for **en** / **fr** live in `locales/{en,fr}.sh`; see **`docs/I18N.md`**
 
 Later **rule** entries (`path` / `pattern` / `prune` / `keep`) are appended; there is no override or deduplication. **`setting`** lines are last-wins (a later file or later line replaces the earlier value for that key). Both files use the same `type|target|reason` format.
 
-Targets may use leading `~` (expanded to `$HOME`) or the literal substring `$HOME` (expanded at parse time). For `setting|report_path|<file>`, those expansions apply to the **value** (third field). `path` targets may also contain glob metacharacters (`*`, `?`, `[`); they are expanded with `compgen -G` at load time. Unmatched globs are dropped so a literal `*` is never passed to `tmutil`. This is how versioned folders such as `$HOME/Library/Application Support/JetBrains/*/plugins` are covered without listing every IDE release.
+Targets may use leading `~` (expanded to `$HOME`) or the literal substring `$HOME` (expanded at parse time). For `setting|report_path|<file>`, those expansions apply to the **value** (third field). `path` targets may also contain glob metacharacters (`*`, `?`, `[`); they are expanded with `compgen -G` at load time. Unmatched globs are dropped so a literal `*` is never passed to `tmutil`. This is how versioned folders such as `$HOME/Library/Application Support/JetBrains/IntelliJIdea2026.3/plugins` are covered without listing every IDE release.
 
 ## Config Entry Types
 
@@ -112,7 +112,7 @@ Static, dynamic and discovered paths share `process_path()`. For each path:
 
 This makes the tool **idempotent**: running it multiple times produces the same result.
 
-Paths **outside `$HOME`** (for example `/Applications`) use **`sudo tmutil … -p`** (privileged sticky exclusions). When stdin is not a TTY and there is no **passwordless sudo** cache (`sudo -n` fails), those paths are **reported as errors** with exit 1 and a clear log/report line so CI and automated smoke tests do not block on a sudo password.
+Status checks run `tmutil isexcluded` directly for all paths. Mutations **outside `$HOME`** (for example `/Applications`) use **`sudo tmutil … -p`** (privileged sticky exclusions). When stdin is not a TTY and there is no **passwordless sudo** cache (`sudo -n` fails), required system mutations are **reported as errors** with exit 1 and a clear log/report line so CI and automated smoke tests do not block on a sudo password.
 
 ### tmutil Wrappers
 
@@ -301,8 +301,10 @@ existing targets (including inherited exclusions) as errors. It never removes th
 Missing keep targets are protected from future exclusions but cannot be checked with tmutil.
 Malformed protection rules abort before exclusion processing.
 
-The existing CoreSimulator parent migration is retained. Newly disabled catalog rules
-and old image exclusions are **not automatically removed**: ownership is unknown.
+The retired-parent migration covers user CoreSimulator, `~/.gradle`,
+`~/.cache/huggingface`, Claude's `vm_bundles` directory and JetBrains `Toolbox/plugins`. The static pass then
+processes the selected children. Other disabled catalog rules and old image
+exclusions require manual review because their ownership is unknown.
 Users must audit and remove those existing exclusions explicitly. `keep` cannot force
 Time Machine to include a child of an excluded parent.
 
@@ -330,8 +332,8 @@ line, original rule and reason. `set_rule_context()` selects the first matching 
 provenance before processing. Identical duplicate rules therefore use the first source.
 The report adds this context to action lines; discovered paths use a discovery label.
 
-`record_error()` increments `TOTAL_ERRORS` and appends a diagnostic. Dynamic `find`
-failures retain partial results but mark the scan incomplete. The final exit status is
+`record_error()` increments `TOTAL_ERRORS` and appends a diagnostic. Both discovery walks prune Photos libraries before descent. Each failed traversal
+retains partial results and reports one error with the first diagnostic from `find`. The final exit status is
 1 when errors were recorded, including add/remove/status failures, required privileges,
 keep conflicts, invalid keep rules and report persistence errors. A report-write error
 is printed to stderr (and full results to stdout in terminal mode); an unwritable report

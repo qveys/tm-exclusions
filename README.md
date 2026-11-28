@@ -184,8 +184,8 @@ Config files are loaded, merged, then applied via a dual `tmutil` strategy (user
 | 🔨 **Xcode / Apple Dev Tools** | DerivedData, DeviceSupport, CoreSimulator Caches/Temp/Volumes; Archives and Devices are opt-in |
 | 🗄️ **macOS Caches** | `~/Library/Caches`, `/private/var/folders`; Logs are opt-in |
 | 🛠️ **Dev Tools** | IDE caches (JetBrains, VS Code), Terraform and kubectl caches; mixed Pulumi/Helm roots are opt-in |
-| 🤖 **AI / LLM** | Hugging Face, LM Studio, Claude runtime bundles, SuperWhisper; Ollama models and agent sessions are opt-in |
-| 🧰 **IDE and Dev Tool Caches** | Selective Application Support caches: Cursor and VS Code Chromium caches, JetBrains plugins, Zed languages, Discord Cache, … |
+| 🤖 **AI / LLM** | Hugging Face Hub and Xet caches, LM Studio, Claude VM base image (`rootfs.img`), SuperWhisper; Ollama models and agent sessions are opt-in |
+| 🧰 **IDE and Dev Tool Caches** | Selective Application Support caches: Cursor and VS Code Chromium caches, versioned JetBrains IDE plugins, Zed languages, Discord Cache, … |
 | 🤝 **Claude Code / Codex** | Opt-in `.auto-claude`, `.codex`, `worktrees` (may contain uncommitted work and settings) |
 | 🧼 **Generic caches** | (opt-in — see config) Pattern `.cache` |
 | 🚫 **Prune zones** | Skip-scan-only: `~/Library`, `~/.Trash`, `~/.bun`, `~/.nvm`, package-manager `.bak`/`.old` shadow copies (`.bun.bak`, `.npm.bak`, …) |
@@ -298,6 +298,24 @@ Devices, IDE workspaceStorage, agent directories) and generic `build`/`dist`
 patterns now ship commented out. Copy individual rules from `config/default.conf`
 to `custom.conf` if needed. An upgrade does not remove previously applied exclusions
 for these paths or old discovered images: review them explicitly before relying on backups.
+
+The built-in rules also cover npm's `_cacache` and `_npx` under `~/.cache/npm`,
+the pnpm store under `~/.local/share/pnpm`, and Gradle's `caches` and `wrapper`
+under `~/.local/share/gradle`. JetBrains Toolbox plugin settings stay eligible
+for backup. The next apply retires the old exclusion on `Toolbox/plugins` unless
+an explicit path rule still selects it.
+
+On the next apply, tm-exclusions removes legacy whole-directory exclusions for
+`~/.cache/huggingface` and `~/Library/Application Support/Claude/vm_bundles`
+unless an explicit path rule still selects them. The default catalog leaves Hugging
+Face credentials and Claude VM session data eligible for backup. If you enable
+image discovery, add this rule to protect the session disk as it grows:
+
+```text
+keep|$HOME/Library/Application Support/Claude/vm_bundles/claudevm.bundle/sessiondata.img|Claude VM session data
+```
+
+Developer-directory and image scans skip Photos library packages (`*.photoslibrary`). A failed directory walk reports its first filesystem diagnostic once and retains partial results.
 
 Image discovery is off by default. With `scan_images=true`, it considers at most
 50 candidates: VM bundle directories (`.sparsebundle`, `.utm`, `.vmwarevm`,
@@ -485,7 +503,7 @@ launchctl load ~/Library/LaunchAgents/com.tm-exclusions.weekly.plist
 
 ## 🔎 Current behavior notes
 
-- In non-interactive runs without cached/passwordless sudo (`sudo -n`), system paths are not silently skipped: each one is recorded as a privilege-blocked entry in the report and counted, so the run exits non-zero (see [Results and exit codes](#results-and-exit-codes)). No blocking prompt is ever shown. Privileged exclusions such as `/private/var/folders` use `sudo tmutil addexclusion -p` when credentials are available.
+- Status checks, including dry-run and report-only, read system paths with unprivileged `tmutil isexcluded`. In non-interactive runs without cached/passwordless sudo (`sudo -n`), each required system-path change is recorded as a privilege-blocked entry in the report and counted, so the run exits non-zero (see [Results and exit codes](#results-and-exit-codes)). No blocking prompt is ever shown. Privileged exclusions such as `/private/var/folders` use `sudo tmutil addexclusion -p` when credentials are available.
 - Report disk-usage uses `du -sk` and ignores permission-denied children, so partially-readable trees like `/private/var/folders` cannot abort a run under `set -euo pipefail`.
 - Verbose runs show a right-aligned, human-readable size (e.g. `1.0G`) next to each processed path; missing or unreadable paths show `-` without failing, and the summary/report gain a cumulative `Disk usage total:` line. Each path is measured once (`du -sk`) and the report reuses that measurement, so trees are never walked twice. `--quiet` adds no per-path lines; `TM_EXCLUSIONS_SKIP_DU=1` disables the size column as well.
 - Reports include a rule summary, separate missing-path and privilege-blocked counts.
