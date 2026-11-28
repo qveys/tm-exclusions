@@ -374,7 +374,7 @@ candidate list is newline-delimited.
 Exit 0 means processing completed without recorded errors; exit 1 means a failed
 operation, unknown exclusion status, unavailable required privileges, incomplete scan,
 invalid protection rule, keep conflict, or failed report write. Partial scan results
-are still processed and reported. An unknown `tmutil isexcluded` result never permits
+are still processed and reported. Only the leading status marker in `tmutil isexcluded` output determines exclusion status. An unknown result never permits
 an add/remove, even with `--force`. Missing paths remain ordinary skips.
 
 Report details include the source config file and line, matching rule and reason.

@@ -1722,8 +1722,8 @@ tm_is_excluded() {
         local result=""
         result="$(tmutil isexcluded "$path" 2>/dev/null)" || return 2
         case "$result" in
-            *"[Excluded]"*) return 0 ;;
-            *"[Included]"*) return 1 ;;
+            "[Excluded]"[[:blank:]]*) return 0 ;;
+            "[Included]"[[:blank:]]*) return 1 ;;
             *) return 2 ;;
         esac
     else

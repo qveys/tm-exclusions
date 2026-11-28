@@ -975,9 +975,9 @@ path=$2
 parent="${HOME}/Library/Developer/CoreSimulator"
 if [ "$cmd" = isexcluded ]; then
     if [ "${TMUTIL_STUB_EXCLUDE_PARENT:-}" = 1 ] && [ "$path" = "$parent" ]; then
-        printf '%s [Excluded]\n' "$path"
+        printf '[Excluded]  %s\n' "$path"
     else
-        printf '%s [Included]\n' "$path"
+        printf '[Included]  %s\n' "$path"
     fi
     exit 0
 fi

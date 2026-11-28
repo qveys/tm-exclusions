@@ -29,7 +29,7 @@ case "$1" in
             printf '[Excluded] %s\n' "$2"; exit 0; }
         case "${TEST_STATUS:-included}" in
             fail) exit 1 ;;
-            malformed) echo unknown ;;
+            malformed) printf 'unknown [Included] %s\n' "$2" ;;
             excluded) printf '[Excluded] %s\n' "$2" ;;
             *) printf '[Included] %s\n' "$2" ;;
         esac ;;
@@ -300,6 +300,16 @@ assert_file_lacks_regex "$TM_EXCLUSIONS_REPORT" '^WOULD .*independent\.qcow2' \
 : > "$HOME/.config/tm_exclusions/custom.conf"
 rm -rf "$HOME/Protected.utm"
 mkdir -p "$HOME/disks/private.sparsebundle"
+
+# tmutil prints the status first. Literal markers in a pathname are user data.
+mkdir -p "$HOME/[Excluded] project/node_modules" "$HOME/[Included] project/node_modules"
+printf '%s\n' 'pattern|node_modules|dependencies' > "$TM_EXCLUSIONS_DEFAULT_CONF"
+run 0
+assert_file_contains "$TEST_CALLS" "addexclusion $HOME/[Excluded] project/node_modules" \
+    "an Included path with an Excluded marker in its name is added"
+TEST_STATUS=excluded run 0 --uninstall
+assert_file_contains "$TEST_CALLS" "removeexclusion $HOME/[Included] project/node_modules" \
+    "an Excluded path with an Included marker in its name is removed"
 
 # A failed or unrecognized status must not be treated as Included in any mode.
 # Literal placeholder is expanded by the CLI.
