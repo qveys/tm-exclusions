@@ -1206,6 +1206,28 @@ pattern_match_allowed() {
             fi
             return 1
             ;;
+        Pods)
+            # CocoaPods installs next to the Podfile; a bare "Pods" folder
+            # elsewhere is someone's data. Earlier versions excluded every
+            # match, so --uninstall still reaches them.
+            [[ "${MODE}" = "uninstall" ]] && return 0
+            if [[ -f "${parent}/Podfile" || -f "${parent}/Podfile.lock" ]]; then
+                return 0
+            fi
+            return 1
+            ;;
+        .output)
+            # Nuxt / Nitro build output sits at the root of a JS project. The
+            # name alone is too generic, and a package.json only proves an npm
+            # project, which may keep user data under .output: require the
+            # Nitro build marker. Earlier versions excluded every match, so
+            # --uninstall still reaches them.
+            [[ "${MODE}" = "uninstall" ]] && return 0
+            if [[ -f "${dir}/nitro.json" ]]; then
+                return 0
+            fi
+            return 1
+            ;;
         *)
             return 0
             ;;
@@ -1956,7 +1978,7 @@ scan_root_reachable() {
 # Keep in sync with the case labels of pattern_match_allowed() — a test checks.
 pattern_is_guarded() {
     case "$1" in
-        target|worktrees|site-packages|.gradle|venv|virtualenv) return 0 ;;
+        target|worktrees|site-packages|.gradle|venv|virtualenv|Pods|.output) return 0 ;;
     esac
     return 1
 }
