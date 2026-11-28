@@ -58,10 +58,10 @@ Targets may use leading `~` (expanded to `$HOME`) or the literal substring `$HOM
 Dynamic scanning walks `$HOME` with a single `find` — `-maxdepth 6` keeps execution time practical — that ORs every configured pattern into one expression: `find $HOME -maxdepth 6 -type d \( -name p1 -o -name p2 … \)`. One traversal of the tree discovers all patterns at once (#50), and the traversal itself is pruned in three layers (#13, see [Scan pruning layers](#scan-pruning-layers)) so subtrees whose matches would be discarded anyway are never walked. The `scan_dynamic_patterns()` function then uses a two-phase approach to collect and process matches:
 
 **Phase 1: Collect**  
-The single consolidated `find` locates every directory matching any configured pattern. Each discovered directory is tagged with every configured pattern whose glob matches its basename (the same `(dir, pattern)` pairs the per-pattern `find -name <pattern>` calls produced), written tab-separated to a temporary file. All patterns are collected before any processing begins.
+The single consolidated `find` locates every directory matching any configured pattern. Each discovered directory is tagged with every configured pattern whose glob matches its basename (the same `(dir, pattern)` pairs the per-pattern `find -name <pattern>` calls produced). Each temporary record starts with a numeric pattern ID or prune marker, followed by a tab and the complete path. Pattern IDs follow C lexical order.
 
 **Phase 2: Sort and process**  
-The aggregated results are sorted lexically (`LC_ALL=C sort`). Because an ancestor path is always a strict string prefix of any descendant, this sort order guarantees parents precede their children. Each candidate is then processed in order:
+The aggregated results are sorted lexically (`LC_ALL=C sort`) by the complete path after the first tab, then numerically by pattern ID for matches on the same path. This preserves embedded tabs and guarantees parents precede their children because an ancestor path is a strict string prefix of any descendant. Each candidate is then processed in order:
 
 1. Validate with `pattern_match_allowed` (e.g., **`target`** is accepted only when the parent directory looks like a Rust/Cargo, Maven, or Gradle project; **`worktrees`** is narrowed to typical Git/Cursor layouts).
 2. Skip if the path falls under a config-level prune zone (`is_pruned` — logs `MSG_PRUNE_SKIP`).

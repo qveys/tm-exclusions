@@ -5,7 +5,8 @@
 #   - an unwritable configuration directory (the first-run notice claimed a
 #     config file had been created, and leaked a raw shell error),
 #   - a directory name containing a newline (the scan output is line-based, so
-#     the tail of such a path was processed as a relative path of the cwd).
+#     the tail of such a path was processed as a relative path of the cwd),
+#   - directory names containing tabs in dynamic scan candidates and prune roots.
 # Every scenario uses a throwaway HOME, a stub tmutil that only records its
 # calls, and never touches the real Time Machine state.
 set -euo pipefail
@@ -22,7 +23,7 @@ mkdir -p "$WORK/bin"
 cat > "$WORK/bin/tmutil" <<'EOF'
 #!/bin/bash
 printf '%s\n' "$*" >> "$TEST_CALLS"
-case "$1" in isexcluded) echo "[Included]    $2" ;; esac
+case "$1" in isexcluded) printf '[%s]    %s\n' "${TEST_STATUS:-Included}" "$2" ;; esac
 exit 0
 EOF
 chmod +x "$WORK/bin/tmutil"
@@ -53,7 +54,7 @@ HOME="$AMP_HOME" run_tm "$WORK/amp.out" --lang en --report-only --verbose
 assert_eq "0" "$TM_RC" "report-only run succeeds with a HOME containing '&'"
 assert_file_contains "$WORK/amp.out" "$AMP_HOME/.npm/_cacache" \
     "a HOME containing '&' keeps its path in the expanded catalog rules"
-assert_file_lacks_regex "$WORK/amp.out" 'R\$HOME' \
+assert_file_lacks_regex "$WORK/amp.out" 'R[$]HOME' \
     "no \$HOME token is spliced into a HOME containing '&'"
 
 # ---------------------------------------------------------------------------
@@ -86,6 +87,53 @@ HOME="$NL_HOME" run_tm "$WORK/nl_force.out" --lang en --dry-run
 assert_eq "0" "$TM_RC" "dry-run succeeds with a newline in a path"
 assert_file_lacks_regex "$TEST_CALLS" '/phantom/node_modules$' \
     "tmutil is never asked about the absolute prefix of a newline-split path"
+
+# ---------------------------------------------------------------------------
+# Directory names containing tabs
+# ---------------------------------------------------------------------------
+TAB_HOME="$WORK/tab-home"
+TAB_LITERAL="$TAB_HOME/pattern/cache"$'\t'"store"
+TAB_PARENT="$TAB_HOME/proj"$'\t\t'"ect/node_modules"$'\t'
+TAB_CHILD="$TAB_PARENT/nested/node_modules"
+TAB_NEIGHBOR="$TAB_HOME/proj/node_modules"
+TAB_ZONE="$TAB_HOME/zone"$'\t'"protected"
+TAB_ZONE_NEIGHBOR="$TAB_HOME/zone/node_modules"
+mkdir -p "$TAB_LITERAL" "$TAB_CHILD" "$TAB_NEIGHBOR" "$TAB_ZONE/node_modules" "$TAB_ZONE_NEIGHBOR"
+TAB_CONF="$WORK/tab.conf"
+printf 'pattern|node_modules*|cache\npattern|cache\tstore|tabbed pattern\nprune|%s|protected zone\n' \
+    "$TAB_ZONE" > "$TAB_CONF"
+assert_scan_calls() {
+    local action="$1" no_scan_prune="$2" path
+    shift 2
+    for path in "$@"; do
+        printf 'isexcluded %s\n%s %s\n' "$path" "$action" "$path"
+    done > "$WORK/tab.expected"
+    # Ignore report-only metadata calls while checking every path lookup and
+    # mutation, including multiplicity and parent/child order.
+    grep -E '^(isexcluded|addexclusion|removeexclusion) ' "$TEST_CALLS" > "$WORK/tab.actual" || true
+    assert_true "$action (traversal pruning disabled=$no_scan_prune) receives exactly the expected paths" \
+        diff -u "$WORK/tab.expected" "$WORK/tab.actual"
+}
+
+for no_scan_prune in 0 1; do
+    HOME="$TAB_HOME" TM_EXCLUSIONS_DEFAULT_CONF="$TAB_CONF" \
+        TM_EXCLUSIONS_NO_SCAN_PRUNE="$no_scan_prune" TM_EXCLUSIONS_REPORT="$WORK/tab.report" \
+        run_tm "$WORK/tab.out" --lang en --quiet
+    assert_eq "0" "$TM_RC" "apply succeeds with tabs in paths"
+    assert_scan_calls addexclusion "$no_scan_prune" \
+        "$TAB_LITERAL" "$TAB_PARENT" "$TAB_NEIGHBOR" "$TAB_ZONE_NEIGHBOR"
+    if [[ "$no_scan_prune" = 0 ]]; then
+        assert_file_contains "$WORK/tab.report" "SKIP  $TAB_ZONE (" \
+            "the prune zone is reported with its full path"
+    fi
+
+    HOME="$TAB_HOME" TM_EXCLUSIONS_DEFAULT_CONF="$TAB_CONF" \
+        TM_EXCLUSIONS_NO_SCAN_PRUNE="$no_scan_prune" TEST_STATUS=Excluded \
+        run_tm "$WORK/tab.out" --lang en --quiet --uninstall
+    assert_eq "0" "$TM_RC" "uninstall succeeds with tabs in paths"
+    assert_scan_calls removeexclusion "$no_scan_prune" \
+        "$TAB_LITERAL" "$TAB_PARENT" "$TAB_CHILD" "$TAB_NEIGHBOR" "$TAB_ZONE_NEIGHBOR"
+done
 
 # ---------------------------------------------------------------------------
 # A configuration directory that cannot be created

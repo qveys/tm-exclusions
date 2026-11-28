@@ -2410,7 +2410,7 @@ scan_root_reachable() {
     local target="$1" root="${2%/}" rel
     [[ "$target" = "$root"/* && -d "$target" && ! -L "$target" ]] || return 1
     case "$target" in
-        *$'\n'*|*$'\t'*|*/) return 1 ;;
+        *$'\n'*|*/) return 1 ;;
     esac
     rel="${target#"$root"/}"
     [[ "$rel" != */./* && "$rel" != */../* && "$rel" != ./* && "$rel" != ../* ]] || return 1
@@ -2510,9 +2510,17 @@ EOF
     # Everything else is still found, so nested matches needed in --uninstall
     # mode (node_modules/.pnpm/*/node_modules) keep being discovered there.
     set --
-    local pattern_name uncond_names="" cond_names="" prune_marker=$'\001PRUNE'
+    local pattern_name pattern_index=0 uncond_names="" cond_names="" prune_marker=-1
+    local -a scan_patterns
+    scan_patterns=()
+    # Assign IDs in C lexical order to preserve rule order when several
+    # patterns match the same path.
+    local sorted_patterns
+    sorted_patterns="$(printf '%s\n' "$CONF_PATTERNS" | LC_ALL=C sort)"
     while IFS= read -r pattern_name; do
         [[ -z "$pattern_name" ]] && continue
+        scan_patterns[pattern_index]="$pattern_name"
+        pattern_index=$((pattern_index + 1))
         if [[ "$prune_enabled" -eq 1 && "${MODE}" != "uninstall" && -z "${CONF_KEEPS}" ]] \
             && ! pattern_is_guarded "$pattern_name"; then
             uncond_names="${uncond_names}${pattern_name}"$'\n'
@@ -2520,7 +2528,7 @@ EOF
             cond_names="${cond_names}${pattern_name}"$'\n'
         fi
     done <<EOF
-${CONF_PATTERNS}
+${sorted_patterns}
 EOF
     if [[ -n "$uncond_names" || -n "$cond_names" ]]; then
         # The classifier and sort use line records. Prune newline-containing
@@ -2602,8 +2610,9 @@ EOF
     # Tag each discovered directory with every configured pattern whose glob
     # matches its basename — the same (dir, pattern) pairs the per-pattern
     # `find -name <pattern>` calls produced, so pattern_match_allowed can
-    # re-check later. Tab-separated; pattern names never contain tabs in our
-    # config schema. A `case` pattern is required here, not `[[ == ]]`: on
+    # re-check later. Store each numeric pattern ID (or prune marker) before
+    # the separator tab so neither pattern nor path tabs are ambiguous.
+    # A `case` pattern is required here, not `[[ == ]]`: on
     # Bash 3.2 `[[ == ]]` interprets extended globs (+(…), @(…), !(…), …) even
     # with extglob off, which would diverge from `find -name` (e.g. a literal
     # `+(cache)` directory). `case` only honors them when extglob is on, so
@@ -2630,23 +2639,21 @@ EOF
         if [[ -n "$prune_roots" ]]; then
             case $'\n'"$prune_roots" in
                 *$'\n'"$found_dir"$'\n'*)
-                    printf '%s\t%s\n' "$found_dir" "$prune_marker" >> "$all_results"
+                    printf '%s\t%s\n' "$prune_marker" "$found_dir" >> "$all_results"
                     continue
                     ;;
             esac
         fi
         base_name="${found_dir##*/}"
-        while IFS= read -r pattern_name; do
-            [[ -z "$pattern_name" ]] && continue
+        for pattern_index in "${!scan_patterns[@]}"; do
+            pattern_name="${scan_patterns[pattern_index]}"
             # shellcheck disable=SC2254
             case "$base_name" in
                 $pattern_name)
-                    printf '%s\t%s\n' "$found_dir" "$pattern_name" >> "$all_results"
+                    printf '%s\t%s\n' "$pattern_index" "$found_dir" >> "$all_results"
                     ;;
             esac
-        done <<EOF
-${CONF_PATTERNS}
-EOF
+        done
     done < "$tmp_scan"
     if [[ "$extglob_was_on" -eq 1 ]]; then shopt -s extglob; fi
     rm -f "$tmp_scan"
@@ -2656,7 +2663,7 @@ EOF
     local sorted_results
     make_tmp_file sorted_results sorted
     start_activity "$MSG_UI_SORT"
-    LC_ALL=C sort -t$'\t' -k1,1 "$all_results" > "$sorted_results"
+    LC_ALL=C sort -t$'\t' -k2 -k1,1n "$all_results" > "$sorted_results"
     rm -f "$all_results"
 
     clear_progress
@@ -2666,11 +2673,11 @@ EOF
         candidate_count=$((candidate_count))
         UI_TOTAL=$candidate_count
     fi
-    local line found_dir matched_pattern
+    local line matched_pattern
     while IFS= read -r line; do
         [[ -z "$line" ]] && continue
-        found_dir="${line%%$'\t'*}"
-        matched_pattern="${line#*$'\t'}"
+        pattern_index="${line%%$'\t'*}"
+        found_dir="${line#*$'\t'}"
 
         if [[ "$UI" -eq 1 ]]; then
             candidate_index=$((candidate_index + 1))
@@ -2678,13 +2685,14 @@ EOF
             progress_draw "$found_dir"
         fi
 
-        if [[ "$matched_pattern" = "$prune_marker" ]]; then
+        if [[ "$pattern_index" = "$prune_marker" ]]; then
             set_rule_context prune "$found_dir"
             log_path_result prune "$found_dir" "  ${MSG_PRUNE_SKIP} ${found_dir}"
             add_report_line "SKIP  $found_dir ($MSG_PRUNE_SKIP)"
             continue
         fi
 
+        matched_pattern="${scan_patterns[pattern_index]}"
         if ! pattern_match_allowed "$matched_pattern" "$found_dir"; then
             continue
         fi
