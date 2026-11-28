@@ -45,8 +45,9 @@ Preview the selected exclusions with `tm-exclusions --dry-run` before applying t
 
 ## 🎨 Terminal display
 
-Interactive terminals get cyan section headings, status colors, emojis, progress
-bars and a compact final summary. By default, exclusions and prune matches
+Interactive terminals get bold magenta headings, cyan progress bars, status colors, emojis, progress
+bars and a final summary. A blank line separates status entries and groups related
+counters in the summary. By default, exclusions and prune matches
 are grouped by natural root (a `Git/<repo>`, a hidden `~/.tool`, or the matched
 directory’s parent), under one `══ Category ══` header per `#@Category` section of
 the config (`-v` and `--quiet` follow the same rules as below; `--quiet` prints no
@@ -56,8 +57,12 @@ Errors and system-path privilege skips remain individually visible. Use
 path is missing or unreadable), and the summary ends with a cumulative
 `Usage disque total :` line. During cache and disk-image discovery, the
 current directory updates (when `setting|scan_images|true` is enabled) on a single line (long paths show their tail).
-Progress counts completed static rules and
-completed scan patterns, not elapsed time. The inventory (including installed
+During Homebrew cache lookup, directory-size measurement, the pattern scan and
+inventory collection, a status line shows the current operation and elapsed seconds.
+During the pattern scan, the status shows the latest result when available, then
+the directory being classified or processed and its position in the sorted results.
+The bar and activity text update on one line, including in narrow tmux panes. A moving marker indicates an unknown total;
+percentages count completed rules or sorted candidates once the total is known. The inventory (including installed
 Homebrew casks and CLI formulae, listed by name in wrapped blocks) is also shown
 inline; disk usage and per-path details remain in the saved report, whose
 location is printed at the end, with the detail lines grouped under `── Category ──`

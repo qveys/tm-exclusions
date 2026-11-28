@@ -150,6 +150,8 @@ echo ""
 echo "--- Interactive banner: mixed excluded / already / missing ---"
 mkdir_paths c/sz1023 c/sz1024 c/sz3000-already
 banner_run "$TEST_HOME/out-mixed" apply 0 0 en c/sz1023 c/sz1024 c/sz3000-already c/missing-one
+assert_true "blank line before skipped-path counters" awk '/^  Skipped:/ && blank {found=1} {blank=(NF==0)} END {exit !found}' "$TEST_HOME/out-mixed"
+
 OUT="$TEST_HOME/out-mixed"
 assert_file_contains "$OUT" "Summary" "banner heading is shown in an interactive run"
 assert_file_lacks_regex "$OUT" 'Would exclude:' "apply run uses the real 'Newly excluded' label"
