@@ -69,7 +69,10 @@ keep|~/project/cache/saved/|precious state
 keep|~/brew-cache|retain brew cache
 keep|~/disks/private.sparsebundle|VM data
 CONF
+photo="$HOME/Pictures/Family Archive.photoslibrary"
+mkdir -p "$photo/resources/cache" "$photo/resources/private.sparsebundle"
 run 0
+assert_true "neither discovery scan processes Photos library contents" not grep -Fq "$photo/" "$TEST_CALLS"
 assert_file_contains "$TEST_CALLS" "addexclusion $HOME/project/other/cache" \
     "regenerable cache outside keep is excluded"
 assert_file_contains "$TEST_CALLS" "addexclusion $HOME/disks/public.sparsebundle" \
@@ -328,6 +331,7 @@ unset TEST_STATUS TEST_MUTATE_EXIT
 # Partial discovery retains its results and records failure in the persisted report.
 cat > "$TEST_DIR/bin/find" <<'STUB'
 #!/bin/sh
+printf 'find: unreadable fixture: Permission denied\n' >&2
 case "$*" in
     *-print0*) printf '%s\000' "$HOME/disks/private.sparsebundle" ;;
     *) printf '%s\n' "$HOME/project/other/cache" ;;
@@ -335,10 +339,11 @@ esac
 exit 1
 STUB
 chmod +x "$TEST_DIR/bin/find"
-for config in 'pattern|cache|cache reason' 'setting|scan_images|true'; do
+for config in $'pattern|cache|cache reason\npattern|other|other reason' 'setting|scan_images|true'; do
     printf '%s\n' "$config" > "$TM_EXCLUSIONS_DEFAULT_CONF"
     run 1 --dry-run
-    assert_file_contains "$TM_EXCLUSIONS_REPORT" 'Incomplete scan:' \
+    assert_eq 1 "$(grep -c '^ERROR Incomplete scan:' "$TM_EXCLUSIONS_REPORT")" "one error per traversal"
+    assert_file_contains "$TM_EXCLUSIONS_REPORT" 'unreadable fixture: Permission denied' \
         "partial scan failure is reported ($config)"
     assert_file_contains "$TM_EXCLUSIONS_REPORT" 'WOULD ' \
         "partial scan results are still planned ($config)"

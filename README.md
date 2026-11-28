@@ -310,6 +310,8 @@ image discovery, add this rule to protect the session disk as it grows:
 keep|$HOME/Library/Application Support/Claude/vm_bundles/claudevm.bundle/sessiondata.img|Claude VM session data
 ```
 
+Developer-directory and image scans skip Photos library packages (`*.photoslibrary`). A failed directory walk reports its first filesystem diagnostic once and retains partial results.
+
 Image discovery is off by default. With `scan_images=true`, it considers at most
 50 candidates: VM bundle directories (`.sparsebundle`, `.utm`, `.vmwarevm`,
 `.parallels`, `.pvm`) of any size, whose contents are not walked (a `keep` inside a VM bundle protects the whole bundle; its disks are not excluded individually); `.vmdk`/`.qcow2`/
@@ -496,7 +498,7 @@ launchctl load ~/Library/LaunchAgents/com.tm-exclusions.weekly.plist
 
 ## 🔎 Current behavior notes
 
-- In non-interactive runs without cached/passwordless sudo (`sudo -n`), system paths are not silently skipped: each one is recorded as a privilege-blocked entry in the report and counted, so the run exits non-zero (see [Results and exit codes](#results-and-exit-codes)). No blocking prompt is ever shown. Privileged exclusions such as `/private/var/folders` use `sudo tmutil addexclusion -p` when credentials are available.
+- Status checks, including dry-run and report-only, read system paths with unprivileged `tmutil isexcluded`. In non-interactive runs without cached/passwordless sudo (`sudo -n`), each required system-path change is recorded as a privilege-blocked entry in the report and counted, so the run exits non-zero (see [Results and exit codes](#results-and-exit-codes)). No blocking prompt is ever shown. Privileged exclusions such as `/private/var/folders` use `sudo tmutil addexclusion -p` when credentials are available.
 - Report disk-usage uses `du -sk` and ignores permission-denied children, so partially-readable trees like `/private/var/folders` cannot abort a run under `set -euo pipefail`.
 - Verbose runs show a right-aligned, human-readable size (e.g. `1.0G`) next to each processed path; missing or unreadable paths show `-` without failing, and the summary/report gain a cumulative `Disk usage total:` line. Each path is measured once (`du -sk`) and the report reuses that measurement, so trees are never walked twice. `--quiet` adds no per-path lines; `TM_EXCLUSIONS_SKIP_DU=1` disables the size column as well.
 - Reports include a rule summary, separate missing-path and privilege-blocked counts.

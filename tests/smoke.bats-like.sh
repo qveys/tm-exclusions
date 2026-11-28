@@ -2170,6 +2170,7 @@ exit 0
 STUB
 cat > "$BATCH_BIN/sudo" <<'STUB'
 #!/bin/sh
+touch "$HOME/sudo-called"
 exit 1
 STUB
 chmod +x "$BATCH_BIN/"*
@@ -2283,16 +2284,23 @@ assert_eq 1 "$BATCH_RC" "grouped status failures still exit nonzero"
 assert_file_contains "$BATCH_HOME/errors-err" \
     "Unable to determine Time Machine exclusion status: $BATCH_HOME/already/cache" \
     "grouping keeps actionable errors on stderr"
-if [[ -d /Applications ]]; then
-    printf '%s\n' 'path|/Applications|system applications' >> "$BATCH_HOME/rules"
-    BATCH_RC=0
-    "${BATCH_ENV[@]}" bash "$TM_EXCLUSIONS" --dry-run \
-        < /dev/null > "$BATCH_HOME/system-out" 2> "$BATCH_HOME/system-err" || BATCH_RC=$?
-    assert_eq 1 "$BATCH_RC" "system privilege skips still exit nonzero"
-    assert_file_contains "$BATCH_HOME/system-err" \
-        'Skipping (non-interactive / no sudo cache) for system path: /Applications' \
-        "grouping keeps system-path skips individually visible"
-fi
+# A sibling of the temporary HOME exercises system-path handling on every OS.
+system_cache="$TEST_HOME/system-cache"
+mkdir -p "$system_cache"
+printf 'path|%s|system cache\n' "$system_cache" >> "$BATCH_HOME/rules"
+for mode in --dry-run --report-only; do
+    batch_run "$BATCH_HOME/system-out" "$mode" </dev/null
+    case "$mode" in --dry-run) result=WOULD ;; --report-only) result="NEED " ;; esac
+    assert_file_contains "$BATCH_HOME/report" "$result $system_cache" "system path is inspected in $mode"
+    assert_true "$mode never invokes sudo" test ! -e "$BATCH_HOME/sudo-called"
+done
+BATCH_RC=0
+"${BATCH_ENV[@]}" bash "$TM_EXCLUSIONS" \
+    < /dev/null > "$BATCH_HOME/system-out" 2> "$BATCH_HOME/system-err" || BATCH_RC=$?
+assert_eq 1 "$BATCH_RC" "system writes without privileges still exit nonzero"
+assert_file_contains "$BATCH_HOME/system-err" \
+    "Skipping (non-interactive / no sudo cache) for system path: $system_cache" \
+    "grouping keeps system-path skips individually visible"
 
 # ---- Summary ----
 test_summary

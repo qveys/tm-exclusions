@@ -1286,15 +1286,7 @@ tm_is_excluded() {
     local path="$1"
     if [[ "${HAS_TMUTIL}" -eq 1 ]]; then
         local result=""
-        if path_under_home "$path"; then
-            result="$(tmutil isexcluded "$path" 2>/dev/null)" || return 2
-        else
-            if ! privileged_tmutil_ok "$path"; then
-                return 2
-            fi
-            sudo_prepare_for_path "$path"
-            result="$(sudo tmutil isexcluded "$path" 2>/dev/null)" || return 2
-        fi
+        result="$(tmutil isexcluded "$path" 2>/dev/null)" || return 2
         case "$result" in
             *"[Excluded]"*) return 0 ;;
             *"[Included]"*) return 1 ;;
@@ -1814,10 +1806,6 @@ process_path() {
         add_report_line "SKIP  ${path} (not found)"
         return 0
     fi
-    if cannot_privileged_tmutil "$path"; then
-        record_blocked "$MSG_SKIP_PRIVILEGED $path"
-        return 0
-    fi
     local forced_missing=0
     if [[ ! -e "$path" && "$MODE" = uninstall && "$FORCE" -eq 1 ]]; then
         forced_missing=1
@@ -1851,6 +1839,8 @@ process_path() {
             TOTAL_REMOVED=$((TOTAL_REMOVED + 1))
             log_path_result remove "$path" "  $MSG_DRY_RUN_PREFIX $MSG_REMOVING $(path_suffix "$size_col" "$path")"
             add_report_line "WOULD_REMOVE $path"
+        elif cannot_privileged_tmutil "$path"; then
+            record_blocked "$MSG_SKIP_PRIVILEGED $path"
         elif tm_remove_exclusion "$path"; then
             TOTAL_REMOVED=$((TOTAL_REMOVED + 1))
             log_path_result remove "$path" "  $MSG_REMOVING $(path_suffix "$size_col" "$path")"
@@ -1872,6 +1862,8 @@ process_path() {
         excl_track_path "$path"
         log_path_result apply "$path" "  $MSG_DRY_RUN_PREFIX $MSG_APPLYING $(path_suffix "$size_col" "$path")"
         add_report_line "WOULD $path"
+    elif cannot_privileged_tmutil "$path"; then
+        record_blocked "$MSG_SKIP_PRIVILEGED $path"
     elif tm_add_exclusion "$path"; then
         TOTAL_EXCLUDED=$((TOTAL_EXCLUDED + 1))
         excl_track_path "$path"
@@ -1969,6 +1961,13 @@ pattern_is_guarded() {
     return 1
 }
 
+# Count one failed traversal and include its first filesystem diagnostic.
+record_scan_failure() {
+    local diagnostic=""
+    IFS= read -r diagnostic < "$2" || true
+    record_error "$MSG_SCAN_FAILED $1${diagnostic:+ ($diagnostic)}"
+}
+
 scan_dynamic_patterns() {
     ui_section "🔍" "${MSG_SCANNING}"
 
@@ -2056,7 +2055,7 @@ EOF
 ${CONF_PATTERNS}
 EOF
     if [[ -n "$uncond_names" || -n "$cond_names" ]]; then
-        set -- "$scan_root" -maxdepth 6
+        set -- "$scan_root" -maxdepth 6 -iname '*.photoslibrary' -prune -o
         local have_group=0 root_glob
         if [[ -n "$prune_roots" ]]; then
             # Zone roots are printed (one skip line each) then pruned.
@@ -2117,21 +2116,14 @@ EOF
         fi
     fi
 
-    local tmp_scan
+    local tmp_scan scan_errors
     make_tmp_file tmp_scan scan
+    make_tmp_file scan_errors scan_errors
     if [[ "$#" -gt 0 ]]; then
-        if ! find "$@" > "$tmp_scan" 2>/dev/null; then
-            # One traversal covers every pattern; on failure, report once per
-            # pattern exactly like the old per-pattern loop did.
+        if ! find "$@" > "$tmp_scan" 2>"$scan_errors"; then
             RULE_CONTEXT=""
             RULE_CATEGORY=""
-            local err_pattern
-            while IFS= read -r err_pattern; do
-                [[ -z "$err_pattern" ]] && continue
-                record_error "$MSG_SCAN_FAILED $scan_root ($err_pattern)"
-            done <<EOF
-${CONF_PATTERNS}
-EOF
+            record_scan_failure "$scan_root" "$scan_errors"
         fi
     fi
 
@@ -2326,9 +2318,6 @@ migrate_retired_exclusions() {
         if [[ ! -e "$retired_path" ]] && [[ "${FORCE}" -eq 0 ]]; then
             continue
         fi
-        if cannot_privileged_tmutil "$retired_path"; then
-            continue
-        fi
         if tm_is_excluded "$retired_path"; then :; else
             local status=$?
             if [[ "$status" -gt 1 ]]; then
@@ -2388,6 +2377,8 @@ collect_post_scan_paths() {
 
     if [[ "$CONF_SCAN_IMAGES" -eq 0 ]]; then clear_progress; return 0; fi
     make_tmp_file tmp disk
+    local image_errors
+    make_tmp_file image_errors image_errors
     # Stream directories and matching images from the same walk, NUL-delimited.
     # VM/disk bundle directories (sparsebundle, UTM, VMware, Parallels) are
     # candidates as a whole, whatever their size, and their contents stay pruned:
@@ -2403,13 +2394,13 @@ collect_post_scan_paths() {
         prune_names+=(-o -name '*.utm' -o -name '*.vmwarevm' -o -name '*.parallels' -o -name '*.pvm')
     fi
     show_scan_path "$HOME"
-    if ! find "$HOME" \( -path '*/Mobile Documents/*' -o -path '*/Library/Mobile Documents/*' \
+    if ! find "$HOME" -iname '*.photoslibrary' -prune -o \( -path '*/Mobile Documents/*' -o -path '*/Library/Mobile Documents/*' \
             -o -path '*/Library/CloudStorage/*' \) -prune -o \
         \( -type d -print0 \( \( "${prune_names[@]}" \) -prune \) \) -o \
         \( -type f \( -name '*.vmdk' -o -name '*.qcow2' -o -name '*.raw' -o -name '*.img' \
             -o -name '*.iso' -o -name '*.ova' \) -size +512M -print0 \) -o \
         \( -type f -name '*.vbox' -print0 \) \
-        2>/dev/null | {
+        2>"$image_errors" | {
             local candidate vbox_dir home_dir="$HOME"
             while [[ "$home_dir" = */ ]]; do home_dir="${home_dir%/}"; done
             while IFS= read -r -d '' candidate; do
@@ -2440,7 +2431,7 @@ collect_post_scan_paths() {
                 printf '%s/\n' "$candidate" >> "$tmp"
             done
         }; then
-        record_error "$MSG_SCAN_FAILED $HOME"
+        record_scan_failure "$HOME" "$image_errors"
     fi
     clear_progress
     # Cap after dedup: sort -u drops exact duplicates and puts each candidate right

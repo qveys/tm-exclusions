@@ -112,7 +112,7 @@ Static, dynamic and discovered paths share `process_path()`. For each path:
 
 This makes the tool **idempotent**: running it multiple times produces the same result.
 
-Paths **outside `$HOME`** (for example `/Applications`) use **`sudo tmutil … -p`** (privileged sticky exclusions). When stdin is not a TTY and there is no **passwordless sudo** cache (`sudo -n` fails), those paths are **reported as errors** with exit 1 and a clear log/report line so CI and automated smoke tests do not block on a sudo password.
+Status checks run `tmutil isexcluded` directly for all paths. Mutations **outside `$HOME`** (for example `/Applications`) use **`sudo tmutil … -p`** (privileged sticky exclusions). When stdin is not a TTY and there is no **passwordless sudo** cache (`sudo -n` fails), required system mutations are **reported as errors** with exit 1 and a clear log/report line so CI and automated smoke tests do not block on a sudo password.
 
 ### tmutil Wrappers
 
@@ -331,8 +331,8 @@ line, original rule and reason. `set_rule_context()` selects the first matching 
 provenance before processing. Identical duplicate rules therefore use the first source.
 The report adds this context to action lines; discovered paths use a discovery label.
 
-`record_error()` increments `TOTAL_ERRORS` and appends a diagnostic. Dynamic `find`
-failures retain partial results but mark the scan incomplete. The final exit status is
+`record_error()` increments `TOTAL_ERRORS` and appends a diagnostic. Both discovery walks prune Photos libraries before descent. Each failed traversal
+retains partial results and reports one error with the first diagnostic from `find`. The final exit status is
 1 when errors were recorded, including add/remove/status failures, required privileges,
 keep conflicts, invalid keep rules and report persistence errors. A report-write error
 is printed to stderr (and full results to stdout in terminal mode); an unwritable report
