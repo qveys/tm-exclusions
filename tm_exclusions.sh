@@ -2508,7 +2508,9 @@ EOF
 ${CONF_PATTERNS}
 EOF
     if [[ -n "$uncond_names" || -n "$cond_names" ]]; then
-        set -- "$scan_root" -maxdepth 6 -iname '*.photoslibrary' -prune -o
+        # The classifier and sort use line records. Prune newline-containing
+        # paths before find can emit any fragment as a separate record.
+        set -- "$scan_root" -maxdepth 6 -path "*"$'\n'"*" -prune -o -iname '*.photoslibrary' -prune -o
         local have_group=0 root_glob
         if [[ -n "$prune_roots" ]]; then
             # Zone roots are printed (one skip line each) then pruned.

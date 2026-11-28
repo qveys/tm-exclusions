@@ -78,6 +78,15 @@ assert_file_contains "$WORK/nl.out" "Applying exclusion: $NL_HOME/proj/node_modu
 assert_file_lacks_regex "$WORK/nl.out" 'exclusion: b/node_modules'     "the tail of a newline-split path is not processed as a relative path"
 assert_file_lacks_regex "$WORK/nl.calls" '^isexcluded b/node_modules'     "tmutil is never asked about a path relative to the cwd"
 
+# A truncated prefix can also point to an unrelated symlink beneath HOME.
+# find -type d does not discover the symlink itself.
+mkdir -p "$NL_HOME/phantom/node_modules"$'\n'"suffix/node_modules"
+ln -s "$NL_HOME/proj/node_modules" "$NL_HOME/phantom/node_modules"
+HOME="$NL_HOME" run_tm "$WORK/nl_force.out" --lang en --dry-run
+assert_eq "0" "$TM_RC" "dry-run succeeds with a newline in a path"
+assert_file_lacks_regex "$TEST_CALLS" '/phantom/node_modules$' \
+    "tmutil is never asked about the absolute prefix of a newline-split path"
+
 # ---------------------------------------------------------------------------
 # A configuration directory that cannot be created
 # ---------------------------------------------------------------------------
