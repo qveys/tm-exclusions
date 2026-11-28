@@ -90,6 +90,9 @@ TMUX_SESSION=""
 TMUX_CHILD_RC=0
 # PID of the attached tmux client, when one is running: cleanup stops it.
 TMUX_CLIENT_PID=""
+# PID of the fallback reader that drains the debug FIFO when the log pane could
+# not be created, so the inner run never blocks on a full pipe.
+TMUX_DRAIN_PID=""
 
 # ---------------------------------------------------------------------------
 # i18n locale resolution
@@ -1199,6 +1202,9 @@ cleanup() {
 # attached client. Never touches an existing tmux server or session: the socket
 # path is made by this run (mktemp -d), so no other server can sit on it.
 tmux_cleanup() {
+    if [[ -n "${TMUX_DRAIN_PID:-}" ]]; then
+        kill "${TMUX_DRAIN_PID}" 2>/dev/null || true
+    fi
     if [[ -n "${TMUX_BIN:-}" && -n "${TMUX_SOCK:-}" ]]; then
         # Stop our own client first: it would otherwise keep reading the
         # terminal while its session disappears.
@@ -1216,6 +1222,7 @@ tmux_cleanup() {
         fi
     fi
     TMUX_CLIENT_PID=""
+    TMUX_DRAIN_PID=""
     TMUX_SOCK=""
     TMUX_SESSION=""
 }
@@ -1267,13 +1274,17 @@ tmux_launch() {
     # Socket path: inside this run's private work directory, so no other tmux
     # server can already own it (a PID-derived server name could be reused) and
     # cleanup can only ever reach this run's server. macOS caps a unix socket
-    # path at 104 bytes; a TMPDIR long enough to overflow it keeps the normal
-    # single-pane run instead of a broken interface.
+    # path at 104 bytes (including the trailing NUL); the length is measured in
+    # bytes, not characters, and a TMPDIR long enough to overflow it keeps the
+    # normal single-pane run instead of a broken interface.
     local sock="${TMP_DIR}/s"
     local session="tm-exclusions"
+    local sock_bytes
+    sock_bytes="$(printf '%s' "${sock}" | LC_ALL=C wc -c)"
+    sock_bytes="${sock_bytes//[[:space:]]/}"
     local script_path
     script_path="$(resolve_script_dir)/$(basename "${BASH_SOURCE[0]}")"
-    if [[ "${#sock}" -gt 100 ]]; then
+    if [[ -z "${sock_bytes}" || "${sock_bytes}" -ge 104 ]]; then
         log_error "${MSG_TMUX_FALLBACK}"
         return 1
     fi
@@ -1362,6 +1373,10 @@ tmux_launch() {
     if ! "$TMUX_BIN" -S "$sock" split-window -d -t "$session" -h \
         'cat -- "$TM_EXCLUSIONS_TMUX_FIFO"' 2>/dev/null; then
         log_error "${MSG_TMUX_NO_PANE}"
+        # Without a reader the inner run would block as soon as the pipe buffer
+        # fills (8 KiB on macOS): drain the FIFO to /dev/null instead of a pane.
+        cat -- "$fifo" > /dev/null 2>&1 &
+        TMUX_DRAIN_PID=$!
     fi
 
     # Attach until the wrapper closes the session. The client runs in the

@@ -184,8 +184,8 @@ the single inner run.
 The wrapper starts a **dedicated** tmux server on a private socket path inside
 this run's work directory (`tmux -S TMP_DIR/s`) with one session, so no other
 server can already own that name and cleanup can only reach this run's server
-(the path stays under the 104-byte macOS unix-socket limit; a longer `TMPDIR`
-keeps the normal single-pane run instead):
+(the path is measured in bytes and must stay under the 104-byte macOS
+unix-socket limit; a longer `TMPDIR` keeps the normal single-pane run instead):
 
 - **Left pane** — a generated bash re-exec wrapper (`tmux_wrapper.sh`, written
   into `TMP_DIR`) that `cd`s to the original working directory and runs the
@@ -199,8 +199,10 @@ keeps the normal single-pane run instead):
   existing `TM_EXCLUSIONS_DEBUG_FIFO` contract, so the pane streams the same
   `log_info` lines as a debug log. The split is created with `-d`, so the log
   pane never takes the keyboard: a `sudo` password typed in the interface stays
-  in the left pane. If the split fails, `MSG_TMUX_NO_PANE` is reported and the
-  run continues in the single left pane (no second scan).
+  in the left pane. If the split fails, `MSG_TMUX_NO_PANE` is reported, a
+  fallback `cat` drains the FIFO to `/dev/null` (stopped by `tmux_cleanup`) so
+  the inner run never blocks on a full pipe, and the run continues in the single
+  left pane (no second scan).
 
 Script path and arguments are `%q`-quoted for the same bash into the wrapper;
 every other path (wrapper, FIFO, rc file, socket, session) travels through the

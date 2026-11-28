@@ -240,6 +240,45 @@ else
     assert_true "log pane failure: the client was still attached to the running session" \
         grep -q '^SUB=attach-session' "$TMUX_CALLS"
 
+    # --- log pane failure with a run larger than the pipe buffer (8 KiB) ---
+    # Without a fallback reader the inner run blocks once the FIFO buffer fills;
+    # the PTY watchdog turns such a hang into exit 143 instead of a dead test.
+    echo ""
+    echo "--- log pane failure: FIFO drained, no blocking ---"
+    BIG_CONF="$WORK/big.conf"
+    : > "$BIG_CONF"
+    bi=0
+    while [ "$bi" -lt 400 ]; do
+        printf 'path|%s/home/missing%d|many log lines for the FIFO\n' "$B_HOME" "$bi" >> "$BIG_CONF"
+        bi=$((bi + 1))
+    done
+    : > "$TMUTIL_CALLS"
+    : > "$TMUX_CALLS"
+    rc=0
+    export PTY_SIGNAL_AFTER=25 PTY_SIGNAL=TERM
+    run_pty "$WORK/out-big-fail" \
+        env HOME="$B_HOME" PATH="$STUB_TMUX_DIR:$B_BIN:$PATH" TERM=xterm \
+            TM_EXCLUSIONS_DEFAULT_CONF="$BIG_CONF" TMUX_CALLS="$TMUX_CALLS" TMUX_FAIL_SPLIT=1 \
+            bash "$TM_EXCLUSIONS" --tmux --dry-run --verbose || rc=$?
+    unset PTY_SIGNAL_AFTER PTY_SIGNAL
+    assert_eq 0 "$rc" "log pane failure: a run larger than the pipe buffer still finishes"
+
+    # --- TMPDIR too long for the platform socket path: normal single-pane run ---
+    echo ""
+    echo "--- TMPDIR too long for a unix socket: normal run ---"
+    LONG_TMP="$WORK/$(i=0; while [ "$i" -lt 60 ]; do printf 'd'; i=$((i + 1)); done)"
+    mkdir -p "$LONG_TMP"
+    : > "$TMUTIL_CALLS"
+    : > "$TMUX_CALLS"
+    rc=0
+    run_pty "$WORK/out-long-tmp" \
+        env HOME="$B_HOME" PATH="$STUB_TMUX_DIR:$B_BIN:$PATH" TERM=xterm TMPDIR="$LONG_TMP" \
+            TM_EXCLUSIONS_DEFAULT_CONF="$CONF" TMUX_CALLS="$TMUX_CALLS" \
+            bash "$TM_EXCLUSIONS" --tmux --dry-run || rc=$?
+    assert_eq 0 "$rc" "long TMPDIR: the run still exits 0"
+    assert_true "long TMPDIR: no tmux interface is attempted" test ! -s "$TMUX_CALLS"
+    assert_eq 1 "$(isexcluded_count)" "long TMPDIR: the scan ran exactly once"
+
     # --- Interactive two panes (stub): wiring, single scan, exit code, cleanup ---
     echo ""
     echo "--- Interactive two panes (stub tmux) ---"
