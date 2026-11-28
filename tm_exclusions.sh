@@ -11,6 +11,12 @@
 
 set -euo pipefail
 
+# Bash 5.2+ turns an unquoted "&" in the replacement of ${var//pat/repl} into the
+# matched text (patsub_replacement, on by default). The config loader expands
+# $HOME with that syntax, so a HOME such as /Users/R&D would be spliced with the
+# "$HOME" token itself. Bash < 5.2 has no such option: the error is ignored.
+shopt -u patsub_replacement 2>/dev/null || true
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------

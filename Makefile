@@ -132,6 +132,8 @@ test: ## Run smoke tests
 	@bash tests/test_tmp_signal.sh
 	@echo "Running optional tmux interface tests..."
 	@bash tests/test_tmux_ui.sh
+	@echo "Running home edge case tests..."
+	@bash tests/test_home_edge_cases.sh
 
 test-summary: ## Run all test suites quietly; print totals and only the failures (nonzero on failure)
 	@bash scripts/test-summary.sh
