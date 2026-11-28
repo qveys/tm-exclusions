@@ -2219,6 +2219,20 @@ normalize_path() {
     printf '%s\n' "${normalized:-/}"
 }
 
+# Existing objects can have different spellings on the same filesystem (case
+# and Unicode normalization on APFS). Also walk the parents of an absent leaf:
+# a future keep must protect an existing directory that would encompass it.
+keep_path_under() {
+    local path="$1" ancestor="$2"
+    path_under "$path" "$ancestor" && return 0
+    [[ -e "$ancestor" ]] || return 1
+    while [[ -n "$path" ]]; do
+        [[ "$path" -ef "$ancestor" ]] && return 0
+        path="${path%/*}"
+    done
+    return 1
+}
+
 # Reject both descendants and ancestors: excluding a parent would defeat keep.
 keep_blocks() {
     [[ -n "$CONF_KEEPS" ]] || return 1
@@ -2235,7 +2249,7 @@ keep_blocks() {
         if [[ -e "$entry" ]]; then
             normalized="$(normalize_path "$entry")" || normalized="$entry"
         fi
-        if path_under "$candidate" "$normalized" || path_under "$normalized" "$candidate"; then
+        if keep_path_under "$candidate" "$normalized" || keep_path_under "$normalized" "$candidate"; then
             return 0
         fi
     done <<EOF

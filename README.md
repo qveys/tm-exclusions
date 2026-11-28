@@ -324,6 +324,9 @@ setting|scan_images|true
 It protects the path and descendants in apply, dry-run, audit and uninstall modes,
 including discovered images. An exclusion of an ancestor is skipped as well; other
 sibling rules can still apply. Dot components and existing directory symlinks are resolved.
+On case-insensitive volumes, `keep|~/client/finance` also protects the existing parent
+`~/Client`, even if `finance` has yet to be created. On case-sensitive volumes,
+separate trees named `Client` and `client` can have independent rules.
 Unlike `prune`, it applies to static rules and discovery as well as dynamic matches.
 Use `tm-exclusions --add keep ~/VMs "VM data"` to add a protection.
 

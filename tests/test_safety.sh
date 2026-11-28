@@ -111,6 +111,35 @@ assert_file_lacks_regex "$TEST_CALLS" '^(addexclusion|removeexclusion) ' \
     "an already-excluded protected path is not mutated"
 unset TEST_STATUS
 
+# On APFS these spellings can name the same object; on case-sensitive
+# volumes create both trees so every candidate exists on either kind of host.
+mkdir -p "$HOME/Client" "$HOME/client" "$HOME/Archive/cache" "$HOME/archive" \
+    "$HOME/Équipe" "$HOME/équipe" "$HOME/ClientBackup"
+touch "$HOME/Équipe/Data" "$HOME/équipe/data"
+cat > "$TM_EXCLUSIONS_DEFAULT_CONF" <<'CONF'
+keep|~/client/future/saved|future child
+keep|~/archive|directory
+keep|~/équipe/data|file
+path|~/Client|ancestor of a future keep
+path|~/Archive/cache|descendant of a keep
+path|~/Équipe/Data|alternate file spelling
+path|~/ClientBackup|unrelated sibling
+CONF
+: > "$HOME/.config/tm_exclusions/custom.conf"
+run 0 --dry-run
+assert_volume_decision() {
+    local candidate="$1"
+    if [[ "$2" -ef "$3" ]]; then
+        assert_file_contains "$TM_EXCLUSIONS_REPORT" "KEEP  $candidate (" "keep protects $candidate"
+    else
+        assert_file_contains "$TM_EXCLUSIONS_REPORT" "WOULD $candidate " "separate tree remains eligible: $candidate"
+    fi
+}
+assert_volume_decision "$HOME/Client" "$HOME/Client" "$HOME/client"
+assert_volume_decision "$HOME/Archive/cache" "$HOME/Archive" "$HOME/archive"
+assert_volume_decision "$HOME/Équipe/Data" "$HOME/Équipe/Data" "$HOME/équipe/data"
+assert_file_contains "$TM_EXCLUSIONS_REPORT" "WOULD $HOME/ClientBackup " "a sibling with a shared prefix stays eligible"
+
 # Default discovery does not pick up VM images; opting in discloses truncation.
 : > "$TM_EXCLUSIONS_DEFAULT_CONF"
 : > "$HOME/.config/tm_exclusions/custom.conf"

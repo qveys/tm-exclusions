@@ -387,7 +387,10 @@ Copy a commented rule to `custom.conf` to explicitly enable it.
 
 `CONF_KEEPS` contains normalized literal paths. `keep_blocks()` compares candidates
 in both directions (ancestor/descendant), resolving dot components and existing directory
-symlinks. Protected static parents do not seed dynamic prefix suppression, allowing
+symlinks. When the literal paths differ, the keep check also compares filesystem
+identity (`-ef`) against ancestors in both directions. Existing aliases therefore
+follow the volume’s own case and Unicode semantics. An absent leaf still has
+existing ancestors to compare. Protected static parents do not seed dynamic prefix suppression, allowing
 unprotected sibling matches to be processed. `check_keeps()` reports already-excluded
 existing targets (including inherited exclusions) as errors. It never removes them.
 Missing keep targets are protected from future exclusions but cannot be checked with tmutil.
