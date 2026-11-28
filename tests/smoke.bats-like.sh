@@ -481,6 +481,14 @@ assert_output_contains "Utilisation" \
     "--lang fr shows French help" \
     bash "$TM_EXCLUSIONS" --lang fr --help
 
+assert_output_contains "Utilisation" \
+    "--lang=fr shows French help" \
+    bash "$TM_EXCLUSIONS" --lang=fr --help
+
+assert_exit_code 1 \
+    "--lang= rejects an empty language" \
+    bash "$TM_EXCLUSIONS" --lang= --help
+
 assert_output_contains "Usage:" \
     "--lang en shows English help" \
     bash "$TM_EXCLUSIONS" --lang en --help
@@ -534,6 +542,30 @@ assert_output_contains "/tmp/test" \
     "--list shows added rule" \
     bash "$TM_EXCLUSIONS" --list
 
+assert_exit_code 1 \
+    "--add rejects an empty target" \
+    bash "$TM_EXCLUSIONS" --add pattern "" "empty target"
+
+assert_exit_code 1 \
+    "--add rejects a pattern with a slash" \
+    bash "$TM_EXCLUSIONS" --add pattern "a/b" "slash in pattern"
+
+assert_output_not_contains "slash in pattern" \
+    "--add leaves invalid patterns out of the custom config" \
+    cat "$HOME/.config/tm_exclusions/custom.conf"
+
+assert_output_contains "Règle ajoutée" \
+    "--lang fr after --add localizes the confirmation" \
+    bash "$TM_EXCLUSIONS" --add pattern "localized cache" "test reason" --lang fr
+
+assert_output_contains "Rule added" \
+    "--add treats an option-shaped reason as literal text" \
+    bash "$TM_EXCLUSIONS" --lang en --add pattern "literal reason cache" --quiet
+
+assert_output_contains "Langue non supportée" \
+    "--lang= validates a trailing language after --add" \
+    bash "$TM_EXCLUSIONS" --lang fr --add pattern "invalid language cache" "test reason" --lang=de --lang=fr
+
 # Test invalid type
 assert_exit_code 1 \
     "--add invalid type exits 1" \
@@ -547,6 +579,27 @@ assert_exit_code 1 \
 assert_output_contains "MOCK_EDIT:arg1:" \
     "--edit supports EDITOR with arguments" \
     env EDITOR="printf MOCK_EDIT:%s:%s arg1" bash "$TM_EXCLUSIONS" --edit
+
+# ---- Incompatible options ----
+assert_exit_code 1 \
+    "--force without --uninstall exits 1" \
+    bash "$TM_EXCLUSIONS" --force --dry-run
+
+assert_output_contains "--force requires --uninstall" \
+    "--force without --uninstall explains how to use it" \
+    bash "$TM_EXCLUSIONS" --force --dry-run
+
+assert_exit_code 1 \
+    "--uninstall followed by --report-only exits 1" \
+    bash "$TM_EXCLUSIONS" --uninstall --report-only --dry-run
+
+assert_exit_code 1 \
+    "--report-only followed by --uninstall exits 1" \
+    bash "$TM_EXCLUSIONS" --report-only --uninstall --dry-run
+
+assert_output_contains "sont incompatibles" \
+    "the mode conflict diagnostic is localized" \
+    bash "$TM_EXCLUSIONS" --lang=fr --uninstall --report-only --dry-run
 
 # ---- Uninstall dry-run ----
 echo ""
