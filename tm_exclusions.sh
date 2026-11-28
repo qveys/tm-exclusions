@@ -1299,26 +1299,33 @@ tmux_launch() {
     # safe).
     {
         printf '#!%s\n' "$BASH"
-        printf '_rc=0\n'
-        # A Ctrl-C in this pane reaches both the inner run and this wrapper:
-        # record the matching status and close the session, so the parent never
-        # waits for a status file that can no longer be written.
+        # The scan status is kept in _rc and written to tmux.rc exactly once, at
+        # session close. A signal from the pane (Ctrl-C) after the scan finished
+        # therefore keeps the real status, and the second signal the parent's
+        # cleanup sends while closing is ignored (finished=1).
+        printf '_rc=""\nfinished=0\n'
         # shellcheck disable=SC2016  # these variables expand in the wrapper
+        printf 'finish() {\n'
         # shellcheck disable=SC2016  # these variables expand in the wrapper
-        printf 'finish_signal() {\n'
+        printf '  [ "$finished" -eq 1 ] && exit 0\n'
         # shellcheck disable=SC2016  # these variables expand in the wrapper
-        printf '  printf %%s "$1" > "$TM_EXCLUSIONS_TMUX_RC"\n'
+        printf '  finished=1\n'
+        printf '  trap "" INT TERM HUP\n'
+        # shellcheck disable=SC2016  # these variables expand in the wrapper
+        printf '  [ -n "$_rc" ] || _rc="$1"\n'
+        # shellcheck disable=SC2016  # these variables expand in the wrapper
+        printf '  printf %%s "$_rc" > "$TM_EXCLUSIONS_TMUX_RC"\n'
         # shellcheck disable=SC2016  # these variables expand in the wrapper
         printf '  exec "$TM_EXCLUSIONS_TMUX_BIN" -S "$TM_EXCLUSIONS_TMUX_SOCK" kill-session -t "$TM_EXCLUSIONS_TMUX_SESSION"\n'
         # shellcheck disable=SC2016  # the closing brace is literal
         printf '}\n'
         # shellcheck disable=SC2016  # these variables expand in the wrapper
-        printf 'trap '\''finish_signal 130'\'' INT\n'
-        printf 'trap '\''finish_signal 143'\'' TERM\n'
-        printf 'trap '\''finish_signal 129'\'' HUP\n'
+        printf 'trap '\''finish 130'\'' INT\n'
+        printf 'trap '\''finish 143'\'' TERM\n'
+        printf 'trap '\''finish 129'\'' HUP\n'
         printf 'cd %s 2>/dev/null || _rc=1\n' "$(printf '%q' "$PWD")"
         # shellcheck disable=SC2016  # $_rc is for the generated wrapper, not here
-        printf 'if [ "$_rc" -eq 0 ]; then\n'
+        printf 'if [ -z "$_rc" ]; then\n'
         printf '  %s %s' "$(printf '%q' "$BASH")" "$(printf '%q' "$script_path")"
         local i
         for ((i = 0; i < ${#inner[@]}; i++)); do
@@ -1327,16 +1334,13 @@ tmux_launch() {
         # shellcheck disable=SC2016  # $_rc is for the generated wrapper, not here
         printf '\n  _rc=$?\n'
         printf 'fi\n'
-        # shellcheck disable=SC2016  # $_rc/$TM_EXCLUSIONS_TMUX_* expand in the wrapper
-        printf 'printf %%s "$_rc" > "$TM_EXCLUSIONS_TMUX_RC"\n'
         # shellcheck disable=SC2016  # the wrapper's shell expands these variables
         printf 'if [ -t 0 ] && [ -z "${TM_EXCLUSIONS_TMUX_NO_HOLD:-}" ]; then\n'
         # shellcheck disable=SC2016  # the wrapper's shell expands the message variable
         printf '  printf "%%s\\n" "$TM_EXCLUSIONS_TMUX_DONE_MSG"\n'
         printf '  read -r _key 2>/dev/null || true\n'
         printf 'fi\n'
-        # shellcheck disable=SC2016  # the wrapper's shell expands these variables
-        printf 'exec "$TM_EXCLUSIONS_TMUX_BIN" -S "$TM_EXCLUSIONS_TMUX_SOCK" kill-session -t "$TM_EXCLUSIONS_TMUX_SESSION"\n'
+        printf 'finish 0\n'
     } > "$wrapper" || {
         log_error "${MSG_TMUX_FALLBACK}"
         return 1

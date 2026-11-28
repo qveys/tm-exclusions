@@ -134,6 +134,7 @@ if [ "${TMUX_FAIL_NEW_SESSION:-0}" = 1 ] && [ "$sub" = new-session ]; then exit 
 if [ "${TMUX_FAIL_SPLIT:-0}" = 1 ] && [ "$sub" = split-window ]; then exit 1; fi
 case "$sub" in
     new-session)
+        if [ -n "${TMUX_KEEP_WRAPPER:-}" ]; then cp "$TM_EXCLUSIONS_TMUX_WRAPPER" "$TMUX_KEEP_WRAPPER" 2>/dev/null; fi
         # stdin from /dev/null so the wrapper's "press Enter" read never blocks
         # this stub (the real tmux pane provides a TTY instead).
         "${TM_EXCLUSIONS_TMUX_WRAPPER}" < /dev/null &
@@ -337,6 +338,25 @@ else
     assert_file_contains "$WORK/out-two-panes" "Summary" \
         "the progress/state pane still shows the interactive summary"
 
+    # --- the wrapper writes its status once, at session close ---
+    echo ""
+    echo "--- Wrapper: a single status write ---"
+    : > "$TMUX_CALLS"
+    rm -f "$WORK/wrapper.copy"
+    rc=0
+    run_pty "$WORK/out-wrapper" \
+        env HOME="$B_HOME" PATH="$STUB_TMUX_DIR:$B_BIN:$PATH" TERM=xterm \
+            TM_EXCLUSIONS_DEFAULT_CONF="$CONF" TMUX_CALLS="$TMUX_CALLS" \
+            TMUX_KEEP_WRAPPER="$WORK/wrapper.copy" \
+            bash "$TM_EXCLUSIONS" --tmux --dry-run || rc=$?
+    assert_eq 0 "$rc" "wrapper: the run still exits 0"
+    assert_true "wrapper: the generated script was captured" test -s "$WORK/wrapper.copy"
+    # shellcheck disable=SC2016  # the \$ is a literal dollar in the generated wrapper
+    assert_eq 1 "$(grep -c '> "$TM_EXCLUSIONS_TMUX_RC"' "$WORK/wrapper.copy" || true)" \
+        "wrapper: the scan status is written exactly once, so a late signal cannot replace it"
+    assert_true "wrapper: signals are ignored once closing" \
+        grep -q 'trap "" INT TERM HUP' "$WORK/wrapper.copy"
+
     # --- Exit status propagation: a failing child exits non-zero ---
     echo ""
     echo "--- Exit status propagation through tmux ---"
@@ -400,9 +420,22 @@ else
     if command -v tmux >/dev/null 2>&1; then
         CT_TMP="$WORK/c"
         mkdir -p "$CT_TMP"
+        # A slow tmutil keeps the scan running while the interrupt is sent, so
+        # the test always exercises the mid-scan path (a finished run keeps its
+        # own status, which is a different, also valid outcome).
+        CT_BIN="$WORK/ctbin"
+        mkdir -p "$CT_BIN"
+        cp "$B_BIN/tmutil" "$B_BIN/sudo" "$B_BIN/brew" "$CT_BIN/"
+        cat > "$CT_BIN/tmutil" <<'CTSTUB'
+#!/bin/sh
+sleep 5
+printf '[Included] %s\n' "$2"
+exit 0
+CTSTUB
+        chmod +x "$CT_BIN/tmutil"
         : > "$TMUTIL_CALLS"
         run_pty "$WORK/out-ctrlc" \
-            env HOME="$B_HOME" PATH="$B_BIN:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" TERM=xterm \
+            env HOME="$B_HOME" PATH="$CT_BIN:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" TERM=xterm \
                 TMPDIR="$CT_TMP" TM_EXCLUSIONS_DEFAULT_CONF="$CONF" \
                 bash "$TM_EXCLUSIONS" --tmux --dry-run &
         ct_runner=$!
@@ -414,7 +447,7 @@ else
             ct_i=$((ct_i + 1))
         done
         assert_true "real tmux Ctrl-C: the private socket appears" test -n "$ct_sock"
-        sleep 2
+        sleep 1
         # Left pane = the first pane of the window (the wrapper); address it by
         # its pane id, since the window index is not guaranteed.
         ct_pane="$(tmux -S "$ct_sock" list-panes -F '#{pane_id}' 2>/dev/null | head -1)"

@@ -220,9 +220,12 @@ detach (`Ctrl-b d`) is re-attached; losing the client while the run is still
 going stops it with `MSG_TMUX_ATTACH_LOST` and exit status 1 — never a second
 scan, because the fallback only exists before the inner run starts.
 A signal delivered to the pane (Ctrl-C in the left pane) reaches both the inner
-run and the wrapper: the wrapper has INT/TERM/HUP traps that record the matching
-status (130/143/129) in `TMP_DIR/tmux.rc` and close the session, so the parent
-never waits for a status that can no longer be written.
+run and the wrapper: the wrapper has INT/TERM/HUP traps that close the session,
+so the parent never waits for a status that can no longer be written. The status
+is written once, at session close: the scan status when the run finished
+(a late Ctrl-C at the closing prompt therefore keeps it), and 130/143/129 only
+when the signal arrived before the inner run reported. The second signal sent by
+the parent's cleanup is ignored (`finished` flag), so it cannot overwrite it.
 `tmux_cleanup` (run from `cleanup`, so also on EXIT/INT/TERM/HUP) stops the
 client, kills only this run's session and server, and removes the socket file
 that tmux 3.x can leave behind; the log file, wrapper and rc file go with `TMP_DIR`
