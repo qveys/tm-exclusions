@@ -259,6 +259,9 @@ Other:
   --help           Show help
 ```
 
+`--report-only` and `--uninstall` are mutually exclusive. `--force` requires
+`--uninstall`. Invalid combinations exit with status 1 before scanning.
+
 ---
 
 ## ⚙️ Configuration

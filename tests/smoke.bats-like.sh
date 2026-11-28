@@ -594,6 +594,27 @@ assert_output_contains "MOCK_EDIT:arg1:" \
     "--edit supports EDITOR with arguments" \
     env EDITOR="printf MOCK_EDIT:%s:%s arg1" bash "$TM_EXCLUSIONS" --edit
 
+# ---- Incompatible options ----
+assert_exit_code 1 \
+    "--force without --uninstall exits 1" \
+    bash "$TM_EXCLUSIONS" --force --dry-run
+
+assert_output_contains "--force requires --uninstall" \
+    "--force without --uninstall explains how to use it" \
+    bash "$TM_EXCLUSIONS" --force --dry-run
+
+assert_exit_code 1 \
+    "--uninstall followed by --report-only exits 1" \
+    bash "$TM_EXCLUSIONS" --uninstall --report-only --dry-run
+
+assert_exit_code 1 \
+    "--report-only followed by --uninstall exits 1" \
+    bash "$TM_EXCLUSIONS" --report-only --uninstall --dry-run
+
+assert_output_contains "sont incompatibles" \
+    "the mode conflict diagnostic is localized" \
+    bash "$TM_EXCLUSIONS" --lang=fr --uninstall --report-only --dry-run
+
 # ---- Uninstall dry-run ----
 echo ""
 echo "--- Uninstall dry-run ---"

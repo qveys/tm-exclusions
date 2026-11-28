@@ -93,6 +93,8 @@ declare_i18n_fr() {
     MSG_ERROR_INVALID_ARG="Argument inconnu :"
     MSG_ERROR_INVALID_TYPE="Type invalide. Supportés : path, pattern, prune, keep"
     MSG_ERROR_INVALID_LANG="Langue non supportée pour --lang. Valeurs supportées : en, fr."
+    MSG_ERROR_MODE_CONFLICT="Les options --uninstall et --report-only sont incompatibles."
+    MSG_ERROR_FORCE_REQUIRES_UNINSTALL="L’option --force nécessite --uninstall."
     MSG_ERROR_MISSING_ARGS="Arguments requis manquants."
     MSG_ERROR_NOT_MACOS="Attention : pas sous macOS. Certaines fonctions seront simulées."
     MSG_ERROR_NO_TMUTIL="Attention : tmutil introuvable. Mode simulation activé."

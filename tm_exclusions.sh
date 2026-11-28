@@ -3567,11 +3567,12 @@ parse_args() {
             --dry-run)
                 DRY_RUN=1
                 ;;
-            --report-only)
-                MODE="report-only"
-                ;;
-            --uninstall)
-                MODE="uninstall"
+            --report-only|--uninstall)
+                if [[ "$MODE" != apply && "$MODE" != "${1#--}" ]]; then
+                    log_error "$MSG_ERROR_MODE_CONFLICT"
+                    exit 1
+                fi
+                MODE="${1#--}"
                 ;;
             --force)
                 FORCE=1
@@ -3655,6 +3656,12 @@ main() {
 
     # Parse arguments fully
     parse_args "$@"
+
+    if [[ "$FORCE" -eq 1 && "$CONFIG_CMD" != help && "$CONFIG_CMD" != version ]] &&
+        [[ "$MODE" != uninstall || -n "$CONFIG_CMD" ]]; then
+        log_error "$MSG_ERROR_FORCE_REQUIRES_UNINSTALL"
+        exit 1
+    fi
 
     case "${CONFIG_CMD}" in
         add|list|edit|"")

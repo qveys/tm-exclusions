@@ -10,7 +10,7 @@
 main()
   ├── Pre-scan args for --lang and --quiet
   ├── detect_language()
-  ├── parse_args()
+  ├── parse_args() and validate mode and force combinations
   ├── Handle config commands (--init, --add, --list, --edit, --help, --version)
   ├── tmux_launch()               ← optional --tmux (interactive TTY only; exits with the inner run's status)
   ├── check_environment()
