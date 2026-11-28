@@ -58,8 +58,8 @@ This file provides guidance to AI agentic LLM CLI tools when working with code i
   - Generates and persists a report (default `~/.config/tm_exclusions/last_report.txt`; overridable via `setting|report_path`, `TM_EXCLUSIONS_REPORT`, and optional Desktop copy).
 - Processing model:
   - Static rules (`path`) are handled directly.
-  - Dynamic rules (`pattern`) are discovered with `find "$HOME" -maxdepth 6 -type d -name <pattern>`.
-  - Prune rules (`prune`) do not create Time Machine exclusions. They only skip applying exclusions to dynamic matches whose paths fall under a prune prefix after discovery; `find` still walks from `$HOME` — these rules filter results afterward and do not limit which directories `find` visits.
+  - Dynamic rules (`pattern`) are discovered with one consolidated `find "$HOME" -maxdepth 6 -type d \( -name <p1> -o -name <p2> … \)`.
+  - Prune rules (`prune`) do not create Time Machine exclusions. They are never excluded and nothing below them is scanned: the `find` expression stops at each existing prune zone (`-path <zone> -print -prune`, all modes), and the same prefix filter still runs on matches afterward. Static `path` rules and unguarded pattern matches prune the traversal too (outside `--uninstall`); see "Scan pruning layers" in `docs/ARCHITECTURE.md`. `TM_EXCLUSIONS_NO_SCAN_PRUNE=1` restores the full traversal.
 - `tmutil` integration:
   - All Time Machine operations are wrapped via `tm_is_excluded`, `tm_add_exclusion`, `tm_remove_exclusion`.
   - On non-macOS or when `tmutil` is unavailable, wrappers simulate behavior so tests can run without mutating Time Machine state.
