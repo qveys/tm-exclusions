@@ -147,6 +147,20 @@ run 0 --dry-run
 assert_true "image discovery stays off by default" \
     not grep -Fq 'sparsebundle' "$TM_EXCLUSIONS_REPORT"
 printf '%s\n' 'setting|scan_images|true' > "$TM_EXCLUSIONS_DEFAULT_CONF"
+bad_image="$HOME/disks/"$'bad\nname.utm'
+bad_file="$HOME/disks/"$'bad\nname.vbox'
+mkdir "$bad_image" "$HOME/disks/"$'ordinary\ndirectory'
+touch "$bad_file"
+run 1 --dry-run
+assert_file_contains "$TM_EXCLUSIONS_REPORT" 'Errors: 2' "only rejected image candidates count as errors"
+for rejected in "$bad_image" "$bad_file"; do
+    assert_file_contains "$TM_EXCLUSIONS_REPORT" "$(printf '%q' "$rejected")" \
+        "the saved report identifies each rejected image on one line"
+done
+assert_file_contains "$TM_EXCLUSIONS_REPORT" "WOULD $HOME/disks/public.sparsebundle" \
+    "discovery still processes valid siblings"
+rmdir "$bad_image"
+rm "$bad_file"
 for ((i=0; i<51; i++)); do mkdir "$HOME/disks/$i.sparsebundle"; done
 run 0 --dry-run
 assert_file_contains "$TM_EXCLUSIONS_REPORT" 'LIMIT Image discovery limited to 50' \

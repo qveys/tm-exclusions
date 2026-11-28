@@ -2893,8 +2893,9 @@ collect_post_scan_paths() {
     clear_progress
     if [[ "$CONF_SCAN_IMAGES" -eq 0 ]]; then return 0; fi
     make_tmp_file tmp disk
-    local image_errors
+    local image_errors rejected_images rejected_path
     make_tmp_file image_errors image_errors
+    make_tmp_file rejected_images rejected_images
     # Stream directories and matching images from the same walk, NUL-delimited.
     # VM/disk bundle directories (sparsebundle, UTM, VMware, Parallels) are
     # candidates as a whole, whatever their size, and their contents stay pruned:
@@ -2920,11 +2921,20 @@ collect_post_scan_paths() {
             local candidate vbox_dir home_dir="$HOME"
             while [[ "$home_dir" = */ ]]; do home_dir="${home_dir%/}"; done
             while IFS= read -r -d '' candidate; do
+                if [[ -d "$candidate" ]]; then
+                    [[ "$candidate" = *$'\n'* ]] || show_scan_path "$candidate"
+                    case "$candidate" in
+                        *.sparsebundle|*.utm|*.vmwarevm|*.parallels|*.pvm) ;;
+                        *) continue ;;
+                    esac
+                fi
                 # The find stream is NUL-delimited but the candidate batch file is
                 # newline-delimited (Bash 3.2); a path containing a newline would
                 # be split into bogus entries, so reject it explicitly.
                 if [[ "$candidate" = *$'\n'* ]]; then
-                    record_error "$MSG_SCAN_NEWLINE_PATH"
+                    # This pipeline runs in a subshell. Keep a printable path
+                    # for the parent, which owns the report and the exit status.
+                    printf '%q\n' "$candidate" >> "$rejected_images"
                     continue
                 fi
                 if [[ "$candidate" = *.vbox && -f "$candidate" ]]; then
@@ -2936,12 +2946,6 @@ collect_post_scan_paths() {
                         [[ "$MODE" = uninstall ]] && printf '%s/\n' "$candidate" >> "$tmp"
                         candidate="$vbox_dir"
                     fi
-                elif [[ -d "$candidate" ]]; then
-                    show_scan_path "$candidate"
-                    case "$candidate" in
-                        *.sparsebundle|*.utm|*.vmwarevm|*.parallels|*.pvm) ;;
-                        *) continue ;;
-                    esac
                 fi
                 # Trailing slash: sorted, a candidate is followed by its descendants.
                 printf '%s/\n' "$candidate" >> "$tmp"
@@ -2949,6 +2953,9 @@ collect_post_scan_paths() {
         }; then
         record_scan_failure "$HOME" "$image_errors"
     fi
+    while IFS= read -r rejected_path; do
+        record_error "$MSG_SCAN_NEWLINE_PATH $rejected_path"
+    done < "$rejected_images"
     clear_progress
     # Cap after dedup: sort -u drops exact duplicates and puts each candidate right
     # before its descendants, which one pass then drops as already covered, unless

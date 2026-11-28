@@ -369,8 +369,8 @@ dropped before the cap (unless that candidate is protected by a `keep`). iCloud 
 `Library/CloudStorage` trees are skipped so nothing is downloaded. Discovered paths
 appear in the report as `Discovery: …`. Extra candidates are disclosed as `LIMIT` in the report. This is a cap
 on processed images, not traversal time. `scan_images=false` disables it again.
-Candidate paths containing a newline are rejected and reported, because the
-candidate list is newline-delimited.
+An image path containing a newline is skipped and recorded as an error in the
+saved report. Other candidates are processed and the run exits with status 1.
 
 ### Results and exit codes
 
