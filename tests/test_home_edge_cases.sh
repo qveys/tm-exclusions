@@ -56,4 +56,26 @@ assert_file_contains "$WORK/amp.out" "$AMP_HOME/.npm/_cacache" \
 assert_file_lacks_regex "$WORK/amp.out" 'R\$HOME' \
     "no \$HOME token is spliced into a HOME containing '&'"
 
+# ---------------------------------------------------------------------------
+# A directory name containing a newline
+# ---------------------------------------------------------------------------
+# find prints one path per line, so "$HOME/x<NL>b/node_modules" reaches the
+# scan as the two lines "$HOME/x" and "b/node_modules". The second one is a
+# relative path: it must never be looked up (or excluded) against the cwd.
+NL_HOME="$WORK/nl-home"
+NL_CWD="$WORK/nl-cwd"
+mkdir -p "$NL_HOME/proj/node_modules" "$NL_CWD/b/node_modules"
+mkdir -p "$NL_HOME/x
+b/node_modules"
+(
+    cd "$NL_CWD"
+    HOME="$NL_HOME" run_tm "$WORK/nl.out" --lang en --dry-run --verbose
+    printf '%s' "$TM_RC" > "$WORK/nl.rc"
+    cp "$TEST_CALLS" "$WORK/nl.calls"
+)
+assert_eq "0" "$(cat "$WORK/nl.rc")" "dry-run succeeds with a newline in a directory name"
+assert_file_contains "$WORK/nl.out" "Applying exclusion: $NL_HOME/proj/node_modules"     "a regular node_modules is still discovered"
+assert_file_lacks_regex "$WORK/nl.out" 'exclusion: b/node_modules'     "the tail of a newline-split path is not processed as a relative path"
+assert_file_lacks_regex "$WORK/nl.calls" '^isexcluded b/node_modules'     "tmutil is never asked about a path relative to the cwd"
+
 test_summary

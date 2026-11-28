@@ -2571,6 +2571,13 @@ EOF
     local found_dir base_name last_update=-1
     while IFS= read -r found_dir; do
         [[ -z "$found_dir" ]] && continue
+        # find prints one path per line: a directory name holding a newline is
+        # split, and its tail ("b/node_modules") is a path relative to the cwd,
+        # not something this scan found. Only paths under the scan root count.
+        case "$found_dir" in
+            "$scan_root"|"${scan_root%/}"/*) ;;
+            *) continue ;;
+        esac
         if [[ "$UI" -eq 1 && "$last_update" -ne "$SECONDS" ]]; then
             show_scan_path "$found_dir" "$MSG_UI_CLASSIFY "
             last_update=$SECONDS
