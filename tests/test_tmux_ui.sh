@@ -164,10 +164,6 @@ case "$sub" in
         "${TM_EXCLUSIONS_TMUX_WRAPPER}" < /dev/null &
         ;;
     attach-session)
-        if [ -n "${TMUX_SLOW_ATTACH:-}" ]; then
-            printf '%s\n' "$$" > "$PTY_SIGNAL_READY"
-            exec sleep "$TMUX_SLOW_ATTACH"
-        fi
         i=0
         # The pane environment belongs to new-session. The separate client
         # sees session closure through its socket, just like real tmux.
@@ -178,6 +174,15 @@ case "$sub" in
         if [ ! -e "$closed" ]; then
             printf '%s\n' "$closed" >> "$TMUX_STUB_TIMEOUTS"
             exit 1
+        fi
+        if [ -n "${TMUX_SLOW_ATTACH:-}" ]; then
+            # Model a stuck attached client after the pane exits. At this point
+            # the inner CLI has cleaned its own work dir. Ctrl-C during a live
+            # scan is exercised separately with real tmux.
+            # Publish the PID atomically before the runner can send TERM.
+            printf '%s\n' "$$" > "$PTY_SIGNAL_READY.tmp" &&
+                mv "$PTY_SIGNAL_READY.tmp" "$PTY_SIGNAL_READY" || exit 1
+            exec sleep "$TMUX_SLOW_ATTACH"
         fi
         ;;
 esac
