@@ -55,6 +55,16 @@ assert_output_contains "fr_extra.sh:2: error: MSG_ONLY_FR is missing from ${en}"
 assert_output_not_contains "MSG_A is missing" "present key not reported" bash "$CHECK" "$en" "$fr"
 
 echo ""
+# An empty reference still reports each unmatched assignment in source order.
+empty="$(locale_file empty.sh '')"
+rc=0
+bash "$CHECK" "$en" "$empty" > "$WORK/empty.out" 2>&1 || rc=$?
+assert_eq 1 "$rc" "empty French locale reports the English assignment"
+assert_file_contains "$WORK/empty.out" "$en:2: error: MSG_A is missing from $empty" \
+    "an empty reference preserves the source line number"
+bash "$CHECK" "$empty" "$empty" > "$WORK/empty.out"
+assert_file_contains "$WORK/empty.out" 'i18n parity OK: 0 keys' "two empty locales agree"
+
 echo "--- Prefix keys are not confused ---"
 en="$(locale_file en_pre.sh 'f() {\n    MSG_A="a"\n    MSG_A_LONG="b"\n}\n')"
 fr="$(locale_file fr_pre.sh 'f() {\n    MSG_A_LONG="b"\n}\n')"
