@@ -223,6 +223,26 @@ else
         "tmux new-session failure: the fallback is announced"
     assert_eq 1 "$(isexcluded_count)" "tmux new-session failure: the scan ran exactly once (no double scan)"
 
+    # --- after the tmux cleanup, the fallback run keeps its stderr ---
+    # tmux_cleanup must not leave the shell's stderr (or any inherited fd)
+    # redirected: the fallback scan that follows still reports its own errors.
+    echo ""
+    echo "--- fallback after cleanup keeps stderr ---"
+    : > "$TMUTIL_CALLS"
+    : > "$TMUX_CALLS"
+    # The report warning is emitted after tmux_cleanup ran (fallback path): if
+    # cleanup left the shell's stderr redirected, it would silently disappear.
+    printf 'path|%s/cache|x\nsetting|report_path|/nonexistent-dir-xyz/r.txt\n' "$B_HOME" \
+        > "$WORK/unwritable-report.conf"
+    rc=0
+    run_pty "$WORK/out-fail-err" \
+        env HOME="$B_HOME" PATH="$STUB_TMUX_DIR:$B_BIN:$PATH" TERM=xterm \
+            TM_EXCLUSIONS_DEFAULT_CONF="$WORK/unwritable-report.conf" TMUX_CALLS="$TMUX_CALLS" \
+            TMUX_FAIL_NEW_SESSION=1 \
+            bash "$TM_EXCLUSIONS" --tmux --dry-run || rc=$?
+    assert_file_contains "$WORK/out-fail-err" "Could not save report to" \
+        "fallback after cleanup: stderr still works after tmux_cleanup"
+
     # --- log pane failure after the run started: no fallback, no second scan ---
     echo ""
     echo "--- log pane failure: single pane, no fallback ---"
