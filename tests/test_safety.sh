@@ -475,6 +475,12 @@ done
 assert_eq ".nvm/.cache .nvm/versions/node/v22.1.0/bin .nvm/versions/node/v22.1.0/lib " \
     "$(grep -F "/.nvm/" <<<"$CONF_PATHS" | sed "s|^$HOME/||" | LC_ALL=C sort | tr '\n' ' ')" \
     "catalog excludes nvm lib/bin per version and never etc/npmrc"
+hf="$HOME/.cache/huggingface"
+vm="$HOME/Library/Application Support/Claude/vm_bundles"
+assert_eq "$(printf '%s\n' "$hf/hub" "$hf/xet")" "$(grep -F "$hf" <<<"$CONF_PATHS" | LC_ALL=C sort)" \
+    "Hugging Face rules cover only downloaded caches"
+assert_eq "$vm/claudevm.bundle/rootfs.img" "$(grep -F "$vm" <<<"$CONF_PATHS")" \
+    "Claude VM rule covers only the base image"
 for pattern in .codex .auto-claude worktrees build dist; do
     assert_true "catalog does not ship the $pattern pattern" \
         not grep -Fxq "$pattern" <<<"$CONF_PATTERNS"

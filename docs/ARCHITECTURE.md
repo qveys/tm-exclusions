@@ -300,8 +300,10 @@ existing targets (including inherited exclusions) as errors. It never removes th
 Missing keep targets are protected from future exclusions but cannot be checked with tmutil.
 Malformed protection rules abort before exclusion processing.
 
-The existing CoreSimulator parent migration is retained. Newly disabled catalog rules
-and old image exclusions are **not automatically removed**: ownership is unknown.
+The retired-parent migration covers user CoreSimulator, `~/.gradle`,
+`~/.cache/huggingface` and Claude's `vm_bundles` directory. The static pass then
+processes the selected children. Other disabled catalog rules and old image
+exclusions require manual review because their ownership is unknown.
 Users must audit and remove those existing exclusions explicitly. `keep` cannot force
 Time Machine to include a child of an excluded parent.
 

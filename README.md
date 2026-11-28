@@ -179,7 +179,7 @@ Config files are loaded, merged, then applied via a dual `tmutil` strategy (user
 | 🔨 **Xcode / Apple Dev Tools** | DerivedData, DeviceSupport, CoreSimulator Caches/Temp/Volumes; Archives and Devices are opt-in |
 | 🗄️ **macOS Caches** | `~/Library/Caches`, `/private/var/folders`; Logs are opt-in |
 | 🛠️ **Dev Tools** | IDE caches (JetBrains, VS Code), Terraform and kubectl caches; mixed Pulumi/Helm roots are opt-in |
-| 🤖 **AI / LLM** | Hugging Face, LM Studio, Claude runtime bundles, SuperWhisper; Ollama models and agent sessions are opt-in |
+| 🤖 **AI / LLM** | Hugging Face Hub and Xet caches, LM Studio, Claude VM base image (`rootfs.img`), SuperWhisper; Ollama models and agent sessions are opt-in |
 | 🧰 **IDE and Dev Tool Caches** | Selective Application Support caches: Cursor and VS Code Chromium caches, JetBrains plugins, Zed languages, Discord Cache, … |
 | 🤝 **Claude Code / Codex** | Opt-in `.auto-claude`, `.codex`, `worktrees` (may contain uncommitted work and settings) |
 | 🧼 **Generic caches** | (opt-in — see config) Pattern `.cache` |
@@ -293,6 +293,16 @@ Devices, IDE workspaceStorage, agent directories) and generic `build`/`dist`
 patterns now ship commented out. Copy individual rules from `config/default.conf`
 to `custom.conf` if needed. An upgrade does not remove previously applied exclusions
 for these paths or old discovered images: review them explicitly before relying on backups.
+
+On the next apply, tm-exclusions removes legacy whole-directory exclusions for
+`~/.cache/huggingface` and `~/Library/Application Support/Claude/vm_bundles`
+unless an explicit path rule still selects them. The default catalog leaves Hugging
+Face credentials and Claude VM session data eligible for backup. If you enable
+image discovery, add this rule to protect the session disk as it grows:
+
+```text
+keep|$HOME/Library/Application Support/Claude/vm_bundles/claudevm.bundle/sessiondata.img|Claude VM session data
+```
 
 Image discovery is off by default. With `scan_images=true`, it considers at most
 50 candidates: VM bundle directories (`.sparsebundle`, `.utm`, `.vmwarevm`,

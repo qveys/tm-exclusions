@@ -2344,6 +2344,8 @@ migrate_retired_exclusions() {
     done <<EOF
 ${HOME}/Library/Developer/CoreSimulator
 ${HOME}/.gradle
+${HOME}/.cache/huggingface
+${HOME}/Library/Application Support/Claude/vm_bundles
 EOF
 }
 
