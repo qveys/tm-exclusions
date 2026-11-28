@@ -167,7 +167,7 @@ Config files are loaded, merged, then applied via a dual `tmutil` strategy (user
 | Category | Examples |
 |---|---|
 | 🍎 **Applications** | Opt-in: `/Applications`, `$HOME/Applications` |
-| 📗 **Node.js / JavaScript** | npm/yarn/pnpm caches (incl. `~/Library/pnpm/store`), Bun package cache, nvm per-version `lib`/`bin` (not `etc/npmrc`), Puppeteer downloads; opt-in whole `.bun` and `.nvm` roots;  dynamic `node_modules`, `.next`, `.turbo`, `.parcel-cache` |
+| 📗 **Node.js / JavaScript** | npm/yarn/pnpm caches (incl. `~/Library/pnpm/store`), Bun package cache, nvm per-version `lib`/`bin` (not `etc/npmrc`), Puppeteer downloads; opt-in whole `.bun` and `.nvm` roots;  dynamic `node_modules`, `.next`, `.turbo`, `.parcel-cache`, `.output` (only with the Nitro `nitro.json` marker) |
 | 🐍 **Python** | pip/pipx/uv caches, uv Python builds and tools, Python environments; opt-in mixed uv/conda roots; dynamic `.venv`, `venv` (real environments only), `__pycache__`, `.pytest_cache`, `.ruff_cache` |
 | 🐳 **Docker** | Opt-in Docker Desktop data (may contain databases and persistent volumes) |
 | 🍺 **Homebrew** | `Cellar` and `Caskroom` under `/opt/homebrew` and `/usr/local`, and discovered `brew --cache`; the whole `/opt/homebrew` is opt-in (includes `etc` and `var`) |
