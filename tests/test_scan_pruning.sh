@@ -340,13 +340,18 @@ assert_files_equal "$TEST_DIR/guards_retired_expected" "$TEST_DIR/guards_retired
     "guards: a leftover ~/.gradle exclusion from an older catalog is dropped"
 
 # Previously excluded AI data roots become eligible for backup on upgrade.
-mkdir -p "$G_HOME/.cache/huggingface" "$G_HOME/Library/Application Support/Claude/vm_bundles"
+mkdir -p "$G_HOME/.cache/huggingface" "$G_HOME/Library/Application Support/Claude/vm_bundles" \
+    "$G_HOME/Library/Application Support/JetBrains/Toolbox/plugins"
 TEST_STUB_EXCLUDED=1 run_scan "$G_HOME" "$G_CONF" ai_retired "$BASH32" 0
-for retired in ".cache/huggingface" "Library/Application Support/Claude/vm_bundles"; do
+for retired in ".cache/huggingface" "Library/Application Support/Claude/vm_bundles" \
+    "Library/Application Support/JetBrains/Toolbox/plugins"; do
     assert_true "upgrade removes the legacy exclusion on $retired" \
         grep -Fxq "removeexclusion $G_HOME/$retired" "$TEST_DIR/calls.ai_retired"
 done
-rmdir "$G_HOME/.cache/huggingface" "$G_HOME/Library/Application Support/Claude/vm_bundles"
+rmdir "$G_HOME/Library/Application Support/JetBrains/Toolbox/plugins" \
+    "$G_HOME/Library/Application Support/JetBrains/Toolbox" \
+    "$G_HOME/Library/Application Support/JetBrains" \
+    "$G_HOME/.cache/huggingface" "$G_HOME/Library/Application Support/Claude/vm_bundles"
 
 # ...unless the user excludes ~/.gradle on purpose with their own path rule.
 cat > "$G_HOME/.config/tm_exclusions/custom.conf" <<'CONF'

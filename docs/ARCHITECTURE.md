@@ -302,7 +302,7 @@ Missing keep targets are protected from future exclusions but cannot be checked 
 Malformed protection rules abort before exclusion processing.
 
 The retired-parent migration covers user CoreSimulator, `~/.gradle`,
-`~/.cache/huggingface` Claude's `vm_bundles` directory and JetBrains `Toolbox/plugins`. The static pass then
+`~/.cache/huggingface`, Claude's `vm_bundles` directory and JetBrains `Toolbox/plugins`. The static pass then
 processes the selected children. Other disabled catalog rules and old image
 exclusions require manual review because their ownership is unknown.
 Users must audit and remove those existing exclusions explicitly. `keep` cannot force
