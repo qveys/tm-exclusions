@@ -473,6 +473,60 @@ CTSTUB
         echo "  SKIP real tmux Ctrl-C: tmux not installed"
     fi
 
+    # --- Real tmux: a detach at the closing prompt returns the scan status ---
+    echo ""
+    echo "--- Real tmux: detach at the closing prompt ---"
+    if command -v tmux >/dev/null 2>&1; then
+        DT_TMP="$WORK/d"
+        mkdir -p "$DT_TMP"
+        : > "$TMUTIL_CALLS"
+        run_pty "$WORK/out-detach" \
+            env HOME="$B_HOME" PATH="$B_BIN:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" TERM=xterm \
+                TMPDIR="$DT_TMP" TM_EXCLUSIONS_DEFAULT_CONF="$CONF" \
+                bash "$TM_EXCLUSIONS" --tmux --dry-run &
+        dt_runner=$!
+        dt_sock=""
+        dt_i=0
+        while [ "$dt_i" -lt 100 ] && [ -z "$dt_sock" ]; do
+            dt_sock="$(find "$DT_TMP" -maxdepth 2 -type s -name s 2>/dev/null | head -1)"
+            [ -n "$dt_sock" ] || sleep 0.1 2>/dev/null || sleep 1
+            dt_i=$((dt_i + 1))
+        done
+        assert_true "real tmux detach: the private socket appears" test -n "$dt_sock"
+        dt_pane="$(tmux -S "$dt_sock" list-panes -F '#{pane_id}' 2>/dev/null | head -1)"
+        # Wait for the closing prompt: the status is published there, so a
+        # detach must return it instead of making the parent re-attach.
+        dt_i=0
+        : > "$WORK/pane.txt"
+        while [ "$dt_i" -lt 150 ]; do
+            tmux -S "$dt_sock" capture-pane -p -t "$dt_pane" > "$WORK/pane.txt" 2>/dev/null || true
+            grep -q "press Enter" "$WORK/pane.txt" 2>/dev/null && break
+            sleep 0.2 2>/dev/null || sleep 1
+            dt_i=$((dt_i + 1))
+        done
+        assert_true "real tmux detach: the closing prompt is shown" \
+            grep -q "press Enter" "$WORK/pane.txt"
+        tmux -S "$dt_sock" detach-client -s tm-exclusions 2>/dev/null || true
+        dt_waited=0
+        while kill -0 "$dt_runner" 2>/dev/null && [ "$dt_waited" -lt 100 ]; do
+            sleep 0.2 2>/dev/null || sleep 1
+            dt_waited=$((dt_waited + 1))
+        done
+        dt_hang=0
+        if kill -0 "$dt_runner" 2>/dev/null; then
+            dt_hang=1
+            kill -TERM "$dt_runner" 2>/dev/null || true
+        fi
+        rc=0
+        wait "$dt_runner" 2>/dev/null || rc=$?
+        assert_eq 0 "$dt_hang" "real tmux detach: the CLI does not wait for a second client"
+        assert_eq 0 "$rc" "real tmux detach: the published scan status is returned"
+        assert_eq 0 "$(find "$DT_TMP" -mindepth 1 2>/dev/null | wc -l | tr -d ' ')" \
+            "real tmux detach: no socket or work directory left behind"
+    else
+        echo "  SKIP real tmux detach: tmux not installed"
+    fi
+
     # --- Real tmux (opt-in, isolated socket): two panes and full cleanup ---
     echo ""
     echo "--- Real tmux on a dedicated socket (skipped when tmux absent) ---"

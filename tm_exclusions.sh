@@ -1303,7 +1303,17 @@ tmux_launch() {
         # session close. A signal from the pane (Ctrl-C) after the scan finished
         # therefore keeps the real status, and the second signal the parent's
         # cleanup sends while closing is ignored (finished=1).
-        printf '_rc=""\nfinished=0\n'
+        printf '_rc=""\npublished=0\nfinished=0\n'
+        # shellcheck disable=SC2016  # these variables expand in the wrapper
+        printf 'publish() {\n'
+        # shellcheck disable=SC2016  # these variables expand in the wrapper
+        printf '  [ "$published" -eq 1 ] && return 0\n'
+        # shellcheck disable=SC2016  # these variables expand in the wrapper
+        printf '  published=1\n'
+        # shellcheck disable=SC2016  # these variables expand in the wrapper
+        printf '  printf %%s "$1" > "$TM_EXCLUSIONS_TMUX_RC"\n'
+        # shellcheck disable=SC2016  # the closing brace is literal
+        printf '}\n'
         # shellcheck disable=SC2016  # these variables expand in the wrapper
         printf 'finish() {\n'
         # shellcheck disable=SC2016  # these variables expand in the wrapper
@@ -1314,7 +1324,7 @@ tmux_launch() {
         # shellcheck disable=SC2016  # these variables expand in the wrapper
         printf '  [ -n "$_rc" ] || _rc="$1"\n'
         # shellcheck disable=SC2016  # these variables expand in the wrapper
-        printf '  printf %%s "$_rc" > "$TM_EXCLUSIONS_TMUX_RC"\n'
+        printf '  publish "$_rc"\n'
         # shellcheck disable=SC2016  # these variables expand in the wrapper
         printf '  exec "$TM_EXCLUSIONS_TMUX_BIN" -S "$TM_EXCLUSIONS_TMUX_SOCK" kill-session -t "$TM_EXCLUSIONS_TMUX_SESSION"\n'
         # shellcheck disable=SC2016  # the closing brace is literal
@@ -1334,6 +1344,10 @@ tmux_launch() {
         # shellcheck disable=SC2016  # $_rc is for the generated wrapper, not here
         printf '\n  _rc=$?\n'
         printf 'fi\n'
+        # The status is published as soon as the scan ended: a detach at the
+        # closing prompt must not make the parent re-attach and wait again.
+        # shellcheck disable=SC2016  # $_rc is for the generated wrapper, not here
+        printf 'publish "$_rc"\n'
         # shellcheck disable=SC2016  # the wrapper's shell expands these variables
         printf 'if [ -t 0 ] && [ -z "${TM_EXCLUSIONS_TMUX_NO_HOLD:-}" ]; then\n'
         # shellcheck disable=SC2016  # the wrapper's shell expands the message variable
