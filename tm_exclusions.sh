@@ -239,14 +239,13 @@ draw_status() {
 # Reserve two cells per character so wide Unicode paths cannot wrap the status.
 show_scan_path() {
     [[ "${UI}" -eq 1 ]] || return 0
-    local display="$1" prefix="${2:-}"
+    local display="$1" prefix="${2:-}" compact_prefix="${3:-}"
     prepare_status
-    local width=$((STATUS_COLUMNS / 2))
+    if (( ${#prefix} + 6 > STATUS_COLUMNS )); then prefix="$compact_prefix"; fi
+    local width=$(((STATUS_COLUMNS - ${#prefix}) / 2))
     # Printable ASCII occupies one cell per character.
     local ascii='^[ -~]*$'
-    if [[ "$display" =~ $ascii ]]; then width=$((STATUS_COLUMNS - 7 - ${#prefix})); fi
-    if (( ${#prefix} + 4 > width )); then prefix=""; fi
-    width=$((width - ${#prefix}))
+    if [[ "$display" =~ $ascii ]]; then width=$((STATUS_COLUMNS - 2 - ${#prefix})); fi
     if (( width <= 0 )); then draw_status; return 0; fi
     # Literal home abbreviation for display only.
     # shellcheck disable=SC2088
@@ -278,6 +277,7 @@ start_activity() {
     prepare_status
     local width=$(((STATUS_COLUMNS - 8) / 2))
     if (( width < 4 )); then width=4; fi
+    local full_label="$label"
     if (( ${#label} > width )); then
         local half=$(((width - 1) / 2))
         label="${label:0:half}…${label: -half}"
@@ -288,11 +288,15 @@ start_activity() {
             elapsed=$((SECONDS - started))
             if [[ -n "$results" && -s "$results" ]]; then
                 latest="$(tail -n 1 "$results")"
-                show_scan_path "$latest" "${elapsed}s · $MSG_UI_LAST_MATCH "
+                show_scan_path "$latest" "${elapsed}s · $MSG_UI_LAST_MATCH " "${elapsed}s "
                 continue
             fi
-            prepare_status
-            draw_status "$UI_DIM$label · ${elapsed}s$UI_RESET"
+            if (( SCAN_COLUMNS < 36 )); then
+                show_scan_path "$full_label" "${elapsed}s " "${elapsed}s "
+            else
+                prepare_status
+                draw_status "$UI_DIM$label · ${elapsed}s$UI_RESET"
+            fi
         done
     ) &
     UI_ACTIVITY_PID=$!
@@ -309,11 +313,13 @@ progress_draw() {
     [[ "${UI}" -eq 1 && "${UI_TOTAL}" -gt 0 ]] || return 0
     local cells=20 bar="" i
     if (( SCAN_COLUMNS < 60 )); then cells=6; fi
+    if (( SCAN_COLUMNS < 36 )); then cells=3; fi
     local filled=$((UI_DONE * cells / UI_TOTAL))
     for ((i=0; i<cells; i++)); do
         if [[ "$i" -lt "$filled" ]]; then bar="${bar}━"; else bar="${bar}·"; fi
     done
     printf -v UI_METER ' %3d%%  %d/%d' "$((UI_DONE * 100 / UI_TOTAL))" "$UI_DONE" "$UI_TOTAL"
+    if (( SCAN_COLUMNS < 36 )); then UI_METER=" $((UI_DONE * 100 / UI_TOTAL))%"; fi
     UI_METER_WIDTH=$((cells + ${#UI_METER}))
     UI_METER="$bar$UI_METER"
     if [[ "$#" -gt 0 ]]; then show_scan_path "$1"; else prepare_status; draw_status; fi

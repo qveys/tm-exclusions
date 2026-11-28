@@ -2081,6 +2081,13 @@ start_activity "Measuring" > "$3/counted-activity"
 sleep 2
 clear_progress >/dev/null
 grep -Eq "50%  1/2.*Measuring.*[1-9]s" "$3/counted-activity"
+SCAN_COLUMNS=22
+progress_draw >/dev/null
+start_activity "Measuring directory" > "$3/narrow"
+sleep 2
+clear_progress >/dev/null
+grep -Eq "50%.*[1-9]s .*ry" "$3/narrow"
+SCAN_COLUMNS=80
 progress_step >> "$3/progress"
 grep -q "100%  2/2" "$3/progress"
 [[ "$UI_PROGRESS" -eq 0 ]]
@@ -2141,6 +2148,9 @@ UI=0
 start_activity "$MSG_UI_MEASURE" > "$3/activity-plain"
 [[ ! -s "$3/activity-plain" && -z "$UI_ACTIVITY_PID" ]]
 UI=1
+SCAN_COLUMNS=22
+show_scan_path "$HOME/repo/node_modules" "1s · Last match " "1s " > "$3/narrow-match"
+grep -q "1s .*ules" "$3/narrow-match"
 SCAN_COLUMNS=30
 show_scan_path "$HOME/a very long directory name/with-tail" > "$3/short-discovery"
 grep -q "with-tail" "$3/short-discovery"
