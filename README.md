@@ -61,7 +61,8 @@ During Homebrew cache lookup, directory-size measurement, the pattern scan and
 inventory collection, a status line shows the current operation and elapsed seconds.
 During the pattern scan, the status shows the latest result when available, then
 the directory being classified or processed and its position in the sorted results.
-The static progress bar counts completed rules. The inventory (including installed
+The bar stays beside the activity text. A moving marker indicates an unknown total;
+percentages count completed rules or sorted candidates once the total is known. The inventory (including installed
 Homebrew casks and CLI formulae, listed by name in wrapped blocks) is also shown
 inline; disk usage and per-path details remain in the saved report, whose
 location is printed at the end, with the detail lines grouped under `── Category ──`

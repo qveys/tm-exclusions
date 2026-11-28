@@ -169,6 +169,7 @@ UI_ACTIVITY_PID=""
 SCAN_COLUMNS=80
 UI_DONE=0
 UI_TOTAL=0
+UI_METER=""
 UI_RESET=""
 UI_CYAN=""
 UI_GREEN=""
@@ -199,6 +200,7 @@ clear_progress() {
 }
 
 ui_section() {
+    UI_METER=""
     clear_progress
     if [[ "${UI}" -eq 1 ]]; then
         printf '\n%s  %s  %s%s\n\n' "$UI_CYAN" "$1" "$2" "$UI_RESET"
@@ -208,12 +210,34 @@ ui_section() {
     fi
 }
 
+# Counted stages cache their bar. Unknown totals use a moving marker.
+status_prefix() {
+    local meter="$UI_METER"
+    if [[ -z "$meter" ]]; then
+        local track="...." pos=$((SECONDS % 4))
+        meter="[${track:0:pos}=${track:pos+1}]"
+    fi
+    if [[ -n "$UI_METER" ]]; then
+        STATUS_COLUMNS=$((SCAN_COLUMNS - UI_METER_WIDTH - 4))
+    else
+        STATUS_COLUMNS=$((SCAN_COLUMNS - ${#meter} - 4))
+    fi
+    printf '\r\033[2K  %s%s%s ' "$UI_CYAN" "$meter" "$UI_RESET"
+    UI_PROGRESS=1
+}
+
 # Reserve two cells per character so wide Unicode paths cannot wrap the status.
 show_scan_path() {
     [[ "${UI}" -eq 1 ]] || return 0
     local display="$1" prefix="${2:-}"
-    local width=$(((SCAN_COLUMNS - 6) / 2 - ${#prefix}))
-    [[ "$width" -gt 3 ]] || return 0
+    status_prefix
+    local width=$((STATUS_COLUMNS / 2))
+    # Printable ASCII occupies one cell per character.
+    local ascii='^[ -~]*$'
+    if [[ "$display" =~ $ascii ]]; then width=$((STATUS_COLUMNS - 7 - ${#prefix})); fi
+    if (( ${#prefix} + 4 > width )); then prefix=""; fi
+    width=$((width - ${#prefix}))
+    (( width > 0 )) || return 0
     # Literal home abbreviation for display only.
     # shellcheck disable=SC2088
     case "$display" in
@@ -224,7 +248,7 @@ show_scan_path() {
     if [[ "${#display}" -gt "$width" ]]; then
         display="…${display: -$((width - 1))}"
     fi
-    printf '\r\033[2K  %s› %s%s%s' "$UI_DIM" "$prefix" "$display" "$UI_RESET"
+    printf '%s%s%s%s' "$UI_DIM" "$prefix" "$display" "$UI_RESET"
     UI_PROGRESS=1
 }
 
@@ -242,13 +266,14 @@ start_activity() {
         esac
         label="$label ${path//[[:cntrl:]]/?}"
     fi
-    local width=$(((SCAN_COLUMNS - 12) / 2))
+    status_prefix
+    local width=$(((STATUS_COLUMNS - 8) / 2))
     if (( width < 4 )); then width=4; fi
     if (( ${#label} > width )); then
         local half=$(((width - 1) / 2))
         label="${label:0:half}…${label: -half}"
     fi
-    printf '\r\033[2K  %s%s%s' "$UI_DIM" "$label" "$UI_RESET"
+    printf '%s%s%s' "$UI_DIM" "$label" "$UI_RESET"
     UI_PROGRESS=1
     (
         while sleep 1; do
@@ -258,7 +283,8 @@ start_activity() {
                 show_scan_path "$latest" "${elapsed}s · $MSG_UI_LAST_MATCH "
                 continue
             fi
-            printf '\r\033[2K  %s%s · %ss%s' "$UI_DIM" "$label" "$elapsed" "$UI_RESET"
+            status_prefix
+            printf '%s%s · %ss%s' "$UI_DIM" "$label" "$elapsed" "$UI_RESET"
         done
     ) &
     UI_ACTIVITY_PID=$!
@@ -273,15 +299,19 @@ progress_start() {
 
 progress_draw() {
     [[ "${UI}" -eq 1 && "${UI_TOTAL}" -gt 0 ]] || return 0
-    local filled=$((UI_DONE * 20 / UI_TOTAL)) bar="" i
-    for ((i=0; i<20; i++)); do
+    local cells=20 bar="" i
+    if (( SCAN_COLUMNS < 60 )); then cells=6; fi
+    local filled=$((UI_DONE * cells / UI_TOTAL))
+    for ((i=0; i<cells; i++)); do
         if [[ "$i" -lt "$filled" ]]; then bar="${bar}━"; else bar="${bar}·"; fi
     done
-    printf '\r\033[2K  %s%s%s %3d%%  %d/%d' "$UI_CYAN" "$bar" "$UI_RESET" \
-        "$((UI_DONE * 100 / UI_TOTAL))" "$UI_DONE" "$UI_TOTAL"
-    UI_PROGRESS=1
+    printf -v UI_METER ' %3d%%  %d/%d' "$((UI_DONE * 100 / UI_TOTAL))" "$UI_DONE" "$UI_TOTAL"
+    UI_METER_WIDTH=$((cells + ${#UI_METER}))
+    UI_METER="$bar$UI_METER"
+    if [[ "$#" -gt 0 ]]; then show_scan_path "$1"; else status_prefix; fi
     if [[ "${UI_DONE}" -eq "${UI_TOTAL}" ]]; then
         printf '\n'
+        UI_METER=""
         UI_PROGRESS=0
     fi
 }
@@ -953,7 +983,7 @@ path_size_column() {
             # "mark": remember a partial (du exited non-zero) measurement.
             if [[ "$UI" -eq 1 ]]; then start_activity "$MSG_UI_MEASURE" "$p"; fi
             szk="$(du_size_kb "$np" mark)"
-            if [[ "$UI" -eq 1 ]]; then clear_progress; fi
+            if [[ "$UI" -eq 1 ]]; then clear_progress; status_prefix; fi
             du_size_record "$np" "$szk"
             case "$szk" in
                 *'!') szk="${szk%!}" ;;
@@ -2243,6 +2273,7 @@ EOF
     if [[ "$UI" -eq 1 ]]; then
         candidate_count="$(wc -l < "$sorted_results")"
         candidate_count=$((candidate_count))
+        UI_TOTAL=$candidate_count
     fi
     local line found_dir matched_pattern
     while IFS= read -r line; do
@@ -2252,7 +2283,8 @@ EOF
 
         if [[ "$UI" -eq 1 ]]; then
             candidate_index=$((candidate_index + 1))
-            show_scan_path "$found_dir" "$candidate_index/$candidate_count "
+            UI_DONE=$((candidate_index - 1))
+            progress_draw "$found_dir"
         fi
 
         if [[ "$matched_pattern" = "$prune_marker" ]]; then
@@ -2298,6 +2330,7 @@ EOF
 
         process_path "$found_dir"
     done < "$sorted_results"
+    if [[ "$UI" -eq 1 && "$candidate_count" -gt 0 ]]; then progress_step; fi
     clear_progress
 
     flush_path_results

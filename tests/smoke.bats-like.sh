@@ -2072,6 +2072,10 @@ UI_CYAN=$(printf "\033[36m")
 UI_RESET=$(printf "\033[0m")
 progress_start "$(printf "one\ntwo")" > "$3/progress"
 progress_step >> "$3/progress"
+start_activity "Measuring" > "$3/counted-activity"
+sleep 2
+clear_progress >/dev/null
+grep -Eq "50%  1/2.*Measuring.*[1-9]s" "$3/counted-activity"
 progress_step >> "$3/progress"
 grep -q "100%  2/2" "$3/progress"
 [[ "$UI_PROGRESS" -eq 0 ]]
