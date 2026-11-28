@@ -262,7 +262,7 @@ ui_summary() {
     printf '  %s %s\n' "$MSG_REPORT_CHECKED" "$TOTAL_CHECKED"
     printf '  %s%s %s%s\n' "$UI_GREEN" "$1" "$TOTAL_EXCLUDED" "$UI_RESET"
     printf '  %s %s\n' "$MSG_REPORT_ALREADY" "$TOTAL_ALREADY"
-    printf '  %s%s %s%s\n' "$UI_DIM" "$MSG_REPORT_SKIPPED" "$TOTAL_SKIPPED" "$UI_RESET"
+    printf '\n  %s%s %s%s\n' "$UI_DIM" "$MSG_REPORT_SKIPPED" "$TOTAL_SKIPPED" "$UI_RESET"
     printf '  %s %s\n' "$MSG_REPORT_NOT_FOUND" "$TOTAL_NOT_FOUND"
     printf '  %s %s\n' "$MSG_REPORT_ERRORS" "$TOTAL_ERRORS"
     printf '  %s %s\n' "$MSG_REPORT_BLOCKED" "$TOTAL_BLOCKED"
@@ -271,7 +271,7 @@ ui_summary() {
     # here — so the summary always matches the report even if a path disappears
     # while the report is being written between the two.
     if [[ -n "${2:-}" ]]; then
-        printf '  %s %s\n' "$MSG_REPORT_SIZE_TOTAL" "$2"
+        printf '\n  %s %s\n' "$MSG_REPORT_SIZE_TOTAL" "$2"
     fi
     if [[ -n "${4:-}" ]]; then
         printf '  %s%s %s%s\n' "$UI_GREEN" "$3" "$4" "$UI_RESET"
@@ -305,7 +305,7 @@ log_info() {
                 *"${MSG_REMOVING}"*) color="$UI_CYAN"; icon="↩" ;;
                 *"${MSG_REPORT_SAVED}"*|*"${MSG_REPORT_DESKTOP_COPY}"*) color="$UI_CYAN"; icon="📄" ;;
             esac
-            printf '  %s%s %s%s\n' "$color" "$icon" "$*" "$UI_RESET"
+            printf '  %s%s %s%s\n\n' "$color" "$icon" "$*" "$UI_RESET"
         else
             printf '%s\n' "$*"
         fi

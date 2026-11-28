@@ -46,7 +46,8 @@ Preview the selected exclusions with `tm-exclusions --dry-run` before applying t
 ## 🎨 Terminal display
 
 Interactive terminals get cyan section headings, status colors, emojis, progress
-bars and a compact final summary. By default, exclusions and prune matches
+bars and a final summary. A blank line separates status entries and groups related
+counters in the summary. By default, exclusions and prune matches
 are grouped by natural root (a `Git/<repo>`, a hidden `~/.tool`, or the matched
 directory’s parent), under one `══ Category ══` header per `#@Category` section of
 the config (`-v` and `--quiet` follow the same rules as below; `--quiet` prints no
