@@ -2121,6 +2121,17 @@ collect_post_scan_paths > "$3/live-discovery"
 [[ "$EXTRA_PATHS" = "$expected" && "$UI_PROGRESS" -eq 0 ]]
 grep -q "project with spaces/subdir" "$3/live-discovery"
 [[ "$(wc -l < "$3/live-discovery" | tr -d " ")" = 0 ]]
+printf "%s\n" "$HOME/repo/node_modules" > "$3/scan-results"
+start_activity "$MSG_SCANNING" "$HOME" "$3/scan-results" > "$3/activity"
+sleep 2
+clear_progress > /dev/null
+[[ -z "$UI_ACTIVITY_PID" && "$UI_PROGRESS" -eq 0 ]]
+grep -q "Last match ~/repo/node_modules" "$3/activity"
+grep -Eq "[1-9][0-9]*s" "$3/activity"
+UI=0
+start_activity "$MSG_UI_MEASURE" > "$3/activity-plain"
+[[ ! -s "$3/activity-plain" && -z "$UI_ACTIVITY_PID" ]]
+UI=1
 SCAN_COLUMNS=30
 show_scan_path "$HOME/a very long directory name/with-tail" > "$3/short-discovery"
 grep -q "with-tail" "$3/short-discovery"

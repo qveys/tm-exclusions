@@ -165,6 +165,8 @@ load_i18n() {
 # Presentation is terminal-only; reports, pipes and debug logs stay plain.
 UI=0
 UI_PROGRESS=0
+UI_ACTIVITY_PID=""
+SCAN_COLUMNS=80
 UI_DONE=0
 UI_TOTAL=0
 UI_RESET=""
@@ -175,6 +177,8 @@ UI_DIM=""
 init_ui() {
     if [[ -t 1 && "${TERM:-dumb}" != "dumb" && -z "${NO_COLOR:-}" && "${QUIET}" -eq 0 ]]; then
         UI=1
+        SCAN_COLUMNS="$(tput cols 2>/dev/null || printf 80)"
+        case "$SCAN_COLUMNS" in ''|*[!0-9]*) SCAN_COLUMNS=80 ;; esac
         UI_RESET=$'\033[0m'
         UI_CYAN=$'\033[1;36m'
         UI_GREEN=$'\033[32m'
@@ -183,6 +187,11 @@ init_ui() {
 }
 
 clear_progress() {
+    if [[ -n "${UI_ACTIVITY_PID:-}" ]]; then
+        kill "$UI_ACTIVITY_PID" 2>/dev/null || true
+        wait "$UI_ACTIVITY_PID" 2>/dev/null || true
+        UI_ACTIVITY_PID=""
+    fi
     if [[ "${UI_PROGRESS}" -eq 1 ]]; then
         printf '\r\033[2K'
         UI_PROGRESS=0
@@ -202,7 +211,8 @@ ui_section() {
 # Reserve two cells per character so wide Unicode paths cannot wrap the status.
 show_scan_path() {
     [[ "${UI}" -eq 1 ]] || return 0
-    local display="$1" width=$(((SCAN_COLUMNS - 6) / 2))
+    local display="$1" prefix="${2:-}"
+    local width=$(((SCAN_COLUMNS - 6) / 2 - ${#prefix}))
     [[ "$width" -gt 3 ]] || return 0
     # Literal home abbreviation for display only.
     # shellcheck disable=SC2088
@@ -214,8 +224,44 @@ show_scan_path() {
     if [[ "${#display}" -gt "$width" ]]; then
         display="…${display: -$((width - 1))}"
     fi
-    printf '\r\033[2K  %s› %s%s' "$UI_DIM" "$display" "$UI_RESET"
+    printf '\r\033[2K  %s› %s%s%s' "$UI_DIM" "$prefix" "$display" "$UI_RESET"
     UI_PROGRESS=1
+}
+
+# Keep blocking commands in the foreground. Only the elapsed-time display runs
+# in the background, and clear_progress joins it before the next output.
+start_activity() {
+    [[ "$UI" -eq 1 ]] || return 0
+    clear_progress
+    local label="$1" path="${2:-}" results="${3:-}" latest elapsed started=$SECONDS
+    if [[ -n "$path" ]]; then
+        # shellcheck disable=SC2088
+        case "$path" in
+            "$HOME") path="~" ;;
+            "$HOME/"*) path="~/${path#"$HOME/"}" ;;
+        esac
+        label="$label ${path//[[:cntrl:]]/?}"
+    fi
+    local width=$(((SCAN_COLUMNS - 12) / 2))
+    if (( width < 4 )); then width=4; fi
+    if (( ${#label} > width )); then
+        local half=$(((width - 1) / 2))
+        label="${label:0:half}…${label: -half}"
+    fi
+    printf '\r\033[2K  %s%s%s' "$UI_DIM" "$label" "$UI_RESET"
+    UI_PROGRESS=1
+    (
+        while sleep 1; do
+            elapsed=$((SECONDS - started))
+            if [[ -n "$results" && -s "$results" ]]; then
+                latest="$(tail -n 1 "$results")"
+                show_scan_path "$latest" "${elapsed}s · $MSG_UI_LAST_MATCH "
+                continue
+            fi
+            printf '\r\033[2K  %s%s · %ss%s' "$UI_DIM" "$label" "$elapsed" "$UI_RESET"
+        done
+    ) &
+    UI_ACTIVITY_PID=$!
 }
 
 progress_start() {
@@ -905,7 +951,9 @@ path_size_column() {
         # must not walk the same tree again (#45).
         if ! szk="$(du_size_lookup "$np")"; then
             # "mark": remember a partial (du exited non-zero) measurement.
+            if [[ "$UI" -eq 1 ]]; then start_activity "$MSG_UI_MEASURE" "$p"; fi
             szk="$(du_size_kb "$np" mark)"
+            if [[ "$UI" -eq 1 ]]; then clear_progress; fi
             du_size_record "$np" "$szk"
             case "$szk" in
                 *'!') szk="${szk%!}" ;;
@@ -2026,7 +2074,7 @@ EOF
     local all_results
     make_tmp_file all_results all
 
-    progress_start "${CONF_PATTERNS}"
+    start_activity "$MSG_UI_PREPARE_SCAN"
 
     # Single consolidated traversal (#50): build ONE find expression with every
     # configured pattern OR-ed together — \( -name p1 -o -name p2 ... \) — so
@@ -2120,6 +2168,7 @@ EOF
     local tmp_scan
     make_tmp_file tmp_scan scan
     if [[ "$#" -gt 0 ]]; then
+        start_activity "$MSG_SCANNING" "$scan_root" "$tmp_scan"
         if ! find "$@" > "$tmp_scan" 2>/dev/null; then
             # One traversal covers every pattern; on failure, report once per
             # pattern exactly like the old per-pattern loop did.
@@ -2133,6 +2182,7 @@ EOF
 ${CONF_PATTERNS}
 EOF
         fi
+        clear_progress
     fi
 
     # Tag each discovered directory with every configured pattern whose glob
@@ -2147,9 +2197,13 @@ EOF
     local extglob_was_on=0
     if shopt -q extglob; then extglob_was_on=1; fi
     shopt -u extglob
-    local found_dir base_name
+    local found_dir base_name last_update=-1
     while IFS= read -r found_dir; do
         [[ -z "$found_dir" ]] && continue
+        if [[ "$UI" -eq 1 && "$last_update" -ne "$SECONDS" ]]; then
+            show_scan_path "$found_dir" "$MSG_UI_CLASSIFY "
+            last_update=$SECONDS
+        fi
         # A layer-1 zone root printed by the pruned traversal: one skip entry
         # per zone (its nested matches were never visited).
         if [[ -n "$prune_roots" ]]; then
@@ -2176,26 +2230,30 @@ EOF
     if [[ "$extglob_was_on" -eq 1 ]]; then shopt -s extglob; fi
     rm -f "$tmp_scan"
 
-    # Keep the progress-bar contract: one step per configured pattern.
-    while IFS= read -r pattern_name; do
-        [[ -z "$pattern_name" ]] && continue
-        progress_step
-    done <<EOF
-${CONF_PATTERNS}
-EOF
-
     # Sort by path so that a parent directory precedes its descendants and is
     # therefore kept first; descendants are then dropped by is_covered_by_kept.
     local sorted_results
     make_tmp_file sorted_results sorted
+    start_activity "$MSG_UI_SORT"
     LC_ALL=C sort -t$'\t' -k1,1 "$all_results" > "$sorted_results"
     rm -f "$all_results"
 
+    clear_progress
+    local candidate_count=0 candidate_index=0
+    if [[ "$UI" -eq 1 ]]; then
+        candidate_count="$(wc -l < "$sorted_results")"
+        candidate_count=$((candidate_count))
+    fi
     local line found_dir matched_pattern
     while IFS= read -r line; do
         [[ -z "$line" ]] && continue
         found_dir="${line%%$'\t'*}"
         matched_pattern="${line#*$'\t'}"
+
+        if [[ "$UI" -eq 1 ]]; then
+            candidate_index=$((candidate_index + 1))
+            show_scan_path "$found_dir" "$candidate_index/$candidate_count "
+        fi
 
         if [[ "$matched_pattern" = "$prune_marker" ]]; then
             set_rule_context prune "$found_dir"
@@ -2240,6 +2298,7 @@ EOF
 
         process_path "$found_dir"
     done < "$sorted_results"
+    clear_progress
 
     flush_path_results
     rm -f "$sorted_results" "$kept_file"
@@ -2373,7 +2432,7 @@ collect_post_scan_paths() {
         case "$SCAN_COLUMNS" in
             ''|*[!0-9]*) SCAN_COLUMNS=80 ;;
         esac
-        show_scan_path "$MSG_UI_BREW"
+        start_activity "$MSG_UI_BREW"
     fi
 
     if command -v brew >/dev/null 2>&1; then
@@ -2383,7 +2442,8 @@ collect_post_scan_paths() {
         fi
     fi
 
-    if [[ "$CONF_SCAN_IMAGES" -eq 0 ]]; then clear_progress; return 0; fi
+    clear_progress
+    if [[ "$CONF_SCAN_IMAGES" -eq 0 ]]; then return 0; fi
     make_tmp_file tmp disk
     # Stream directories and matching images from the same walk, NUL-delimited.
     # VM/disk bundle directories (sparsebundle, UTM, VMware, Parallels) are
@@ -2875,7 +2935,9 @@ generate_report() {
     # [[ -t 1 ]] would always be false.
     [[ -t 1 ]] && stdout_tty=1
 
+    start_activity "$MSG_UI_INVENTORY"
     inv="$(build_inventory_section "$stdout_tty")"
+    clear_progress
     if [[ "${UI}" -eq 1 ]]; then
         ui_print_inventory "$inv"
         ui_section "📝" "$MSG_UI_REPORT"
