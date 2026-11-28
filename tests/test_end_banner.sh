@@ -150,6 +150,8 @@ echo ""
 echo "--- Interactive banner: mixed excluded / already / missing ---"
 mkdir_paths c/sz1023 c/sz1024 c/sz3000-already
 banner_run "$TEST_HOME/out-mixed" apply 0 0 en c/sz1023 c/sz1024 c/sz3000-already c/missing-one
+assert_true "blank line before skipped-path counters" awk '/^  Skipped:/ && blank {found=1} {blank=(NF==0)} END {exit !found}' "$TEST_HOME/out-mixed"
+
 OUT="$TEST_HOME/out-mixed"
 assert_file_contains "$OUT" "Summary" "banner heading is shown in an interactive run"
 assert_file_lacks_regex "$OUT" 'Would exclude:' "apply run uses the real 'Newly excluded' label"
@@ -167,6 +169,10 @@ assert_file_lacks_regex "$OUT" 'Simulated run' "apply run is not labelled simula
 assert_eq 2 "$(grep -c '^addexclusion ' "$B_CALLS")" "exactly the two new paths were really excluded"
 assert_true "control: an apply run does log mutation commands (the dry-run check is meaningful)" \
     grep -qx addexclusion "$B_ALL"
+# tmutil only has addexclusion / removeexclusion / isexcluded: any other verb
+# (e.g. a listing verb that does not exist and exits 64 on a real Mac) is a bug.
+assert_eq 0 "$(grep -Evc '^(addexclusion|removeexclusion|isexcluded)$' "$B_ALL" || true)" \
+    "apply: tmutil is never invoked with a verb other than addexclusion/removeexclusion/isexcluded"
 # Same figures in the saved report as in the banner.
 assert_file_contains "$B_HOME/report.txt" "Space excluded: 2.0M" "report carries the same space excluded"
 assert_file_contains "$B_HOME/report.txt" "Disk usage total: 4.9M" "report carries the same disk usage total"
@@ -185,11 +191,10 @@ assert_file_contains "$OUT" "Space that would be excluded (simulated): 2.0M" "dr
 assert_file_lacks_regex "$OUT" 'Space excluded:' "dry-run never claims space was excluded"
 assert_file_contains "$OUT" "Would exclude: 2" "dry-run counter uses the 'would' label"
 assert_eq 0 "$(wc -l < "$B_CALLS" | tr -d ' ')" "dry-run called no tmutil mutation"
-assert_eq 0 "$(grep -Evc '^(isexcluded|listexclusions)$' "$B_ALL" || true)" \
-    "dry-run: only read-only isexcluded/listexclusions were called (no addexclusion/removeexclusion)"
-# shellcheck disable=SC2016
-assert_true "dry-run still does the read-only status lookups (isexcluded and listexclusions)" \
-    bash -c 'grep -qx isexcluded "$1" && grep -qx listexclusions "$1"' _ "$B_ALL"
+assert_eq 0 "$(grep -Evc '^isexcluded$' "$B_ALL" || true)" \
+    "dry-run: only read-only isexcluded was called (no addexclusion/removeexclusion, no other verb)"
+assert_true "dry-run still does the read-only isexcluded status lookups" \
+    grep -qx isexcluded "$B_ALL"
 
 echo ""
 echo "--- --quiet: no banner ---"
@@ -243,8 +248,8 @@ assert_exit_code 0 "CLI --dry-run exits 0" cli_run "$TEST_HOME/cli-dry" --dry-ru
 assert_file_contains "$B_HOME/cli-report.txt" "Space that would be excluded (simulated): 2.0M" \
     "CLI report carries the simulated space (same figure as the banner)"
 assert_eq 0 "$(wc -l < "$B_CALLS" | tr -d ' ')" "CLI --dry-run called no tmutil mutation"
-assert_eq 0 "$(grep -Evc '^(isexcluded|listexclusions)$' "$B_ALL" || true)" \
-    "CLI --dry-run: only isexcluded/listexclusions were called"
+assert_eq 0 "$(grep -Evc '^isexcluded$' "$B_ALL" || true)" \
+    "CLI --dry-run: only isexcluded was called"
 
 echo ""
 echo "--- Zero exclusions ---"
@@ -432,7 +437,7 @@ nl_alias_case() {
     assert_file_contains "$out" "Space that would be excluded (simulated): unknown (sizes could not be read)" \
         "$desc: counted unmeasured in the simulated total"
     assert_eq 0 "$(wc -l < "$B_DU_CALLS" | tr -d ' ')" "$desc: du never called"
-    assert_eq 0 "$(grep -Evc '^(isexcluded|listexclusions)$' "$B_ALL" || true)" "$desc: dry-run stayed read-only"
+    assert_eq 0 "$(grep -Evc '^isexcluded$' "$B_ALL" || true)" "$desc: dry-run stayed read-only"
 }
 nl_alias_case c/alias-abs "absolute alias to 'sz92x<LF>'"
 nl_alias_case c/alias-rel "relative alias to 'sz92x<LF>'"

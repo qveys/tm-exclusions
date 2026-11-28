@@ -34,8 +34,8 @@ archives and agent sessions require an explicit choice because they can hold uni
 - **Idempotent** — safe to run repeatedly
 - **Multilingual** — English and French output
 - **Config management** — add custom rules, init/list/edit config
-- **Human-readable reports** after each run (host/user/version, optional inventory, `du` summary, `tmutil listexclusions` excerpt)
-- Reports group actions by rule, distinguish missing and privilege-blocked paths, and state the `tmutil listexclusions` result.
+- **Human-readable reports** after each run (host/user/version, optional inventory, `du` summary)
+- Reports group actions by rule and distinguish missing and privilege-blocked paths.
 
 Optional environment variables (see **`docs/ARCHITECTURE.md`**): `TM_EXCLUSIONS_REPORT`, `TM_EXCLUSIONS_REPORT_DESKTOP`, `TM_EXCLUSIONS_SKIP_INVENTORY`, `TM_EXCLUSIONS_DEBUG_FIFO`.
 
@@ -45,8 +45,9 @@ Preview the selected exclusions with `tm-exclusions --dry-run` before applying t
 
 ## 🎨 Terminal display
 
-Interactive terminals get cyan section headings, status colors, emojis, progress
-bars and a compact final summary. By default, exclusions and prune matches
+Interactive terminals get bold magenta headings, cyan progress bars, status colors, emojis, progress
+bars and a final summary. A blank line separates status entries and groups related
+counters in the summary. By default, exclusions and prune matches
 are grouped by natural root (a `Git/<repo>`, a hidden `~/.tool`, or the matched
 directory’s parent), under one `══ Category ══` header per `#@Category` section of
 the config (`-v` and `--quiet` follow the same rules as below; `--quiet` prints no
@@ -56,8 +57,12 @@ Errors and system-path privilege skips remain individually visible. Use
 path is missing or unreadable), and the summary ends with a cumulative
 `Usage disque total :` line. During cache and disk-image discovery, the
 current directory updates (when `setting|scan_images|true` is enabled) on a single line (long paths show their tail).
-Progress counts completed static rules and
-completed scan patterns, not elapsed time. The inventory (including installed
+During Homebrew cache lookup, directory-size measurement, the pattern scan and
+inventory collection, a status line shows the current operation and elapsed seconds.
+During the pattern scan, the status shows the latest result when available, then
+the directory being classified or processed and its position in the sorted results.
+The bar and activity text update on one line, including in narrow tmux panes. A moving marker indicates an unknown total;
+percentages count completed rules or sorted candidates once the total is known. The inventory (including installed
 Homebrew casks and CLI formulae, listed by name in wrapped blocks) is also shown
 inline; disk usage and per-path details remain in the saved report, whose
 location is printed at the end, with the detail lines grouped under `── Category ──`
@@ -91,7 +96,7 @@ The final summary is a banner: counters (newly excluded / already excluded / ski
 the cumulative disk usage of the touched paths, the **space excluded** by this run (sum of the
 `du -sk` sizes already measured for the newly excluded paths, shown as KB/MB/GB; nested paths
 counted once), the saved report path and a copy-pasteable `tmutil isexcluded '<first processed path>'` verification tip (shell-quoted real path). With
-`--dry-run` the banner says the run is **simulated** (no exclusion added or removed — only the read-only `tmutil isexcluded` / `listexclusions` status lookups run — projected values); `--report-only`
+`--dry-run` the banner says the run is **simulated** (no exclusion added or removed — only the read-only `tmutil isexcluded` status lookups run — projected values); `--report-only`
 labels the figure "space needing exclusion" unless `--dry-run` is also set (the simulated label then wins). If some sizes cannot be read (or `du` exits non-zero on unreadable children, so its total is partial) the figure is shown as
 a lower bound (truncated, never rounded up) (`≥ 1.0M (partial, unmeasured paths: 1)`), or `unknown` when none could be read — never a false
 total. Interactive terminals only: `--quiet`, pipes and `NO_COLOR` runs print no banner (`--quiet` stdout gains no line — the space line stays in the saved report — but it benefits from the size-formatting fix at unit boundaries, e.g. `1048575K` now prints `1.0G` instead of `1024.0M`;
@@ -195,19 +200,20 @@ Config files are loaded, merged, then applied via a dual `tmutil` strategy (user
 | Category | Examples |
 |---|---|
 | 🍎 **Applications** | Opt-in: `/Applications`, `$HOME/Applications` |
-| 📗 **Node.js / JavaScript** | npm/yarn/pnpm caches; opt-in `.bun` and `.nvm`;  dynamic `node_modules`, `.next`, `.turbo`, `.parcel-cache` |
-| 🐍 **Python** | pip/pipx caches and Python environments; opt-in mixed uv/conda roots; dynamic `.venv`, `venv`, `__pycache__`, `.pytest_cache`, `.ruff_cache` |
+| 📗 **Node.js / JavaScript** | npm/yarn/pnpm caches (incl. `~/Library/pnpm/store`), Bun package cache, nvm per-version `lib`/`bin` (not `etc/npmrc`), Puppeteer downloads; opt-in whole `.bun` and `.nvm` roots;  dynamic `node_modules`, `.next`, `.turbo`, `.parcel-cache`, `.output` (only with the Nitro `nitro.json` marker) |
+| 🐍 **Python** | pip/pipx/uv caches, uv Python builds and tools, Python environments; opt-in mixed uv/conda roots; dynamic `.venv`, `venv` (real environments only), `__pycache__`, `.pytest_cache`, `.ruff_cache` |
 | 🐳 **Docker** | Opt-in Docker Desktop data (may contain databases and persistent volumes) |
-| 🍺 **Homebrew** | `/usr/local/Cellar` and discovered `brew --cache`; `/opt/homebrew` is opt-in (includes `etc` and `var`) |
+| 🍺 **Homebrew** | `Cellar` and `Caskroom` under `/opt/homebrew` and `/usr/local`, and discovered `brew --cache`; the whole `/opt/homebrew` is opt-in (includes `etc` and `var`) |
 | 🦀 **Rust / Cargo** | Cargo registry/git, rustup toolchains; dynamic `target` |
-| ☕ **Java / JVM** | Maven, Gradle, Ivy and Coursier caches; opt-in SBT root; dynamic `.gradle` |
+| ☕ **Java / JVM** | Maven, Gradle, Ivy and Coursier caches; opt-in SBT root; dynamic `.gradle` (project caches only, never `~/.gradle`) |
+| 🤖 **Android** | Android SDK, tooling cache; emulator images (`~/.android/avd`) are opt-in |
 | 🐹 **Go** | Go module cache, build cache |
-| 💎 **Ruby / iOS** | rbenv; opt-in mixed RVM/gems/CocoaPods roots; dynamic `Pods` |
+| 💎 **Ruby / iOS** | rbenv; opt-in mixed RVM/gems/CocoaPods roots; dynamic `Pods` (next to a `Podfile` or `Podfile.lock`) |
 | 🔨 **Xcode / Apple Dev Tools** | DerivedData, DeviceSupport, CoreSimulator Caches/Temp/Volumes; Archives and Devices are opt-in |
 | 🗄️ **macOS Caches** | `~/Library/Caches`, `/private/var/folders`; Logs are opt-in |
 | 🛠️ **Dev Tools** | IDE caches (JetBrains, VS Code), Terraform and kubectl caches; mixed Pulumi/Helm roots are opt-in |
-| 🤖 **AI / LLM** | Hugging Face, LM Studio, Claude runtime bundles, SuperWhisper; Ollama models and agent sessions are opt-in |
-| 🧰 **IDE and Dev Tool Caches** | Selective Application Support caches: Cursor Chromium cache, JetBrains plugins, Zed languages, Discord Cache, … |
+| 🤖 **AI / LLM** | Hugging Face Hub and Xet caches, LM Studio, Claude VM base image (`rootfs.img`), SuperWhisper; Ollama models and agent sessions are opt-in |
+| 🧰 **IDE and Dev Tool Caches** | Selective Application Support caches: Cursor and VS Code Chromium caches, versioned JetBrains IDE plugins, Zed languages, Discord Cache, … |
 | 🤝 **Claude Code / Codex** | Opt-in `.auto-claude`, `.codex`, `worktrees` (may contain uncommitted work and settings) |
 | 🧼 **Generic caches** | (opt-in — see config) Pattern `.cache` |
 | 🚫 **Prune zones** | Skip-scan-only: `~/Library`, `~/.Trash`, `~/.bun`, `~/.nvm`, package-manager `.bak`/`.old` shadow copies (`.bun.bak`, `.npm.bak`, …) |
@@ -321,6 +327,24 @@ Devices, IDE workspaceStorage, agent directories) and generic `build`/`dist`
 patterns now ship commented out. Copy individual rules from `config/default.conf`
 to `custom.conf` if needed. An upgrade does not remove previously applied exclusions
 for these paths or old discovered images: review them explicitly before relying on backups.
+
+The built-in rules also cover npm's `_cacache` and `_npx` under `~/.cache/npm`,
+the pnpm store under `~/.local/share/pnpm`, and Gradle's `caches` and `wrapper`
+under `~/.local/share/gradle`. JetBrains Toolbox plugin settings stay eligible
+for backup. The next apply retires the old exclusion on `Toolbox/plugins` unless
+an explicit path rule still selects it.
+
+On the next apply, tm-exclusions removes legacy whole-directory exclusions for
+`~/.cache/huggingface` and `~/Library/Application Support/Claude/vm_bundles`
+unless an explicit path rule still selects them. The default catalog leaves Hugging
+Face credentials and Claude VM session data eligible for backup. If you enable
+image discovery, add this rule to protect the session disk as it grows:
+
+```text
+keep|$HOME/Library/Application Support/Claude/vm_bundles/claudevm.bundle/sessiondata.img|Claude VM session data
+```
+
+Developer-directory and image scans skip Photos library packages (`*.photoslibrary`). A failed directory walk reports its first filesystem diagnostic once and retains partial results.
 
 Image discovery is off by default. With `scan_images=true`, it considers at most
 50 candidates: VM bundle directories (`.sparsebundle`, `.utm`, `.vmwarevm`,
@@ -510,12 +534,12 @@ launchctl load ~/Library/LaunchAgents/com.tm-exclusions.weekly.plist
 
 ## 🔎 Current behavior notes
 
-- In non-interactive runs without cached/passwordless sudo (`sudo -n`), system paths are not silently skipped: each one is recorded as a privilege-blocked entry in the report and counted, so the run exits non-zero (see [Results and exit codes](#results-and-exit-codes)). No blocking prompt is ever shown. Privileged exclusions such as `/private/var/folders` use `sudo tmutil addexclusion -p` when credentials are available.
+- Status checks, including dry-run and report-only, read system paths with unprivileged `tmutil isexcluded`. In non-interactive runs without cached/passwordless sudo (`sudo -n`), each required system-path change is recorded as a privilege-blocked entry in the report and counted, so the run exits non-zero (see [Results and exit codes](#results-and-exit-codes)). No blocking prompt is ever shown. Privileged exclusions such as `/private/var/folders` use `sudo tmutil addexclusion -p` when credentials are available.
 - Report disk-usage uses `du -sk` and ignores permission-denied children, so partially-readable trees like `/private/var/folders` cannot abort a run under `set -euo pipefail`.
 - Verbose runs show a right-aligned, human-readable size (e.g. `1.0G`) next to each processed path; missing or unreadable paths show `-` without failing, and the summary/report gain a cumulative `Disk usage total:` line. Each path is measured once (`du -sk`) and the report reuses that measurement, so trees are never walked twice. `--quiet` adds no per-path lines; `TM_EXCLUSIONS_SKIP_DU=1` disables the size column as well.
-- Reports include a rule summary, separate missing-path and privilege-blocked counts, and an explicit `tmutil listexclusions` status (`ok`, `empty`, `failed`, or `unavailable`).
-- `--uninstall` removes exclusions matching current configured static rules, dynamic matches, and discovered extra paths. It also drops retired catalog paths that are still excluded (today: the former `$HOME/Library/Developer/CoreSimulator` parent).
-- Apply and `--dry-run` drop that same retired parent exclusion when `tmutil` still has it, then add the granular CoreSimulator subdirs. Manual equivalent: `tmutil removeexclusion "$HOME/Library/Developer/CoreSimulator"`.
+- Reports include a rule summary, separate missing-path and privilege-blocked counts.
+- `--uninstall` removes exclusions matching current configured static rules, dynamic matches, and discovered extra paths. It also drops retired catalog paths that are still excluded (today: the former `$HOME/Library/Developer/CoreSimulator` parent, and `$HOME/.gradle`, which the `.gradle` pattern used to match as a whole).
+- Apply and `--dry-run` drop those same retired exclusions when `tmutil` still has them, then add the granular rules (CoreSimulator subdirs, `~/.gradle/caches` and `~/.gradle/wrapper`); `--dry-run` only reports the removal. A retired path you still exclude with your own `path` rule is not migrated (`--uninstall` still removes it, like any static rule), and a `keep` rule below a retired path never blocks its removal. Manual equivalent: `tmutil removeexclusion "$HOME/Library/Developer/CoreSimulator"` and `tmutil removeexclusion "$HOME/.gradle"`.
 - Dynamic scan depth is intentionally capped to `find -maxdepth 6`.
 - Default stdout shows grouped results and counters. `--verbose` adds per-path status lines; in plain output it also prints the full report. `--quiet` continues to print the full report without status lines and takes precedence over `--verbose`. The full report is always saved.
 - On non-macOS or without `tmutil`, behavior is simulated (useful for tests).

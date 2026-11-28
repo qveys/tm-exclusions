@@ -702,7 +702,7 @@ fi
 
 # Distinct #@ category labels == EXPECTED_CATEGORY_COUNT. Single source of the
 # number; scripts/add-category.sh bumps this exact line when it adds a category.
-EXPECTED_CATEGORY_COUNT=17 # add-category: expected category count
+EXPECTED_CATEGORY_COUNT=18 # add-category: expected category count
 LABEL_COUNT=$({ grep -E '^#@' "${CONF}" || true; } | sort -u | wc -l | tr -d ' ')
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ "${LABEL_COUNT}" -eq "${EXPECTED_CATEGORY_COUNT}" ]]; then
@@ -1257,16 +1257,19 @@ assert_eq 42 "$(du_total_kb)" \
     "du_total_kb skips a path deleted after measurement — same source as the report (#77 review)"
 
 # Run-3 review: the cumulative total must be computed ONCE and handed to the
-# summary. A tmutil stub deletes the beta cache during `listexclusions` — i.e.
-# between the report total and the interactive summary — and report must equal
-# summary (red on d251be7e where ui_summary recomputed du_total_kb).
+# summary. A `hostname` stub deletes the beta cache while generate_report
+# assembles the report header (`Host: $(hostname)`) — i.e. after the total is
+# computed and before the interactive summary — and report must equal summary
+# (red on d251be7e where ui_summary recomputed du_total_kb).
 SZ_TM_BIN="$(mktemp -d "${TEST_HOME}/sz-tm.XXXXXX")"
-cat > "${SZ_TM_BIN}/tmutil" << EOF
+SZ_HOST_RAN="${SZ_TM_BIN}/hostname.ran"
+cat > "${SZ_TM_BIN}/hostname" << EOF
 #!/bin/sh
-if [ "\$1" = listexclusions ]; then rm -rf "${SZ_HOME}/caches/beta"; fi
-exit 0
+rm -rf "${SZ_HOME}/caches/beta"
+: > "${SZ_HOST_RAN}"
+echo stub-host
 EOF
-chmod +x "${SZ_TM_BIN}/tmutil"
+chmod +x "${SZ_TM_BIN}/hostname"
 SZ_ALPHA="${SZ_HOME}/caches/alpha"
 SZ_BETA="${SZ_HOME}/caches/beta"
 mkdir -p "${SZ_ALPHA}" "${SZ_BETA}"
@@ -1320,14 +1323,16 @@ SZ_OLD_PATH="${PATH}"
 PATH="${SZ_TM_BIN}:${PATH}"
 TM_EXCLUSIONS_REPORT="${SZ_REPORT}" generate_report > "${SZ_SUMMARY}" 2>&1 || true
 PATH="${SZ_OLD_PATH}"
+assert_true "tree mutation point ran after the total (hostname stub invoked, beta removed)" \
+    test -f "${SZ_HOST_RAN}" -a ! -e "${SZ_BETA}"
 assert_file_contains "${SZ_REPORT}" "Total (sum of du -sk, KiB): 150" \
-    "report total is computed before tmutil listexclusions (#77 run-3)"
+    "report total is computed before the tree changes (#77 run-3)"
 assert_file_contains "${SZ_REPORT}" "Disk usage total: 150K" \
     "report carries the formatted cumulative total (#45)"
 assert_file_contains "${SZ_SUMMARY}" "Disk usage total: 150K" \
     "interactive summary reuses the precomputed total — report == summary (#77 run-3)"
 assert_file_lacks_regex "${SZ_SUMMARY}" 'Disk usage total: 100K' \
-    "summary never recomputes the total after listexclusions (#77 run-3)"
+    "summary never recomputes the total after the tree changes (#77 run-3)"
 rm -rf "${SZ_TM_BIN}"
 
 rm -rf "${SZ_BIN}" "${SZ_HOME}"
@@ -2065,8 +2070,24 @@ init_ui
 UI=1
 UI_CYAN=$(printf "\033[36m")
 UI_RESET=$(printf "\033[0m")
+UI_HEADING=$(printf "\033[1;35m")
+ui_section "📁" "Section" > "$3/heading"
+ui_category "Category" >> "$3/heading"
+grep -Fq "$UI_HEADING  ━━ 📁  Section$UI_RESET" "$3/heading"
+grep -Fq "${UI_HEADING}══ Category ══$UI_RESET" "$3/heading"
 progress_start "$(printf "one\ntwo")" > "$3/progress"
 progress_step >> "$3/progress"
+start_activity "Measuring" > "$3/counted-activity"
+sleep 2
+clear_progress >/dev/null
+grep -Eq "50%  1/2.*Measuring.*[1-9]s" "$3/counted-activity"
+SCAN_COLUMNS=22
+progress_draw >/dev/null
+start_activity "Measuring directory" > "$3/narrow"
+sleep 2
+clear_progress >/dev/null
+grep -Eq "50%.*[1-9]s .*ry" "$3/narrow"
+SCAN_COLUMNS=80
 progress_step >> "$3/progress"
 grep -q "100%  2/2" "$3/progress"
 [[ "$UI_PROGRESS" -eq 0 ]]
@@ -2116,10 +2137,33 @@ collect_post_scan_paths > "$3/live-discovery"
 [[ "$EXTRA_PATHS" = "$expected" && "$UI_PROGRESS" -eq 0 ]]
 grep -q "project with spaces/subdir" "$3/live-discovery"
 [[ "$(wc -l < "$3/live-discovery" | tr -d " ")" = 0 ]]
+printf "%s\n" "$HOME/repo/node_modules" > "$3/scan-results"
+start_activity "$MSG_SCANNING" "$HOME" "$3/scan-results" > "$3/activity"
+sleep 2
+clear_progress > /dev/null
+[[ -z "$UI_ACTIVITY_PID" && "$UI_PROGRESS" -eq 0 ]]
+grep -q "Last match ~/repo/node_modules" "$3/activity"
+grep -Eq "[1-9][0-9]*s" "$3/activity"
+UI=0
+start_activity "$MSG_UI_MEASURE" > "$3/activity-plain"
+[[ ! -s "$3/activity-plain" && -z "$UI_ACTIVITY_PID" ]]
+UI=1
+SCAN_COLUMNS=22
+show_scan_path "$HOME/repo/node_modules" "1s · Last match " "1s " > "$3/narrow-match"
+grep -q "1s .*ules" "$3/narrow-match"
+SCAN_COLUMNS=15
+show_scan_path "$HOME/repo/node_modules" "1s · Last match " "1s " > "$3/tiny-match"
+grep -q "1s" "$3/tiny-match"
 SCAN_COLUMNS=30
 show_scan_path "$HOME/a very long directory name/with-tail" > "$3/short-discovery"
 grep -q "with-tail" "$3/short-discovery"
-[[ "$(wc -c < "$3/short-discovery" | tr -d " ")" -lt 30 ]]
+frame=$(cat "$3/short-discovery")
+begin=$(printf "\r\033[2K\033[?7l")
+end=$(printf "\r\033[?7h")
+[[ "$frame" == "$begin"*"$end" ]]
+visible=${frame#"$begin"}
+visible=${visible%"$end"}
+[[ ${#visible} -lt 30 ]]
 clear_progress > /dev/null
 UI=0
 for ((i=0; i<55; i++)); do mkdir "$HOME/image-$i.sparsebundle"; done
@@ -2165,6 +2209,7 @@ exit 0
 STUB
 cat > "$BATCH_BIN/sudo" <<'STUB'
 #!/bin/sh
+touch "$HOME/sudo-called"
 exit 1
 STUB
 chmod +x "$BATCH_BIN/"*
@@ -2278,16 +2323,23 @@ assert_eq 1 "$BATCH_RC" "grouped status failures still exit nonzero"
 assert_file_contains "$BATCH_HOME/errors-err" \
     "Unable to determine Time Machine exclusion status: $BATCH_HOME/already/cache" \
     "grouping keeps actionable errors on stderr"
-if [[ -d /Applications ]]; then
-    printf '%s\n' 'path|/Applications|system applications' >> "$BATCH_HOME/rules"
-    BATCH_RC=0
-    "${BATCH_ENV[@]}" bash "$TM_EXCLUSIONS" --dry-run \
-        < /dev/null > "$BATCH_HOME/system-out" 2> "$BATCH_HOME/system-err" || BATCH_RC=$?
-    assert_eq 1 "$BATCH_RC" "system privilege skips still exit nonzero"
-    assert_file_contains "$BATCH_HOME/system-err" \
-        'Skipping (non-interactive / no sudo cache) for system path: /Applications' \
-        "grouping keeps system-path skips individually visible"
-fi
+# A sibling of the temporary HOME exercises system-path handling on every OS.
+system_cache="$TEST_HOME/system-cache"
+mkdir -p "$system_cache"
+printf 'path|%s|system cache\n' "$system_cache" >> "$BATCH_HOME/rules"
+for mode in --dry-run --report-only; do
+    batch_run "$BATCH_HOME/system-out" "$mode" </dev/null
+    case "$mode" in --dry-run) result=WOULD ;; --report-only) result="NEED " ;; esac
+    assert_file_contains "$BATCH_HOME/report" "$result $system_cache" "system path is inspected in $mode"
+    assert_true "$mode never invokes sudo" test ! -e "$BATCH_HOME/sudo-called"
+done
+BATCH_RC=0
+"${BATCH_ENV[@]}" bash "$TM_EXCLUSIONS" \
+    < /dev/null > "$BATCH_HOME/system-out" 2> "$BATCH_HOME/system-err" || BATCH_RC=$?
+assert_eq 1 "$BATCH_RC" "system writes without privileges still exit nonzero"
+assert_file_contains "$BATCH_HOME/system-err" \
+    "Skipping (non-interactive / no sudo cache) for system path: $system_cache" \
+    "grouping keeps system-path skips individually visible"
 
 # ---- Summary ----
 test_summary

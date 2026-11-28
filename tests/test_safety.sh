@@ -69,7 +69,10 @@ keep|~/project/cache/saved/|precious state
 keep|~/brew-cache|retain brew cache
 keep|~/disks/private.sparsebundle|VM data
 CONF
+photo="$HOME/Pictures/Family Archive.photoslibrary"
+mkdir -p "$photo/resources/cache" "$photo/resources/private.sparsebundle"
 run 0
+assert_true "neither discovery scan processes Photos library contents" not grep -Fq "$photo/" "$TEST_CALLS"
 assert_file_contains "$TEST_CALLS" "addexclusion $HOME/project/other/cache" \
     "regenerable cache outside keep is excluded"
 assert_file_contains "$TEST_CALLS" "addexclusion $HOME/disks/public.sparsebundle" \
@@ -80,9 +83,10 @@ assert_file_contains "$TM_EXCLUSIONS_REPORT" 'Summary by rule' "report includes 
 assert_file_contains "$TM_EXCLUSIONS_REPORT" \
     "$(printf '\t%s:5 | pattern|cache | regenerable cache' "$TM_EXCLUSIONS_DEFAULT_CONF")" \
     "rule summary attributes the dynamic match to its config line"
-assert_file_contains "$TM_EXCLUSIONS_REPORT" \
-    'tmutil listexclusions (first 500 lines; status: empty)' \
-    "report states the listexclusions status"
+assert_file_lacks_regex "$TM_EXCLUSIONS_REPORT" 'tmutil listexclusions|status: (ok|empty|failed|unavailable)' \
+    "report has no tmutil listing section (that verb does not exist)"
+assert_eq 0 "$(cut -d' ' -f1 "$TEST_CALLS" | grep -Evc '^(addexclusion|removeexclusion|isexcluded)$' || true)" \
+    "tmutil is never invoked with a verb other than addexclusion/removeexclusion/isexcluded"
 assert_file_contains "$TM_EXCLUSIONS_REPORT" "KEEP  $HOME/project (protected by keep" \
     "keep blocks the broad parent exclusion"
 run 0 --report-only
@@ -327,6 +331,7 @@ unset TEST_STATUS TEST_MUTATE_EXIT
 # Partial discovery retains its results and records failure in the persisted report.
 cat > "$TEST_DIR/bin/find" <<'STUB'
 #!/bin/sh
+printf 'find: unreadable fixture: Permission denied\n' >&2
 case "$*" in
     *-print0*) printf '%s\000' "$HOME/disks/private.sparsebundle" ;;
     *) printf '%s\n' "$HOME/project/other/cache" ;;
@@ -334,10 +339,11 @@ esac
 exit 1
 STUB
 chmod +x "$TEST_DIR/bin/find"
-for config in 'pattern|cache|cache reason' 'setting|scan_images|true'; do
+for config in $'pattern|cache|cache reason\npattern|other|other reason' 'setting|scan_images|true'; do
     printf '%s\n' "$config" > "$TM_EXCLUSIONS_DEFAULT_CONF"
     run 1 --dry-run
-    assert_file_contains "$TM_EXCLUSIONS_REPORT" 'Incomplete scan:' \
+    assert_eq 1 "$(grep -c '^ERROR Incomplete scan:' "$TM_EXCLUSIONS_REPORT")" "one error per traversal"
+    assert_file_contains "$TM_EXCLUSIONS_REPORT" 'unreadable fixture: Permission denied' \
         "partial scan failure is reported ($config)"
     assert_file_contains "$TM_EXCLUSIONS_REPORT" 'WOULD ' \
         "partial scan results are still planned ($config)"
@@ -446,12 +452,46 @@ assert_true "root keep blocks everything" keep_blocks "$HOME/project"
 CONF_PATHS="" CONF_PATTERNS="" CONF_RULES="" CONF_KEEPS=""
 source "$ROOT/locales/en.sh"
 declare_i18n_en
+# Path globs expand at load time: give the nvm rules one installed version.
+mkdir -p "$HOME/.nvm/versions/node/v22.1.0/lib" "$HOME/.nvm/versions/node/v22.1.0/bin" \
+    "$HOME/.nvm/versions/node/v22.1.0/etc"
+touch "$HOME/.nvm/versions/node/v22.1.0/etc/npmrc"
+jb="$HOME/Library/Application Support/JetBrains"
+mkdir -p "$jb/IntelliJIdea2026.3/plugins" "$jb/WebStorm2026.2/plugins" "$jb/Toolbox/plugins/ssh"
 parse_config_file "$ROOT/config/default.conf"
-for target in /opt/homebrew "$HOME/.pulumi" "$HOME/Library/Developer/Xcode/Archives" \
+for target in "$jb/Toolbox/plugins" /opt/homebrew "$HOME/.pulumi" "$HOME/Library/Developer/Xcode/Archives" \
     "$HOME/Library/Containers/com.docker.docker" "$HOME/Library/Developer/CoreSimulator/Devices"; do
     assert_true "catalog does not ship $target" \
         not grep -Fxq "$target" <<<"$CONF_PATHS"
 done
+# Focused regenerable subtrees ship by default; their mixed parents stay opt-in.
+for target in "$jb/IntelliJIdea2026.3/plugins" "$jb/WebStorm2026.2/plugins" \
+    "$HOME/.cache/npm/_cacache" "$HOME/.cache/npm/_npx" "$HOME/.local/share/pnpm/store" \
+    "$HOME/.local/share/gradle/caches" "$HOME/.local/share/gradle/wrapper" \
+    "$HOME/.bun/install/cache" "$HOME/.nvm/.cache" "$HOME/.cache/uv" \
+    "$HOME/.local/share/uv/python" "$HOME/.local/share/uv/tools" \
+    "$HOME/Library/pnpm/store" "$HOME/Library/Android/sdk" /opt/homebrew/Cellar \
+    /opt/homebrew/Caskroom /usr/local/Cellar /usr/local/Caskroom \
+    "$HOME/Library/Application Support/Code/CachedData"; do
+    assert_true "catalog ships $target" \
+        grep -Fxq "$target" <<<"$CONF_PATHS"
+done
+for target in "$HOME/.bun" "$HOME/.nvm" "$HOME/.nvm/versions" "$HOME/.local/share/uv" "$HOME/Library/pnpm" \
+    "$HOME/.android/avd" "$HOME/.ollama/models" "$HOME/Library/Application Support/Code"; do
+    assert_true "catalog does not ship $target" \
+        not grep -Fxq "$target" <<<"$CONF_PATHS"
+done
+# nvm: only per-version lib/ and bin/ are excluded; etc/npmrc (global npm
+# config, possibly an auth token) stays in backups.
+assert_eq ".nvm/.cache .nvm/versions/node/v22.1.0/bin .nvm/versions/node/v22.1.0/lib " \
+    "$(grep -F "/.nvm/" <<<"$CONF_PATHS" | sed "s|^$HOME/||" | LC_ALL=C sort | tr '\n' ' ')" \
+    "catalog excludes nvm lib/bin per version and never etc/npmrc"
+hf="$HOME/.cache/huggingface"
+vm="$HOME/Library/Application Support/Claude/vm_bundles"
+assert_eq "$(printf '%s\n' "$hf/hub" "$hf/xet")" "$(grep -F "$hf" <<<"$CONF_PATHS" | LC_ALL=C sort)" \
+    "Hugging Face rules cover only downloaded caches"
+assert_eq "$vm/claudevm.bundle/rootfs.img" "$(grep -F "$vm" <<<"$CONF_PATHS")" \
+    "Claude VM rule covers only the base image"
 for pattern in .codex .auto-claude worktrees build dist; do
     assert_true "catalog does not ship the $pattern pattern" \
         not grep -Fxq "$pattern" <<<"$CONF_PATTERNS"

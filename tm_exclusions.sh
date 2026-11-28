@@ -68,7 +68,6 @@ REPORT_LINES=""
 # Same detail lines as REPORT_LINES, as "<category>\t<line>" records for grouping.
 REPORT_GROUPED=""
 RULE_SUMMARY="" # Rule context events, counted once at report generation.
-TM_LIST_STATUS="not-run"
 # Paths discovered after config (brew cache, large VM images); newline-separated
 EXTRA_PATHS=""
 # Normalized existing paths; deduplicated once for the optional du summary
@@ -175,24 +174,38 @@ load_i18n() {
 # Presentation is terminal-only; reports, pipes and debug logs stay plain.
 UI=0
 UI_PROGRESS=0
+UI_ACTIVITY_PID=""
+SCAN_COLUMNS=80
 UI_DONE=0
 UI_TOTAL=0
+UI_METER=""
 UI_RESET=""
 UI_CYAN=""
+UI_HEADING=""
 UI_GREEN=""
 UI_DIM=""
 
 init_ui() {
     if [[ -t 1 && "${TERM:-dumb}" != "dumb" && -z "${NO_COLOR:-}" && "${QUIET}" -eq 0 ]]; then
         UI=1
+        # Read the width of stdout itself, including a tmux pane.
+        { SCAN_COLUMNS="$(stty size <&3 2>/dev/null || true)"; } 3>&1
+        SCAN_COLUMNS="${SCAN_COLUMNS##* }"
+        case "$SCAN_COLUMNS" in ''|0|*[!0-9]*) SCAN_COLUMNS=80 ;; esac
         UI_RESET=$'\033[0m'
         UI_CYAN=$'\033[1;36m'
+        UI_HEADING=$'\033[1;35m'
         UI_GREEN=$'\033[32m'
         UI_DIM=$'\033[2m'
     fi
 }
 
 clear_progress() {
+    if [[ -n "${UI_ACTIVITY_PID:-}" ]]; then
+        kill "$UI_ACTIVITY_PID" 2>/dev/null || true
+        wait "$UI_ACTIVITY_PID" 2>/dev/null || true
+        UI_ACTIVITY_PID=""
+    fi
     if [[ "${UI_PROGRESS}" -eq 1 ]]; then
         printf '\r\033[2K'
         UI_PROGRESS=0
@@ -200,20 +213,54 @@ clear_progress() {
 }
 
 ui_section() {
+    UI_METER=""
     clear_progress
     if [[ "${UI}" -eq 1 ]]; then
-        printf '\n%s  %s  %s%s\n\n' "$UI_CYAN" "$1" "$2" "$UI_RESET"
+        printf '\n%s  ━━ %s  %s%s\n\n' "$UI_HEADING" "$1" "$2" "$UI_RESET"
     else
         log_info ""
         log_info "$2"
     fi
 }
 
+# Counted stages cache their bar. Unknown totals use a moving marker.
+prepare_status() {
+    local meter="$UI_METER"
+    if [[ -z "$meter" ]]; then
+        local track="...." pos=$((SECONDS % 4))
+        meter="[${track:0:pos}=${track:pos+1}]"
+    fi
+    if [[ -n "$UI_METER" ]]; then
+        STATUS_COLUMNS=$((SCAN_COLUMNS - UI_METER_WIDTH - 4))
+    else
+        STATUS_COLUMNS=$((SCAN_COLUMNS - ${#meter} - 4))
+    fi
+    STATUS_PREFIX="  $UI_CYAN$meter$UI_RESET "
+}
+
+# A pane may shrink between sizing and drawing. Disable automatic wrapping
+# for this frame and restore it in the same write.
+draw_status() {
+    printf '\r\033[2K\033[?7l%s%s\r\033[?7h' "$STATUS_PREFIX" "${1:-}"
+    UI_PROGRESS=1
+}
+
 # Reserve two cells per character so wide Unicode paths cannot wrap the status.
 show_scan_path() {
     [[ "${UI}" -eq 1 ]] || return 0
-    local display="$1" width=$(((SCAN_COLUMNS - 6) / 2))
-    [[ "$width" -gt 3 ]] || return 0
+    local display="$1" prefix="${2:-}" compact_prefix="${3:-}"
+    prepare_status
+    if (( ${#prefix} + 6 > STATUS_COLUMNS )); then prefix="$compact_prefix"; fi
+    local width=$(((STATUS_COLUMNS - ${#prefix}) / 2))
+    # Printable ASCII occupies one cell per character.
+    local ascii='^[ -~]*$'
+    if [[ "$display" =~ $ascii ]]; then width=$((STATUS_COLUMNS - 2 - ${#prefix})); fi
+    if (( width <= 0 )); then
+        prefix="${prefix% }"
+        if (( ${#prefix} > STATUS_COLUMNS )); then prefix=""; fi
+        draw_status "$UI_DIM$prefix$UI_RESET"
+        return 0
+    fi
     # Literal home abbreviation for display only.
     # shellcheck disable=SC2088
     case "$display" in
@@ -222,10 +269,51 @@ show_scan_path() {
     esac
     display="${display//[[:cntrl:]]/?}"
     if [[ "${#display}" -gt "$width" ]]; then
-        display="…${display: -$((width - 1))}"
+        if (( width == 1 )); then display="…"; else display="…${display: -$((width - 1))}"; fi
     fi
-    printf '\r\033[2K  %s› %s%s' "$UI_DIM" "$display" "$UI_RESET"
-    UI_PROGRESS=1
+    draw_status "$UI_DIM$prefix$display$UI_RESET"
+}
+
+# Keep blocking commands in the foreground. Only the elapsed-time display runs
+# in the background, and clear_progress joins it before the next output.
+start_activity() {
+    [[ "$UI" -eq 1 ]] || return 0
+    clear_progress
+    local label="$1" path="${2:-}" results="${3:-}" latest elapsed started=$SECONDS
+    if [[ -n "$path" ]]; then
+        # shellcheck disable=SC2088
+        case "$path" in
+            "$HOME") path="~" ;;
+            "$HOME/"*) path="~/${path#"$HOME/"}" ;;
+        esac
+        label="$label ${path//[[:cntrl:]]/?}"
+    fi
+    prepare_status
+    local width=$(((STATUS_COLUMNS - 8) / 2))
+    if (( width < 4 )); then width=4; fi
+    local full_label="$label"
+    if (( ${#label} > width )); then
+        local half=$(((width - 1) / 2))
+        label="${label:0:half}…${label: -half}"
+    fi
+    draw_status "$UI_DIM$label$UI_RESET"
+    (
+        while sleep 1; do
+            elapsed=$((SECONDS - started))
+            if [[ -n "$results" && -s "$results" ]]; then
+                latest="$(tail -n 1 "$results")"
+                show_scan_path "$latest" "${elapsed}s · $MSG_UI_LAST_MATCH " "${elapsed}s "
+                continue
+            fi
+            if (( SCAN_COLUMNS < 36 )); then
+                show_scan_path "$full_label" "${elapsed}s " "${elapsed}s "
+            else
+                prepare_status
+                draw_status "$UI_DIM$label · ${elapsed}s$UI_RESET"
+            fi
+        done
+    ) &
+    UI_ACTIVITY_PID=$!
 }
 
 progress_start() {
@@ -237,15 +325,21 @@ progress_start() {
 
 progress_draw() {
     [[ "${UI}" -eq 1 && "${UI_TOTAL}" -gt 0 ]] || return 0
-    local filled=$((UI_DONE * 20 / UI_TOTAL)) bar="" i
-    for ((i=0; i<20; i++)); do
+    local cells=20 bar="" i
+    if (( SCAN_COLUMNS < 60 )); then cells=6; fi
+    if (( SCAN_COLUMNS < 36 )); then cells=3; fi
+    local filled=$((UI_DONE * cells / UI_TOTAL))
+    for ((i=0; i<cells; i++)); do
         if [[ "$i" -lt "$filled" ]]; then bar="${bar}━"; else bar="${bar}·"; fi
     done
-    printf '\r\033[2K  %s%s%s %3d%%  %d/%d' "$UI_CYAN" "$bar" "$UI_RESET" \
-        "$((UI_DONE * 100 / UI_TOTAL))" "$UI_DONE" "$UI_TOTAL"
-    UI_PROGRESS=1
+    printf -v UI_METER ' %3d%%  %d/%d' "$((UI_DONE * 100 / UI_TOTAL))" "$UI_DONE" "$UI_TOTAL"
+    if (( SCAN_COLUMNS < 36 )); then UI_METER=" $((UI_DONE * 100 / UI_TOTAL))%"; fi
+    UI_METER_WIDTH=$((cells + ${#UI_METER}))
+    UI_METER="$bar$UI_METER"
+    if [[ "$#" -gt 0 ]]; then show_scan_path "$1"; else prepare_status; draw_status; fi
     if [[ "${UI_DONE}" -eq "${UI_TOTAL}" ]]; then
         printf '\n'
+        UI_METER=""
         UI_PROGRESS=0
     fi
 }
@@ -272,16 +366,16 @@ ui_summary() {
     printf '  %s %s\n' "$MSG_REPORT_CHECKED" "$TOTAL_CHECKED"
     printf '  %s%s %s%s\n' "$UI_GREEN" "$1" "$TOTAL_EXCLUDED" "$UI_RESET"
     printf '  %s %s\n' "$MSG_REPORT_ALREADY" "$TOTAL_ALREADY"
-    printf '  %s%s %s%s\n' "$UI_DIM" "$MSG_REPORT_SKIPPED" "$TOTAL_SKIPPED" "$UI_RESET"
+    printf '\n  %s%s %s%s\n' "$UI_DIM" "$MSG_REPORT_SKIPPED" "$TOTAL_SKIPPED" "$UI_RESET"
     printf '  %s %s\n' "$MSG_REPORT_NOT_FOUND" "$TOTAL_NOT_FOUND"
     printf '  %s %s\n' "$MSG_REPORT_ERRORS" "$TOTAL_ERRORS"
     printf '  %s %s\n' "$MSG_REPORT_BLOCKED" "$TOTAL_BLOCKED"
     # Cumulative disk usage of the paths touched in this run (#45). The total is
     # computed once by generate_report and passed in as $2 — never recomputed
     # here — so the summary always matches the report even if a path disappears
-    # while tmutil listexclusions runs between the two.
+    # while the report is being written between the two.
     if [[ -n "${2:-}" ]]; then
-        printf '  %s %s\n' "$MSG_REPORT_SIZE_TOTAL" "$2"
+        printf '\n  %s %s\n' "$MSG_REPORT_SIZE_TOTAL" "$2"
     fi
     if [[ -n "${4:-}" ]]; then
         printf '  %s%s %s%s\n' "$UI_GREEN" "$3" "$4" "$UI_RESET"
@@ -315,7 +409,7 @@ log_info() {
                 *"${MSG_REMOVING}"*) color="$UI_CYAN"; icon="↩" ;;
                 *"${MSG_REPORT_SAVED}"*|*"${MSG_REPORT_DESKTOP_COPY}"*) color="$UI_CYAN"; icon="📄" ;;
             esac
-            printf '  %s%s %s%s\n' "$color" "$icon" "$*" "$UI_RESET"
+            printf '  %s%s %s%s\n\n' "$color" "$icon" "$*" "$UI_RESET"
         else
             printf '%s\n' "$*"
         fi
@@ -336,7 +430,7 @@ ui_category() {
     [[ "${QUIET}" -eq 0 ]] || return 0
     clear_progress
     if [[ "${UI}" -eq 1 ]]; then
-        printf '\n  %s══ %s ══%s\n' "$UI_CYAN" "$1" "$UI_RESET"
+        printf '\n  %s══ %s ══%s\n' "$UI_HEADING" "$1" "$UI_RESET"
         if [[ "${DEBUG_LOG_FD}" -eq 1 ]]; then
             echo "══ $1 ══" >&5 2>/dev/null || true
         fi
@@ -915,7 +1009,9 @@ path_size_column() {
         # must not walk the same tree again (#45).
         if ! szk="$(du_size_lookup "$np")"; then
             # "mark": remember a partial (du exited non-zero) measurement.
+            if [[ "$UI" -eq 1 ]]; then start_activity "$MSG_UI_MEASURE" "$p"; fi
             szk="$(du_size_kb "$np" mark)"
+            if [[ "$UI" -eq 1 ]]; then clear_progress; prepare_status; draw_status; fi
             du_size_record "$np" "$szk"
             case "$szk" in
                 *'!') szk="${szk%!}" ;;
@@ -1369,6 +1465,60 @@ pattern_match_allowed() {
             esac
             return 1
             ;;
+        .gradle)
+            # Earlier versions excluded every match: --uninstall must still
+            # reach them (removing an exclusion never loses data).
+            [[ "${MODE}" = "uninstall" ]] && return 0
+            # The Gradle user home holds gradle.properties (signing
+            # credentials, tokens) and init.d scripts; its caches/ and
+            # wrapper/ are covered by static rules. Never the whole tree,
+            # even when $HOME itself is a Gradle project.
+            [[ "$dir" = "${HOME}/.gradle" ]] && return 1
+            # Project-level Gradle cache only: it sits next to a build or
+            # settings script, or the wrapper.
+            if [[ -f "${parent}/settings.gradle" \
+                || -f "${parent}/settings.gradle.kts" \
+                || -f "${parent}/build.gradle" \
+                || -f "${parent}/build.gradle.kts" \
+                || -f "${parent}/gradlew" ]]; then
+                return 0
+            fi
+            return 1
+            ;;
+        venv|virtualenv)
+            # These names collide with real source trees (CPython's Lib/venv,
+            # the virtualenv package, the oh-my-zsh `virtualenv` plugin). A
+            # real environment has pyvenv.cfg (venv, virtualenv >= 20) or
+            # bin/activate (legacy virtualenv). Earlier versions excluded
+            # every match, so --uninstall still reaches the look-alikes.
+            [[ "${MODE}" = "uninstall" ]] && return 0
+            if [[ -f "${dir}/pyvenv.cfg" || -f "${dir}/bin/activate" ]]; then
+                return 0
+            fi
+            return 1
+            ;;
+        Pods)
+            # CocoaPods installs next to the Podfile; a bare "Pods" folder
+            # elsewhere is someone's data. Earlier versions excluded every
+            # match, so --uninstall still reaches them.
+            [[ "${MODE}" = "uninstall" ]] && return 0
+            if [[ -f "${parent}/Podfile" || -f "${parent}/Podfile.lock" ]]; then
+                return 0
+            fi
+            return 1
+            ;;
+        .output)
+            # Nuxt / Nitro build output sits at the root of a JS project. The
+            # name alone is too generic, and a package.json only proves an npm
+            # project, which may keep user data under .output: require the
+            # Nitro build marker. Earlier versions excluded every match, so
+            # --uninstall still reaches them.
+            [[ "${MODE}" = "uninstall" ]] && return 0
+            if [[ -f "${dir}/nitro.json" ]]; then
+                return 0
+            fi
+            return 1
+            ;;
         *)
             return 0
             ;;
@@ -1449,15 +1599,7 @@ tm_is_excluded() {
     local path="$1"
     if [[ "${HAS_TMUTIL}" -eq 1 ]]; then
         local result=""
-        if path_under_home "$path"; then
-            result="$(tmutil isexcluded "$path" 2>/dev/null)" || return 2
-        else
-            if ! privileged_tmutil_ok "$path"; then
-                return 2
-            fi
-            sudo_prepare_for_path "$path"
-            result="$(sudo tmutil isexcluded "$path" 2>/dev/null)" || return 2
-        fi
+        result="$(tmutil isexcluded "$path" 2>/dev/null)" || return 2
         case "$result" in
             *"[Excluded]"*) return 0 ;;
             *"[Included]"*) return 1 ;;
@@ -1977,10 +2119,6 @@ process_path() {
         add_report_line "SKIP  ${path} (not found)"
         return 0
     fi
-    if cannot_privileged_tmutil "$path"; then
-        record_blocked "$MSG_SKIP_PRIVILEGED $path"
-        return 0
-    fi
     local forced_missing=0
     if [[ ! -e "$path" && "$MODE" = uninstall && "$FORCE" -eq 1 ]]; then
         forced_missing=1
@@ -2014,6 +2152,8 @@ process_path() {
             TOTAL_REMOVED=$((TOTAL_REMOVED + 1))
             log_path_result remove "$path" "  $MSG_DRY_RUN_PREFIX $MSG_REMOVING $(path_suffix "$size_col" "$path")"
             add_report_line "WOULD_REMOVE $path"
+        elif cannot_privileged_tmutil "$path"; then
+            record_blocked "$MSG_SKIP_PRIVILEGED $path"
         elif tm_remove_exclusion "$path"; then
             TOTAL_REMOVED=$((TOTAL_REMOVED + 1))
             log_path_result remove "$path" "  $MSG_REMOVING $(path_suffix "$size_col" "$path")"
@@ -2035,6 +2175,8 @@ process_path() {
         excl_track_path "$path"
         log_path_result apply "$path" "  $MSG_DRY_RUN_PREFIX $MSG_APPLYING $(path_suffix "$size_col" "$path")"
         add_report_line "WOULD $path"
+    elif cannot_privileged_tmutil "$path"; then
+        record_blocked "$MSG_SKIP_PRIVILEGED $path"
     elif tm_add_exclusion "$path"; then
         TOTAL_EXCLUDED=$((TOTAL_EXCLUDED + 1))
         excl_track_path "$path"
@@ -2127,9 +2269,16 @@ scan_root_reachable() {
 # Keep in sync with the case labels of pattern_match_allowed() — a test checks.
 pattern_is_guarded() {
     case "$1" in
-        target|worktrees|site-packages) return 0 ;;
+        target|worktrees|site-packages|.gradle|venv|virtualenv|Pods|.output) return 0 ;;
     esac
     return 1
+}
+
+# Count one failed traversal and include its first filesystem diagnostic.
+record_scan_failure() {
+    local diagnostic=""
+    IFS= read -r diagnostic < "$2" || true
+    record_error "$MSG_SCAN_FAILED $1${diagnostic:+ ($diagnostic)}"
 }
 
 scan_dynamic_patterns() {
@@ -2189,7 +2338,7 @@ EOF
     local all_results
     make_tmp_file all_results all
 
-    progress_start "${CONF_PATTERNS}"
+    start_activity "$MSG_UI_PREPARE_SCAN"
 
     # Single consolidated traversal (#50): build ONE find expression with every
     # configured pattern OR-ed together — \( -name p1 -o -name p2 ... \) — so
@@ -2219,7 +2368,7 @@ EOF
 ${CONF_PATTERNS}
 EOF
     if [[ -n "$uncond_names" || -n "$cond_names" ]]; then
-        set -- "$scan_root" -maxdepth 6
+        set -- "$scan_root" -maxdepth 6 -iname '*.photoslibrary' -prune -o
         local have_group=0 root_glob
         if [[ -n "$prune_roots" ]]; then
             # Zone roots are printed (one skip line each) then pruned.
@@ -2280,22 +2429,17 @@ EOF
         fi
     fi
 
-    local tmp_scan
+    local tmp_scan scan_errors
     make_tmp_file tmp_scan scan
+    make_tmp_file scan_errors scan_errors
     if [[ "$#" -gt 0 ]]; then
-        if ! find "$@" > "$tmp_scan" 2>/dev/null; then
-            # One traversal covers every pattern; on failure, report once per
-            # pattern exactly like the old per-pattern loop did.
+        start_activity "$MSG_SCANNING" "$scan_root" "$tmp_scan"
+        if ! find "$@" > "$tmp_scan" 2>"$scan_errors"; then
             RULE_CONTEXT=""
             RULE_CATEGORY=""
-            local err_pattern
-            while IFS= read -r err_pattern; do
-                [[ -z "$err_pattern" ]] && continue
-                record_error "$MSG_SCAN_FAILED $scan_root ($err_pattern)"
-            done <<EOF
-${CONF_PATTERNS}
-EOF
+            record_scan_failure "$scan_root" "$scan_errors"
         fi
+        clear_progress
     fi
 
     # Tag each discovered directory with every configured pattern whose glob
@@ -2310,9 +2454,13 @@ EOF
     local extglob_was_on=0
     if shopt -q extglob; then extglob_was_on=1; fi
     shopt -u extglob
-    local found_dir base_name
+    local found_dir base_name last_update=-1
     while IFS= read -r found_dir; do
         [[ -z "$found_dir" ]] && continue
+        if [[ "$UI" -eq 1 && "$last_update" -ne "$SECONDS" ]]; then
+            show_scan_path "$found_dir" "$MSG_UI_CLASSIFY "
+            last_update=$SECONDS
+        fi
         # A layer-1 zone root printed by the pruned traversal: one skip entry
         # per zone (its nested matches were never visited).
         if [[ -n "$prune_roots" ]]; then
@@ -2339,26 +2487,32 @@ EOF
     if [[ "$extglob_was_on" -eq 1 ]]; then shopt -s extglob; fi
     rm -f "$tmp_scan"
 
-    # Keep the progress-bar contract: one step per configured pattern.
-    while IFS= read -r pattern_name; do
-        [[ -z "$pattern_name" ]] && continue
-        progress_step
-    done <<EOF
-${CONF_PATTERNS}
-EOF
-
     # Sort by path so that a parent directory precedes its descendants and is
     # therefore kept first; descendants are then dropped by is_covered_by_kept.
     local sorted_results
     make_tmp_file sorted_results sorted
+    start_activity "$MSG_UI_SORT"
     LC_ALL=C sort -t$'\t' -k1,1 "$all_results" > "$sorted_results"
     rm -f "$all_results"
 
+    clear_progress
+    local candidate_count=0 candidate_index=0
+    if [[ "$UI" -eq 1 ]]; then
+        candidate_count="$(wc -l < "$sorted_results")"
+        candidate_count=$((candidate_count))
+        UI_TOTAL=$candidate_count
+    fi
     local line found_dir matched_pattern
     while IFS= read -r line; do
         [[ -z "$line" ]] && continue
         found_dir="${line%%$'\t'*}"
         matched_pattern="${line#*$'\t'}"
+
+        if [[ "$UI" -eq 1 ]]; then
+            candidate_index=$((candidate_index + 1))
+            UI_DONE=$((candidate_index - 1))
+            progress_draw "$found_dir"
+        fi
 
         if [[ "$matched_pattern" = "$prune_marker" ]]; then
             set_rule_context prune "$found_dir"
@@ -2403,6 +2557,8 @@ EOF
 
         process_path "$found_dir"
     done < "$sorted_results"
+    if [[ "$UI" -eq 1 && "$candidate_count" -gt 0 ]]; then progress_step; fi
+    clear_progress
 
     flush_path_results
     rm -f "$sorted_results" "$kept_file"
@@ -2450,18 +2606,43 @@ EOF
     flush_path_results
 }
 
-# Paths previously shipped as path| rules that the catalog no longer excludes.
+# True when $1 is an active static path| rule. A rule written with a trailing
+# slash ($HOME/.gradle/) names the same directory.
+retired_path_is_static_rule() {
+    local static_rule
+    while IFS= read -r static_rule; do
+        [[ -z "$static_rule" ]] && continue
+        [[ "${static_rule%/}" = "$1" ]] && return 0
+    done <<EOF
+${CONF_PATHS}
+EOF
+    return 1
+}
+
+# Removal of a retired exclusion, with keep rules out of the way (see
+# migrate_retired_exclusions). CONF_KEEPS is restored when the function returns.
+remove_retired_exclusion() {
+    local CONF_KEEPS=""
+    remove_exclusion "$1"
+}
+
+# Paths the catalog used to exclude and no longer does: former path| rules, and
+# $HOME/.gradle, which the unguarded `.gradle` pattern matched as a whole.
 # Apply / dry-run / uninstall drop them from tmutil when still present so an
 # upgrade does not keep the old parent exclusion forever. Silent when the
 # path is not currently excluded (simulation mode, fresh install, already migrated).
+# A path the user still excludes with their own path| rule is left to the
+# static pass (kept by apply, removed by --uninstall like any static rule).
+# keep rules never block the removal: dropping a parent exclusion is what a
+# keep on one of its descendants needs.
 migrate_retired_exclusions() {
     local retired_path
     while IFS= read -r retired_path; do
         [[ -z "$retired_path" ]] && continue
-        if [[ ! -e "$retired_path" ]] && [[ "${FORCE}" -eq 0 ]]; then
+        if retired_path_is_static_rule "$retired_path"; then
             continue
         fi
-        if cannot_privileged_tmutil "$retired_path"; then
+        if [[ ! -e "$retired_path" ]] && [[ "${FORCE}" -eq 0 ]]; then
             continue
         fi
         if tm_is_excluded "$retired_path"; then :; else
@@ -2475,9 +2656,13 @@ migrate_retired_exclusions() {
         RULE_CONTEXT="$MSG_RETIRED_EXCLUSION"
         RULE_CATEGORY=""
         log_info "  ${MSG_RETIRED_EXCLUSION} ${retired_path}"
-        remove_exclusion "$retired_path"
+        remove_retired_exclusion "$retired_path"
     done <<EOF
 ${HOME}/Library/Developer/CoreSimulator
+${HOME}/.gradle
+${HOME}/.cache/huggingface
+${HOME}/Library/Application Support/Claude/vm_bundles
+${HOME}/Library/Application Support/JetBrains/Toolbox/plugins
 EOF
 }
 
@@ -2501,13 +2686,8 @@ collect_post_scan_paths() {
     RULE_CONTEXT=""
     RULE_CATEGORY=""
     local line tmp
-    local SCAN_COLUMNS=80
     if [[ "${UI}" -eq 1 ]]; then
-        SCAN_COLUMNS="$(tput cols 2>/dev/null || printf '80')"
-        case "$SCAN_COLUMNS" in
-            ''|*[!0-9]*) SCAN_COLUMNS=80 ;;
-        esac
-        show_scan_path "$MSG_UI_BREW"
+        start_activity "$MSG_UI_BREW"
     fi
 
     if command -v brew >/dev/null 2>&1; then
@@ -2517,8 +2697,11 @@ collect_post_scan_paths() {
         fi
     fi
 
-    if [[ "$CONF_SCAN_IMAGES" -eq 0 ]]; then clear_progress; return 0; fi
+    clear_progress
+    if [[ "$CONF_SCAN_IMAGES" -eq 0 ]]; then return 0; fi
     make_tmp_file tmp disk
+    local image_errors
+    make_tmp_file image_errors image_errors
     # Stream directories and matching images from the same walk, NUL-delimited.
     # VM/disk bundle directories (sparsebundle, UTM, VMware, Parallels) are
     # candidates as a whole, whatever their size, and their contents stay pruned:
@@ -2534,13 +2717,13 @@ collect_post_scan_paths() {
         prune_names+=(-o -name '*.utm' -o -name '*.vmwarevm' -o -name '*.parallels' -o -name '*.pvm')
     fi
     show_scan_path "$HOME"
-    if ! find "$HOME" \( -path '*/Mobile Documents/*' -o -path '*/Library/Mobile Documents/*' \
+    if ! find "$HOME" -iname '*.photoslibrary' -prune -o \( -path '*/Mobile Documents/*' -o -path '*/Library/Mobile Documents/*' \
             -o -path '*/Library/CloudStorage/*' \) -prune -o \
         \( -type d -print0 \( \( "${prune_names[@]}" \) -prune \) \) -o \
         \( -type f \( -name '*.vmdk' -o -name '*.qcow2' -o -name '*.raw' -o -name '*.img' \
             -o -name '*.iso' -o -name '*.ova' \) -size +512M -print0 \) -o \
         \( -type f -name '*.vbox' -print0 \) \
-        2>/dev/null | {
+        2>"$image_errors" | {
             local candidate vbox_dir home_dir="$HOME"
             while [[ "$home_dir" = */ ]]; do home_dir="${home_dir%/}"; done
             while IFS= read -r -d '' candidate; do
@@ -2571,7 +2754,7 @@ collect_post_scan_paths() {
                 printf '%s/\n' "$candidate" >> "$tmp"
             done
         }; then
-        record_error "$MSG_SCAN_FAILED $HOME"
+        record_scan_failure "$HOME" "$image_errors"
     fi
     clear_progress
     # Cap after dedup: sort -u drops exact duplicates and puts each candidate right
@@ -3002,14 +3185,16 @@ generate_report() {
     local report="" console_report=""
     local dry_run_note=""
     local excluded_label="${MSG_REPORT_EXCLUDED}"
-    local inv du_sec size_total_line size_total_disp tm_list out_path path_total path_dirs p szk sh total_k desk_copy raw_list tm_list_rc
+    local inv du_sec size_total_line size_total_disp out_path path_total path_dirs p szk sh total_k desk_copy
     local space_label banner_path report_saved=0 space_line="" tip_path=""
     local stdout_tty=0
     # Evaluated here, in the main shell: inside $(...) stdout is a pipe and
     # [[ -t 1 ]] would always be false.
     [[ -t 1 ]] && stdout_tty=1
 
+    start_activity "$MSG_UI_INVENTORY"
     inv="$(build_inventory_section "$stdout_tty")"
+    clear_progress
     if [[ "${UI}" -eq 1 ]]; then
         ui_print_inventory "$inv"
         ui_section "📝" "$MSG_UI_REPORT"
@@ -3055,7 +3240,7 @@ EOF
         # since their measurement, exactly like the per-path lines above) and
         # passed to ui_summary as $2 — it is never recomputed afterwards, so
         # the report and the interactive summary always agree, even if a path
-        # disappears while tmutil listexclusions runs in between (#45, #77 review).
+        # disappears between this computation and the end-of-run summary (#45, #77 review).
         total_k="$(du_total_kb)"
         size_total_disp="$(format_size_kb "${total_k}")"
         du_sec="${du_sec}
@@ -3120,29 +3305,6 @@ ${inv}"
 Details:
 $(group_report_details)"
     fi
-
-    tm_list=""
-    if [[ "${HAS_TMUTIL}" -eq 1 ]]; then
-        raw_list=""
-        tm_list_rc=0
-        raw_list="$(tmutil listexclusions 2>/dev/null)" || tm_list_rc=$?
-        if [[ "$tm_list_rc" -ne 0 ]]; then
-            TM_LIST_STATUS="failed (exit ${tm_list_rc})"
-            raw_list="${MSG_REPORT_TMLIST_FAILED}"
-        elif [[ -n "$raw_list" ]]; then
-            TM_LIST_STATUS="ok"
-            raw_list="$(printf '%s\n' "$raw_list" | head -n 500)"
-        else
-            TM_LIST_STATUS="empty"
-            raw_list="${MSG_REPORT_TMLIST_EMPTY}"
-        fi
-        tm_list="
-=== tmutil listexclusions (first 500 lines; status: ${TM_LIST_STATUS}) ===
-${raw_list}"
-    else
-        TM_LIST_STATUS="unavailable"
-    fi
-    report="${report}${tm_list}"
 
     report="${report}
 
@@ -3454,7 +3616,7 @@ main() {
     fi
 
     if [[ "${UI}" -eq 1 ]]; then
-        printf '\n%s  🛡️  %s%s  v%s\n' "$UI_CYAN" "$PROGRAM_NAME" "$UI_RESET" "$VERSION"
+        printf '\n%s  🛡️  %s%s  v%s\n' "$UI_HEADING" "$PROGRAM_NAME" "$UI_RESET" "$VERSION"
         printf '  %s\n' "$MSG_HELP_DESC"
         local mode_label="$MSG_UI_APPLY"
         case "$MODE" in
