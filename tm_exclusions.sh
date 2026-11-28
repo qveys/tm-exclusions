@@ -1218,10 +1218,12 @@ pattern_match_allowed() {
             ;;
         .output)
             # Nuxt / Nitro build output sits at the root of a JS project. The
-            # name alone is too generic. Earlier versions excluded every
-            # match, so --uninstall still reaches them.
+            # name alone is too generic, and a package.json only proves an npm
+            # project, which may keep user data under .output: require the
+            # Nitro build marker. Earlier versions excluded every match, so
+            # --uninstall still reaches them.
             [[ "${MODE}" = "uninstall" ]] && return 0
-            if [[ -f "${parent}/package.json" ]]; then
+            if [[ -f "${dir}/nitro.json" ]]; then
                 return 0
             fi
             return 1

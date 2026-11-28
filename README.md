@@ -175,7 +175,7 @@ Config files are loaded, merged, then applied via a dual `tmutil` strategy (user
 | ☕ **Java / JVM** | Maven, Gradle, Ivy and Coursier caches; opt-in SBT root; dynamic `.gradle` (project caches only, never `~/.gradle`) |
 | 🤖 **Android** | Android SDK, tooling cache; emulator images (`~/.android/avd`) are opt-in |
 | 🐹 **Go** | Go module cache, build cache |
-| 💎 **Ruby / iOS** | rbenv; opt-in mixed RVM/gems/CocoaPods roots; dynamic `Pods` (next to a `Podfile`) |
+| 💎 **Ruby / iOS** | rbenv; opt-in mixed RVM/gems/CocoaPods roots; dynamic `Pods` (next to a `Podfile` or `Podfile.lock`) |
 | 🔨 **Xcode / Apple Dev Tools** | DerivedData, DeviceSupport, CoreSimulator Caches/Temp/Volumes; Archives and Devices are opt-in |
 | 🗄️ **macOS Caches** | `~/Library/Caches`, `/private/var/folders`; Logs are opt-in |
 | 🛠️ **Dev Tools** | IDE caches (JetBrains, VS Code), Terraform and kubectl caches; mixed Pulumi/Helm roots are opt-in |

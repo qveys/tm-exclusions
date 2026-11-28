@@ -304,9 +304,13 @@ touch "$G_HOME/py/venv/pyvenv.cfg" "$G_HOME/legacy/virtualenv/bin/activate" \
     "$G_HOME/cpython/Lib/venv/__init__.py" \
     "$G_HOME/omz/plugins/virtualenv/virtualenv.plugin.zsh"
 # CocoaPods install next to its Podfile vs a folder that is merely named Pods;
-# Nuxt/Nitro output at the root of a JS project vs a stray .output directory.
-mkdir -p "$G_HOME/ios/Pods" "$G_HOME/music/Pods" "$G_HOME/web/.output" "$G_HOME/logs/.output"
-touch "$G_HOME/ios/Podfile" "$G_HOME/web/package.json" "$G_HOME/music/Pods/episode.mp3"
+# Nuxt/Nitro output (a Nitro build marker inside .output) vs an npm project
+# whose .output holds user data, vs a stray .output directory.
+mkdir -p "$G_HOME/ios/Pods" "$G_HOME/music/Pods" "$G_HOME/web/.output" \
+    "$G_HOME/logs/.output" "$G_HOME/npm-web/.output"
+touch "$G_HOME/ios/Podfile" "$G_HOME/web/package.json" \
+    "$G_HOME/web/.output/nitro.json" "$G_HOME/npm-web/package.json" \
+    "$G_HOME/npm-web/.output/data.json" "$G_HOME/music/Pods/episode.mp3"
 
 run_scan "$G_HOME" "$G_CONF" guards "$BASH32" 0
 sed 's|^\([a-z]*\) .*/g/|\1 |' "$TEST_DIR/calls.guards" | LC_ALL=C sort > "$TEST_DIR/guards_actual"
@@ -324,6 +328,8 @@ addexclusion web/.output
 EOF
 assert_files_equal "$TEST_DIR/guards_expected" "$TEST_DIR/guards_actual" \
     "guards: project caches, real environments and build outputs only (not ~/.gradle, not look-alikes)"
+assert_eq 0 "$(grep -c 'npm-web/.output' "$TEST_DIR/guards_actual" || true)" \
+    "guards: an npm project .output without the Nitro marker stays backed up"
 
 # Upgrade: an older catalog excluded ~/.gradle as a whole through the
 # unguarded pattern. The retired parent exclusion is dropped...
@@ -367,7 +373,7 @@ rm -f "$G_HOME/.config/tm_exclusions/custom.conf"
 TEST_STUB_EXCLUDED=1 run_scan "$G_HOME" "$G_CONF" guards_uninstall "$BASH32" 0 --uninstall
 sed 's|^\([a-z]*\) .*/g/|\1 |' "$TEST_DIR/calls.guards_uninstall" | LC_ALL=C sort -u > "$TEST_DIR/guards_uninstall_actual"
 for lookalike in .gradle notes/.gradle cpython/Lib/venv omz/plugins/virtualenv py/venv app-build/.gradle \
-    music/Pods logs/.output ios/Pods web/.output; do
+    music/Pods logs/.output ios/Pods npm-web/.output web/.output; do
     assert_true "guards: --uninstall removes the exclusion on $lookalike" \
         grep -Fxq "removeexclusion $lookalike" "$TEST_DIR/guards_uninstall_actual"
 done
