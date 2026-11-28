@@ -98,7 +98,8 @@ version: ## Print the current tm-exclusions version
 	  test -n "$$version" || { echo "Error: could not determine version from $(SCRIPT)." >&2; exit 1; }; \
 	  printf '%s\n' "$$version"
 
-test: ## Run smoke tests
+# Reference runtime and measurement procedure: CONTRIBUTING.md, “Timing the tests”.
+test: ## Run all test suites
 	@echo "Running smoke tests..."
 	@bash tests/smoke.bats-like.sh
 	@bash tests/test_safety.sh

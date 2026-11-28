@@ -249,9 +249,11 @@ normally with one scan and the same exit status. Once the session exists there
 is no fallback — a missing log pane (`MSG_TMUX_NO_PANE`) or a lost client
 (`MSG_TMUX_ATTACH_LOST`) never re-runs the scan. Covered by
 `tests/test_tmux_ui.sh` (`make test`, `make lint`) with a stub tmux (two-pane
-wiring, single scan, exit-code propagation, cleanup) plus an opt-in real-tmux
-check on a dedicated socket, a `split-window` failure that must not double-scan,
-and a `SIGTERM` while attached that must clean up.
+wiring, single scan, exit-code propagation, cleanup). The stub client observes
+`kill-session` on the same socket. A failed `split-window` must still run the
+scan once, and a `SIGTERM` while attached must stop the client and clean up.
+With Python 3 and tmux installed, the suite also exercises Ctrl-C during a scan,
+detach at the closing prompt and a successful run on private tmux sockets.
 
 Verbose runs prefix every per-path status line with a formatted disk size
 (#45): `process_path()` calls `path_size_column()`, which runs one `du -sk` per
