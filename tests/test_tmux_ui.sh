@@ -472,6 +472,12 @@ else
     assert_true "SIGTERM while attached: the attached client was stopped" \
         grep -q '^SUB=attach-session' "$TMUX_CALLS"
     client_pid="$(cat "$WORK/attached.pid")"
+    # The kernel may still expose a terminated client until it is reaped.
+    client_checks=0
+    while kill -0 "$client_pid" 2>/dev/null && [ "$client_checks" -lt 40 ]; do
+        sleep 0.05
+        client_checks=$((client_checks + 1))
+    done
     assert_true "SIGTERM while attached: the client PID has exited" not kill -0 "$client_pid" 2>/dev/null
     assert_true "stub tmux clients observed session closure within the deadline" test ! -s "$TMUX_STUB_TIMEOUTS"
     assert_true "SIGTERM while attached: the dedicated server was killed" \
@@ -491,8 +497,13 @@ else
         cp "$B_BIN/tmutil" "$B_BIN/sudo" "$B_BIN/brew" "$CT_BIN/"
         cat > "$CT_BIN/tmutil" <<'CTSTUB'
 #!/bin/sh
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 : > "$CT_READY"
-sleep 5
+# Hold the foreground operation until the interrupt, even on a busy runner.
+# Removing the marker releases it if the outer test hits its deadline.
+while [ -e "$CT_READY" ]; do sleep 0.1; done
 printf '[Included] %s\n' "$2"
 exit 0
 CTSTUB
@@ -530,6 +541,7 @@ CTSTUB
         ct_hang=0
         if kill -0 "$ct_runner" 2>/dev/null; then
             ct_hang=1
+            rm -f "$WORK/ct.ready"
             kill -TERM "$ct_runner" 2>/dev/null || true
         fi
         rc=0
