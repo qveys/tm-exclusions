@@ -461,6 +461,7 @@ done
 for target in "$HOME/.bun/install/cache" "$HOME/.nvm/.cache" "$HOME/.cache/uv" \
     "$HOME/.local/share/uv/python" "$HOME/.local/share/uv/tools" \
     "$HOME/Library/pnpm/store" "$HOME/Library/Android/sdk" /opt/homebrew/Cellar \
+    /opt/homebrew/Caskroom /usr/local/Cellar /usr/local/Caskroom \
     "$HOME/Library/Application Support/Code/CachedData"; do
     assert_true "catalog ships $target" \
         grep -Fxq "$target" <<<"$CONF_PATHS"
