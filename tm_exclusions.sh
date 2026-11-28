@@ -1300,6 +1300,22 @@ tmux_launch() {
     {
         printf '#!%s\n' "$BASH"
         printf '_rc=0\n'
+        # A Ctrl-C in this pane reaches both the inner run and this wrapper:
+        # record the matching status and close the session, so the parent never
+        # waits for a status file that can no longer be written.
+        # shellcheck disable=SC2016  # these variables expand in the wrapper
+        # shellcheck disable=SC2016  # these variables expand in the wrapper
+        printf 'finish_signal() {\n'
+        # shellcheck disable=SC2016  # these variables expand in the wrapper
+        printf '  printf %%s "$1" > "$TM_EXCLUSIONS_TMUX_RC"\n'
+        # shellcheck disable=SC2016  # these variables expand in the wrapper
+        printf '  exec "$TM_EXCLUSIONS_TMUX_BIN" -S "$TM_EXCLUSIONS_TMUX_SOCK" kill-session -t "$TM_EXCLUSIONS_TMUX_SESSION"\n'
+        # shellcheck disable=SC2016  # the closing brace is literal
+        printf '}\n'
+        # shellcheck disable=SC2016  # these variables expand in the wrapper
+        printf 'trap '\''finish_signal 130'\'' INT\n'
+        printf 'trap '\''finish_signal 143'\'' TERM\n'
+        printf 'trap '\''finish_signal 129'\'' HUP\n'
         printf 'cd %s 2>/dev/null || _rc=1\n' "$(printf '%q' "$PWD")"
         # shellcheck disable=SC2016  # $_rc is for the generated wrapper, not here
         printf 'if [ "$_rc" -eq 0 ]; then\n'

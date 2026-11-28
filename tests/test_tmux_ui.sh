@@ -394,6 +394,52 @@ else
     assert_true "SIGTERM while attached: the dedicated server was killed" \
         grep -q '^SUB=kill-server' "$TMUX_CALLS"
 
+    # --- Real tmux: Ctrl-C in the left pane closes the session (no hang) ---
+    echo ""
+    echo "--- Real tmux: Ctrl-C in the left pane ---"
+    if command -v tmux >/dev/null 2>&1; then
+        CT_TMP="$WORK/c"
+        mkdir -p "$CT_TMP"
+        : > "$TMUTIL_CALLS"
+        run_pty "$WORK/out-ctrlc" \
+            env HOME="$B_HOME" PATH="$B_BIN:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" TERM=xterm \
+                TMPDIR="$CT_TMP" TM_EXCLUSIONS_DEFAULT_CONF="$CONF" \
+                bash "$TM_EXCLUSIONS" --tmux --dry-run &
+        ct_runner=$!
+        ct_sock=""
+        ct_i=0
+        while [ "$ct_i" -lt 100 ] && [ -z "$ct_sock" ]; do
+            ct_sock="$(find "$CT_TMP" -maxdepth 2 -type s -name s 2>/dev/null | head -1)"
+            [ -n "$ct_sock" ] || sleep 0.1 2>/dev/null || sleep 1
+            ct_i=$((ct_i + 1))
+        done
+        assert_true "real tmux Ctrl-C: the private socket appears" test -n "$ct_sock"
+        sleep 2
+        # Left pane = the first pane of the window (the wrapper); address it by
+        # its pane id, since the window index is not guaranteed.
+        ct_pane="$(tmux -S "$ct_sock" list-panes -F '#{pane_id}' 2>/dev/null | head -1)"
+        assert_true "real tmux Ctrl-C: the left pane exists" test -n "$ct_pane"
+        tmux -S "$ct_sock" send-keys -t "$ct_pane" C-c 2>/dev/null || true
+        ct_waited=0
+        while kill -0 "$ct_runner" 2>/dev/null && [ "$ct_waited" -lt 100 ]; do
+            sleep 0.2 2>/dev/null || sleep 1
+            ct_waited=$((ct_waited + 1))
+        done
+        ct_hang=0
+        if kill -0 "$ct_runner" 2>/dev/null; then
+            ct_hang=1
+            kill -TERM "$ct_runner" 2>/dev/null || true
+        fi
+        rc=0
+        wait "$ct_runner" 2>/dev/null || rc=$?
+        assert_eq 0 "$ct_hang" "real tmux Ctrl-C: the CLI does not hang on a closed pane status"
+        assert_eq 130 "$rc" "real tmux Ctrl-C: the run exits 130"
+        assert_eq 0 "$(find "$CT_TMP" -mindepth 1 2>/dev/null | wc -l | tr -d ' ')" \
+            "real tmux Ctrl-C: no socket or work directory left behind"
+    else
+        echo "  SKIP real tmux Ctrl-C: tmux not installed"
+    fi
+
     # --- Real tmux (opt-in, isolated socket): two panes and full cleanup ---
     echo ""
     echo "--- Real tmux on a dedicated socket (skipped when tmux absent) ---"
