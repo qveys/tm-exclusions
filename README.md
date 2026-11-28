@@ -290,7 +290,7 @@ setting|desktop_report|true
 |---|---|
 | `path` | 🎯 Static exclusion → `tmutil addexclusion` (targets may include `*` `?` `[` globs, expanded at load time) |
 | `pattern` | 🔍 Directory name matched by `find -name` during scan |
-| `prune` | ✂️ Path ignored by scan (no TM exclusion applied) |
+| `prune` | ✂️ Directory ignored by the scan, with or without a trailing `/` (no TM exclusion applied) |
 | `keep` | Protect a literal path and its descendants; blocks exclusions of ancestors too |
 | `setting` | ⚙️ Preference (`report_path`, `desktop_report`, `scan_images`); not a Time Machine rule |
 
@@ -308,8 +308,8 @@ file starts in the default category, so a section of `default.conf` never leaks 
 path|~/MyLargeDataset|Large dataset not needed in backup
 ```
 
-Rules added with `--add` are appended at the end of the file and therefore join its
-last section.
+`--add` writes each rule on its own line in the last section, even when the file
+ends with an unterminated rule or comment.
 
 ### Protect data and choose broader exclusions
 
@@ -324,6 +324,9 @@ setting|scan_images|true
 It protects the path and descendants in apply, dry-run, audit and uninstall modes,
 including discovered images. An exclusion of an ancestor is skipped as well; other
 sibling rules can still apply. Dot components and existing directory symlinks are resolved.
+On case-insensitive volumes, `keep|~/client/finance` also protects the existing parent
+`~/Client`, even if `finance` has yet to be created. On case-sensitive volumes,
+separate trees named `Client` and `client` can have independent rules.
 Unlike `prune`, it applies to static rules and discovery as well as dynamic matches.
 Use `tm-exclusions --add keep ~/VMs "VM data"` to add a protection.
 
@@ -366,15 +369,15 @@ dropped before the cap (unless that candidate is protected by a `keep`). iCloud 
 `Library/CloudStorage` trees are skipped so nothing is downloaded. Discovered paths
 appear in the report as `Discovery: …`. Extra candidates are disclosed as `LIMIT` in the report. This is a cap
 on processed images, not traversal time. `scan_images=false` disables it again.
-Candidate paths containing a newline are rejected and reported, because the
-candidate list is newline-delimited.
+An image path containing a newline is skipped and recorded as an error in the
+saved report. Other candidates are processed and the run exits with status 1.
 
 ### Results and exit codes
 
 Exit 0 means processing completed without recorded errors; exit 1 means a failed
 operation, unknown exclusion status, unavailable required privileges, incomplete scan,
 invalid protection rule, keep conflict, or failed report write. Partial scan results
-are still processed and reported. An unknown `tmutil isexcluded` result never permits
+are still processed and reported. Only the leading status marker in `tmutil isexcluded` output determines exclusion status. An unknown result never permits
 an add/remove, even with `--force`. Missing paths remain ordinary skips.
 
 Report details include the source config file and line, matching rule and reason.
@@ -531,7 +534,7 @@ launchctl load ~/Library/LaunchAgents/com.tm-exclusions.weekly.plist
 
 | Variable | Effect |
 |---|---|
-| `TM_EXCLUSIONS_DEFAULT_CONF` | Override default rules file path |
+| `TM_EXCLUSIONS_DEFAULT_CONF` | Override the required default rules file. A missing or unreadable catalog stops the run. An empty file is valid. |
 | `TM_EXCLUSIONS_EXTRA_CONF` | Load an additional config file after default + custom (opt-in cloud-sync prunes, see [Power users](#power-users-cloud-sync-prune-opt-in)) |
 | `TM_EXCLUSIONS_REPORT` | Override report output path (overrides `setting|report_path`) |
 | `TM_EXCLUSIONS_REPORT_DESKTOP=1` | Also write a report copy to `~/Desktop` (opt-in; equivalent to `--desktop-report`; overrides `setting|desktop_report`) |
@@ -553,6 +556,7 @@ launchctl load ~/Library/LaunchAgents/com.tm-exclusions.weekly.plist
 - `--uninstall` removes exclusions matching current configured static rules, dynamic matches, and discovered extra paths. It also drops retired catalog paths that are still excluded (today: the former `$HOME/Library/Developer/CoreSimulator` parent, and `$HOME/.gradle`, which the `.gradle` pattern used to match as a whole).
 - Apply and `--dry-run` drop those same retired exclusions when `tmutil` still has them, then add the granular rules (CoreSimulator subdirs, `~/.gradle/caches` and `~/.gradle/wrapper`); `--dry-run` only reports the removal. A retired path you still exclude with your own `path` rule is not migrated (`--uninstall` still removes it, like any static rule), and a `keep` rule below a retired path never blocks its removal. Manual equivalent: `tmutil removeexclusion "$HOME/Library/Developer/CoreSimulator"` and `tmutil removeexclusion "$HOME/.gradle"`.
 - Dynamic scan depth is intentionally capped to `find -maxdepth 6`.
+- Dynamic scanning preserves tabs in paths and skips paths containing newlines.
 - Default stdout shows grouped results and counters. `--verbose` adds per-path status lines; in plain output it also prints the full report. `--quiet` continues to print the full report without status lines and takes precedence over `--verbose`. The full report is always saved.
 - On non-macOS or without `tmutil`, behavior is simulated (useful for tests).
 

@@ -1722,8 +1722,8 @@ tm_is_excluded() {
         local result=""
         result="$(tmutil isexcluded "$path" 2>/dev/null)" || return 2
         case "$result" in
-            *"[Excluded]"*) return 0 ;;
-            *"[Included]"*) return 1 ;;
+            "[Excluded]"[[:blank:]]*) return 0 ;;
+            "[Included]"[[:blank:]]*) return 1 ;;
             *) return 2 ;;
         esac
     else
@@ -1902,6 +1902,9 @@ ${entry_target}"
                 fi
                 ;;
             prune)
+                # Keep literal names for find -path; directory separators at
+                # the end do not change the zone, including the root itself.
+                while [[ "$entry_target" == ?*/ ]]; do entry_target="${entry_target%/}"; done
                 if [[ -z "${CONF_PRUNES}" ]]; then
                     CONF_PRUNES="${entry_target}"
                 else
@@ -1967,8 +1970,14 @@ load_config() {
     CONF_REPORT_PATH=""
     CONF_DESKTOP_REPORT=0
 
-    # Load default config first
-    parse_config_file "$(resolve_default_conf)"
+    # The default catalog is required, even on a first run without custom rules.
+    local default_conf
+    default_conf="$(resolve_default_conf)"
+    if [[ -f "$default_conf" && -r "$default_conf" ]]; then
+        parse_config_file "$default_conf"
+    else
+        record_error "$MSG_DEFAULT_CONF_UNREADABLE $default_conf"
+    fi
     # Merge custom config (path/pattern/prune append; setting last-wins)
     parse_config_file "${CUSTOM_CONF}"
     # Extra config last: rules are additive; settings override earlier files.
@@ -2118,7 +2127,13 @@ cmd_config_add() {
         log_error "$MSG_INVALID_KEEP"
         exit 1
     fi
-    echo "${entry_type}|${entry_path}|${entry_reason}" >> "${CUSTOM_CONF}"
+    local separator=""
+    if [[ -s "$CUSTOM_CONF" ]]; then
+        # Command substitution strips a final newline, leaving other bytes intact.
+        separator="$(tail -c 1 "$CUSTOM_CONF")"
+        [[ -z "$separator" ]] || separator=$'\n'
+    fi
+    printf '%s%s|%s|%s\n' "$separator" "$entry_type" "$entry_path" "$entry_reason" >> "$CUSTOM_CONF"
     log_info "${MSG_CONFIG_ADDED} ${entry_type}|${entry_path}|${entry_reason}"
 }
 
@@ -2204,6 +2219,20 @@ normalize_path() {
     printf '%s\n' "${normalized:-/}"
 }
 
+# Existing objects can have different spellings on the same filesystem (case
+# and Unicode normalization on APFS). Also walk the parents of an absent leaf:
+# a future keep must protect an existing directory that would encompass it.
+keep_path_under() {
+    local path="$1" ancestor="$2"
+    path_under "$path" "$ancestor" && return 0
+    [[ -e "$ancestor" ]] || return 1
+    while [[ -n "$path" ]]; do
+        [[ "$path" -ef "$ancestor" ]] && return 0
+        path="${path%/*}"
+    done
+    return 1
+}
+
 # Reject both descendants and ancestors: excluding a parent would defeat keep.
 keep_blocks() {
     [[ -n "$CONF_KEEPS" ]] || return 1
@@ -2220,7 +2249,7 @@ keep_blocks() {
         if [[ -e "$entry" ]]; then
             normalized="$(normalize_path "$entry")" || normalized="$entry"
         fi
-        if path_under "$candidate" "$normalized" || path_under "$normalized" "$candidate"; then
+        if keep_path_under "$candidate" "$normalized" || keep_path_under "$normalized" "$candidate"; then
             return 0
         fi
     done <<EOF
@@ -2353,7 +2382,7 @@ is_pruned() {
     while IFS= read -r prune_entry; do
         [[ -z "$prune_entry" ]] && continue
         # Check if check_path starts with prune_entry
-        if [[ "$check_path" == "$prune_entry" || "$check_path" == "$prune_entry/"* ]]; then
+        if path_under "$check_path" "$prune_entry"; then
             return 0
         fi
     done <<EOF
@@ -2402,7 +2431,7 @@ scan_root_reachable() {
     local target="$1" root="${2%/}" rel
     [[ "$target" = "$root"/* && -d "$target" && ! -L "$target" ]] || return 1
     case "$target" in
-        *$'\n'*|*$'\t'*|*/) return 1 ;;
+        *$'\n'*|*/) return 1 ;;
     esac
     rel="${target#"$root"/}"
     [[ "$rel" != */./* && "$rel" != */../* && "$rel" != ./* && "$rel" != ../* ]] || return 1
@@ -2502,9 +2531,17 @@ EOF
     # Everything else is still found, so nested matches needed in --uninstall
     # mode (node_modules/.pnpm/*/node_modules) keep being discovered there.
     set --
-    local pattern_name uncond_names="" cond_names="" prune_marker=$'\001PRUNE'
+    local pattern_name pattern_index=0 uncond_names="" cond_names="" prune_marker=-1
+    local -a scan_patterns
+    scan_patterns=()
+    # Assign IDs in C lexical order to preserve rule order when several
+    # patterns match the same path.
+    local sorted_patterns
+    sorted_patterns="$(printf '%s\n' "$CONF_PATTERNS" | LC_ALL=C sort)"
     while IFS= read -r pattern_name; do
         [[ -z "$pattern_name" ]] && continue
+        scan_patterns[pattern_index]="$pattern_name"
+        pattern_index=$((pattern_index + 1))
         if [[ "$prune_enabled" -eq 1 && "${MODE}" != "uninstall" && -z "${CONF_KEEPS}" ]] \
             && ! pattern_is_guarded "$pattern_name"; then
             uncond_names="${uncond_names}${pattern_name}"$'\n'
@@ -2512,7 +2549,7 @@ EOF
             cond_names="${cond_names}${pattern_name}"$'\n'
         fi
     done <<EOF
-${CONF_PATTERNS}
+${sorted_patterns}
 EOF
     if [[ -n "$uncond_names" || -n "$cond_names" ]]; then
         # The classifier and sort use line records. Prune newline-containing
@@ -2594,8 +2631,9 @@ EOF
     # Tag each discovered directory with every configured pattern whose glob
     # matches its basename — the same (dir, pattern) pairs the per-pattern
     # `find -name <pattern>` calls produced, so pattern_match_allowed can
-    # re-check later. Tab-separated; pattern names never contain tabs in our
-    # config schema. A `case` pattern is required here, not `[[ == ]]`: on
+    # re-check later. Store each numeric pattern ID (or prune marker) before
+    # the separator tab so neither pattern nor path tabs are ambiguous.
+    # A `case` pattern is required here, not `[[ == ]]`: on
     # Bash 3.2 `[[ == ]]` interprets extended globs (+(…), @(…), !(…), …) even
     # with extglob off, which would diverge from `find -name` (e.g. a literal
     # `+(cache)` directory). `case` only honors them when extglob is on, so
@@ -2622,23 +2660,21 @@ EOF
         if [[ -n "$prune_roots" ]]; then
             case $'\n'"$prune_roots" in
                 *$'\n'"$found_dir"$'\n'*)
-                    printf '%s\t%s\n' "$found_dir" "$prune_marker" >> "$all_results"
+                    printf '%s\t%s\n' "$prune_marker" "$found_dir" >> "$all_results"
                     continue
                     ;;
             esac
         fi
         base_name="${found_dir##*/}"
-        while IFS= read -r pattern_name; do
-            [[ -z "$pattern_name" ]] && continue
+        for pattern_index in "${!scan_patterns[@]}"; do
+            pattern_name="${scan_patterns[pattern_index]}"
             # shellcheck disable=SC2254
             case "$base_name" in
                 $pattern_name)
-                    printf '%s\t%s\n' "$found_dir" "$pattern_name" >> "$all_results"
+                    printf '%s\t%s\n' "$pattern_index" "$found_dir" >> "$all_results"
                     ;;
             esac
-        done <<EOF
-${CONF_PATTERNS}
-EOF
+        done
     done < "$tmp_scan"
     if [[ "$extglob_was_on" -eq 1 ]]; then shopt -s extglob; fi
     rm -f "$tmp_scan"
@@ -2648,7 +2684,7 @@ EOF
     local sorted_results
     make_tmp_file sorted_results sorted
     start_activity "$MSG_UI_SORT"
-    LC_ALL=C sort -t$'\t' -k1,1 "$all_results" > "$sorted_results"
+    LC_ALL=C sort -t$'\t' -k2 -k1,1n "$all_results" > "$sorted_results"
     rm -f "$all_results"
 
     clear_progress
@@ -2658,11 +2694,11 @@ EOF
         candidate_count=$((candidate_count))
         UI_TOTAL=$candidate_count
     fi
-    local line found_dir matched_pattern
+    local line matched_pattern
     while IFS= read -r line; do
         [[ -z "$line" ]] && continue
-        found_dir="${line%%$'\t'*}"
-        matched_pattern="${line#*$'\t'}"
+        pattern_index="${line%%$'\t'*}"
+        found_dir="${line#*$'\t'}"
 
         if [[ "$UI" -eq 1 ]]; then
             candidate_index=$((candidate_index + 1))
@@ -2670,13 +2706,14 @@ EOF
             progress_draw "$found_dir"
         fi
 
-        if [[ "$matched_pattern" = "$prune_marker" ]]; then
+        if [[ "$pattern_index" = "$prune_marker" ]]; then
             set_rule_context prune "$found_dir"
             log_path_result prune "$found_dir" "  ${MSG_PRUNE_SKIP} ${found_dir}"
             add_report_line "SKIP  $found_dir ($MSG_PRUNE_SKIP)"
             continue
         fi
 
+        matched_pattern="${scan_patterns[pattern_index]}"
         if ! pattern_match_allowed "$matched_pattern" "$found_dir"; then
             continue
         fi
@@ -2856,8 +2893,9 @@ collect_post_scan_paths() {
     clear_progress
     if [[ "$CONF_SCAN_IMAGES" -eq 0 ]]; then return 0; fi
     make_tmp_file tmp disk
-    local image_errors
+    local image_errors rejected_images rejected_path
     make_tmp_file image_errors image_errors
+    make_tmp_file rejected_images rejected_images
     # Stream directories and matching images from the same walk, NUL-delimited.
     # VM/disk bundle directories (sparsebundle, UTM, VMware, Parallels) are
     # candidates as a whole, whatever their size, and their contents stay pruned:
@@ -2883,11 +2921,20 @@ collect_post_scan_paths() {
             local candidate vbox_dir home_dir="$HOME"
             while [[ "$home_dir" = */ ]]; do home_dir="${home_dir%/}"; done
             while IFS= read -r -d '' candidate; do
+                if [[ -d "$candidate" ]]; then
+                    [[ "$candidate" = *$'\n'* ]] || show_scan_path "$candidate"
+                    case "$candidate" in
+                        *.sparsebundle|*.utm|*.vmwarevm|*.parallels|*.pvm) ;;
+                        *) continue ;;
+                    esac
+                fi
                 # The find stream is NUL-delimited but the candidate batch file is
                 # newline-delimited (Bash 3.2); a path containing a newline would
                 # be split into bogus entries, so reject it explicitly.
                 if [[ "$candidate" = *$'\n'* ]]; then
-                    record_error "$MSG_SCAN_NEWLINE_PATH"
+                    # This pipeline runs in a subshell. Keep a printable path
+                    # for the parent, which owns the report and the exit status.
+                    printf '%q\n' "$candidate" >> "$rejected_images"
                     continue
                 fi
                 if [[ "$candidate" = *.vbox && -f "$candidate" ]]; then
@@ -2899,12 +2946,6 @@ collect_post_scan_paths() {
                         [[ "$MODE" = uninstall ]] && printf '%s/\n' "$candidate" >> "$tmp"
                         candidate="$vbox_dir"
                     fi
-                elif [[ -d "$candidate" ]]; then
-                    show_scan_path "$candidate"
-                    case "$candidate" in
-                        *.sparsebundle|*.utm|*.vmwarevm|*.parallels|*.pvm) ;;
-                        *) continue ;;
-                    esac
                 fi
                 # Trailing slash: sorted, a candidate is followed by its descendants.
                 printf '%s/\n' "$candidate" >> "$tmp"
@@ -2912,6 +2953,9 @@ collect_post_scan_paths() {
         }; then
         record_scan_failure "$HOME" "$image_errors"
     fi
+    while IFS= read -r rejected_path; do
+        record_error "$MSG_SCAN_NEWLINE_PATH $rejected_path"
+    done < "$rejected_images"
     clear_progress
     # Cap after dedup: sort -u drops exact duplicates and puts each candidate right
     # before its descendants, which one pass then drops as already covered, unless

@@ -29,7 +29,7 @@ case "$1" in
             printf '[Excluded] %s\n' "$2"; exit 0; }
         case "${TEST_STATUS:-included}" in
             fail) exit 1 ;;
-            malformed) echo unknown ;;
+            malformed) printf 'unknown [Included] %s\n' "$2" ;;
             excluded) printf '[Excluded] %s\n' "$2" ;;
             *) printf '[Included] %s\n' "$2" ;;
         esac ;;
@@ -111,6 +111,35 @@ assert_file_lacks_regex "$TEST_CALLS" '^(addexclusion|removeexclusion) ' \
     "an already-excluded protected path is not mutated"
 unset TEST_STATUS
 
+# On APFS these spellings can name the same object; on case-sensitive
+# volumes create both trees so every candidate exists on either kind of host.
+mkdir -p "$HOME/Client" "$HOME/client" "$HOME/Archive/cache" "$HOME/archive" \
+    "$HOME/Équipe" "$HOME/équipe" "$HOME/ClientBackup"
+touch "$HOME/Équipe/Data" "$HOME/équipe/data"
+cat > "$TM_EXCLUSIONS_DEFAULT_CONF" <<'CONF'
+keep|~/client/future/saved|future child
+keep|~/archive|directory
+keep|~/équipe/data|file
+path|~/Client|ancestor of a future keep
+path|~/Archive/cache|descendant of a keep
+path|~/Équipe/Data|alternate file spelling
+path|~/ClientBackup|unrelated sibling
+CONF
+: > "$HOME/.config/tm_exclusions/custom.conf"
+run 0 --dry-run
+assert_volume_decision() {
+    local candidate="$1"
+    if [[ "$2" -ef "$3" ]]; then
+        assert_file_contains "$TM_EXCLUSIONS_REPORT" "KEEP  $candidate (" "keep protects $candidate"
+    else
+        assert_file_contains "$TM_EXCLUSIONS_REPORT" "WOULD $candidate " "separate tree remains eligible: $candidate"
+    fi
+}
+assert_volume_decision "$HOME/Client" "$HOME/Client" "$HOME/client"
+assert_volume_decision "$HOME/Archive/cache" "$HOME/Archive" "$HOME/archive"
+assert_volume_decision "$HOME/Équipe/Data" "$HOME/Équipe/Data" "$HOME/équipe/data"
+assert_file_contains "$TM_EXCLUSIONS_REPORT" "WOULD $HOME/ClientBackup " "a sibling with a shared prefix stays eligible"
+
 # Default discovery does not pick up VM images; opting in discloses truncation.
 : > "$TM_EXCLUSIONS_DEFAULT_CONF"
 : > "$HOME/.config/tm_exclusions/custom.conf"
@@ -118,6 +147,20 @@ run 0 --dry-run
 assert_true "image discovery stays off by default" \
     not grep -Fq 'sparsebundle' "$TM_EXCLUSIONS_REPORT"
 printf '%s\n' 'setting|scan_images|true' > "$TM_EXCLUSIONS_DEFAULT_CONF"
+bad_image="$HOME/disks/"$'bad\nname.utm'
+bad_file="$HOME/disks/"$'bad\nname.vbox'
+mkdir "$bad_image" "$HOME/disks/"$'ordinary\ndirectory'
+touch "$bad_file"
+run 1 --dry-run
+assert_file_contains "$TM_EXCLUSIONS_REPORT" 'Errors: 2' "only rejected image candidates count as errors"
+for rejected in "$bad_image" "$bad_file"; do
+    assert_file_contains "$TM_EXCLUSIONS_REPORT" "$(printf '%q' "$rejected")" \
+        "the saved report identifies each rejected image on one line"
+done
+assert_file_contains "$TM_EXCLUSIONS_REPORT" "WOULD $HOME/disks/public.sparsebundle" \
+    "discovery still processes valid siblings"
+rmdir "$bad_image"
+rm "$bad_file"
 for ((i=0; i<51; i++)); do mkdir "$HOME/disks/$i.sparsebundle"; done
 run 0 --dry-run
 assert_file_contains "$TM_EXCLUSIONS_REPORT" 'LIMIT Image discovery limited to 50' \
@@ -301,6 +344,16 @@ assert_file_lacks_regex "$TM_EXCLUSIONS_REPORT" '^WOULD .*independent\.qcow2' \
 rm -rf "$HOME/Protected.utm"
 mkdir -p "$HOME/disks/private.sparsebundle"
 
+# tmutil prints the status first. Literal markers in a pathname are user data.
+mkdir -p "$HOME/[Excluded] project/node_modules" "$HOME/[Included] project/node_modules"
+printf '%s\n' 'pattern|node_modules|dependencies' > "$TM_EXCLUSIONS_DEFAULT_CONF"
+run 0
+assert_file_contains "$TEST_CALLS" "addexclusion $HOME/[Excluded] project/node_modules" \
+    "an Included path with an Excluded marker in its name is added"
+TEST_STATUS=excluded run 0 --uninstall
+assert_file_contains "$TEST_CALLS" "removeexclusion $HOME/[Included] project/node_modules" \
+    "an Excluded path with an Included marker in its name is removed"
+
 # A failed or unrecognized status must not be treated as Included in any mode.
 # Literal placeholder is expanded by the CLI.
 # shellcheck disable=SC2016
@@ -350,6 +403,20 @@ for config in $'pattern|cache|cache reason\npattern|other|other reason' 'setting
 done
 rm "$TEST_DIR/bin/find"
 
+# A missing required catalog fails closed, including when a custom rule exists.
+printf '%s\n' 'path|~/project|custom path' > "$HOME/.config/tm_exclusions/custom.conf"
+for mode in --report-only ""; do
+    # An empty mode selects the default apply operation.
+    TM_EXCLUSIONS_DEFAULT_CONF="$TEST_DIR/absent.conf" run 1 ${mode:+"$mode"}
+    assert_file_contains "$TM_EXCLUSIONS_REPORT" "Default catalog missing or unreadable: $TEST_DIR/absent.conf" \
+        "missing catalog is named in the report ($mode)"
+    assert_true "missing catalog stops before tmutil ($mode)" test ! -s "$TEST_CALLS"
+done
+: > "$TM_EXCLUSIONS_DEFAULT_CONF"
+run 0 --report-only
+assert_file_contains "$TM_EXCLUSIONS_REPORT" "NEED  $HOME/project " "an empty catalog still loads custom rules"
+: > "$HOME/.config/tm_exclusions/custom.conf"
+
 # Invalid keep input prevents every mutation; CLI --add persists a usable rule.
 printf '%s\n' 'path|~/project|test' 'keep|relative/path|invalid' > "$TM_EXCLUSIONS_DEFAULT_CONF"
 run 1
@@ -357,10 +424,16 @@ assert_file_lacks_regex "$TEST_CALLS" '^(addexclusion|removeexclusion) ' \
     "an invalid keep rule prevents all mutation"
 assert_file_contains "$TM_EXCLUSIONS_REPORT" 'Invalid keep rule' \
     "an invalid keep rule is reported"
+printf '%s' '# last comment' > "$HOME/.config/tm_exclusions/custom.conf"
 : > "$TM_EXCLUSIONS_DEFAULT_CONF"
 run 0 --add keep "$HOME/project" 'preserve state'
 assert_file_contains "$HOME/.config/tm_exclusions/custom.conf" \
     "keep|$HOME/project|preserve state" "--add persists the keep rule"
+assert_true "--add starts a new line after an unterminated comment" \
+    grep -Fxq "keep|$HOME/project|preserve state" "$HOME/.config/tm_exclusions/custom.conf"
+run 0 --add keep "$HOME/other" 'another keep'
+assert_eq 3 "$(wc -l < "$HOME/.config/tm_exclusions/custom.conf" | tr -d ' ')" \
+    "--add preserves the comment and adds no blank line after a terminated rule"
 run 1 --add keep 'relative/path' 'invalid'
 run 1 --add keep "$HOME/project" $'bad\npath|/|injection'
 run 0 --lang fr --dry-run

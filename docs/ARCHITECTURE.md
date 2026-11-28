@@ -33,6 +33,8 @@ Configuration is loaded and merged in this order:
 2. `~/.config/tm_exclusions/custom.conf` — user-defined rules
 3. (optional) `$TM_EXCLUSIONS_EXTRA_CONF` — additional additive config file
 
+A missing or unreadable default catalog records a configuration error. Custom report settings are still loaded, and the CLI writes the error report before any exclusion processing. An empty default catalog is valid.
+
 After all three config files are parsed, `derive_bak_old_prunes()` runs a one-time pass over `CONF_PATHS`. For every static `path|<P>` rule, it automatically appends `<P>.bak` and `<P>.old` to `CONF_PRUNES` (if not already present). This means common shadow copies produced by tool reinstalls or migrations (e.g. `.bun.bak`, `.npm.bak`, `.cargo.bak`) are silently skipped during the dynamic scan without requiring explicit catalog entries. Only `path|` entries trigger auto-derivation — `pattern|` and `prune|` entries are not processed. The auto-derived prune entries only affect `is_pruned()` / `scan_dynamic_patterns()`; `apply_static_paths()` is unchanged and will never call `tmutil addexclusion` on `.bak`/`.old` paths (which may not exist on most machines).
 
 Strings for **en** / **fr** live in `locales/{en,fr}.sh`; see **`docs/I18N.md`**.
@@ -56,10 +58,10 @@ Targets may use leading `~` (expanded to `$HOME`) or the literal substring `$HOM
 Dynamic scanning walks `$HOME` with a single `find` — `-maxdepth 6` keeps execution time practical — that ORs every configured pattern into one expression: `find $HOME -maxdepth 6 -type d \( -name p1 -o -name p2 … \)`. One traversal of the tree discovers all patterns at once (#50), and the traversal itself is pruned in three layers (#13, see [Scan pruning layers](#scan-pruning-layers)) so subtrees whose matches would be discarded anyway are never walked. The `scan_dynamic_patterns()` function then uses a two-phase approach to collect and process matches:
 
 **Phase 1: Collect**  
-The single consolidated `find` locates every directory matching any configured pattern. Each discovered directory is tagged with every configured pattern whose glob matches its basename (the same `(dir, pattern)` pairs the per-pattern `find -name <pattern>` calls produced), written tab-separated to a temporary file. All patterns are collected before any processing begins.
+The single consolidated `find` locates every directory matching any configured pattern. Each discovered directory is tagged with every configured pattern whose glob matches its basename (the same `(dir, pattern)` pairs the per-pattern `find -name <pattern>` calls produced). Each temporary record starts with a numeric pattern ID or prune marker, followed by a tab and the complete path. Pattern IDs follow C lexical order.
 
 **Phase 2: Sort and process**  
-The aggregated results are sorted lexically (`LC_ALL=C sort`). Because an ancestor path is always a strict string prefix of any descendant, this sort order guarantees parents precede their children. Each candidate is then processed in order:
+The aggregated results are sorted lexically (`LC_ALL=C sort`) by the complete path after the first tab, then numerically by pattern ID for matches on the same path. This preserves embedded tabs and guarantees parents precede their children because an ancestor path is a strict string prefix of any descendant. Each candidate is then processed in order:
 
 1. Validate with `pattern_match_allowed` (e.g., **`target`** is accepted only when the parent directory looks like a Rust/Cargo, Maven, or Gradle project; **`worktrees`** is narrowed to typical Git/Cursor layouts).
 2. Skip if the path falls under a config-level prune zone (`is_pruned` — logs `MSG_PRUNE_SKIP`).
@@ -97,7 +99,7 @@ Reproducible before/after numbers: `scripts/measure-scan.sh` builds a fake tree 
 
 ## Prune Logic
 
-Prune entries prevent the scanner from processing found directories under certain trees. For example, `prune|~/Library` prevents the tool from applying exclusions to `node_modules` directories inside `~/Library`, which are better handled by static path rules.
+The config loader strips trailing slashes from prune zones and preserves the filesystem root. Prune entries prevent the scanner from processing found directories under certain trees. For example, `prune|~/Library` prevents the tool from applying exclusions to `node_modules` directories inside `~/Library`, which are better handled by static path rules.
 
 Prune does NOT apply a Time Machine exclusion. It only keeps the dynamic scan out of the zone: `find` does not descend into it (layer 1 above), and `is_pruned` remains as a post-filter for anything that still reaches it. Each zone root emits one `MSG_PRUNE_SKIP` log message; paths pruned by prefix are dropped silently.
 
@@ -318,6 +320,8 @@ Immediately after **`load_config()`** (and before static paths / dynamic scan), 
 - **`brew --cache`** when `brew` is on `PATH` and the cache directory exists
 - Large disk images under **`$HOME`** in one `find` pass (covers `~/Library` too): files matching `.vmdk`, `.qcow2`, `.raw`, `.img`, `.iso`, `.ova` over **512 MiB** (`find -size +512M`); **VM bundle directories** `.sparsebundle`, `.utm`, `.vmwarevm`, `.parallels`, `.pvm` (`-type d`, any size, contents pruned so multi-part disks inside are not size-gated or double counted; a `keep` inside a bundle protects the whole bundle and its disks are not excluded individually); and **`.vbox` files** (the file itself; its folder instead when named after it, as in VirtualBox’s `<name>/<name>.vbox` layout, because the disks live there — never `$HOME`). Before the 50-result cap, exact duplicates and candidates under another candidate are dropped (sorted list, one pass; kept when the ancestor is protected by `keep`, and in `--uninstall`, where an older version may have excluded only the disk: no reduction, no pruning of UTM/VMware/Parallels bundles and a cap of 200 instead of 50 there) iCloud “Mobile Documents” and `Library/CloudStorage` trees are pruned so nothing is downloaded
 
+Image discovery records rejected newline-containing candidate paths in a temporary file, shell-quoted on one line each. The parent shell adds these errors to the report and exit status before processing the remaining candidates.
+
 Paths are **deduplicated** before `apply_extra_paths()` runs (after the pattern scan), which applies them like extra static rules.
 
 ## Uninstall Behavior
@@ -385,7 +389,10 @@ Copy a commented rule to `custom.conf` to explicitly enable it.
 
 `CONF_KEEPS` contains normalized literal paths. `keep_blocks()` compares candidates
 in both directions (ancestor/descendant), resolving dot components and existing directory
-symlinks. Protected static parents do not seed dynamic prefix suppression, allowing
+symlinks. When the literal paths differ, the keep check also compares filesystem
+identity (`-ef`) against ancestors in both directions. Existing aliases therefore
+follow the volume’s own case and Unicode semantics. An absent leaf still has
+existing ancestors to compare. Protected static parents do not seed dynamic prefix suppression, allowing
 unprotected sibling matches to be processed. `check_keeps()` reports already-excluded
 existing targets (including inherited exclusions) as errors. It never removes them.
 Missing keep targets are protected from future exclusions but cannot be checked with tmutil.

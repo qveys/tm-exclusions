@@ -84,7 +84,8 @@ jobs:
             fi
           else
             if gh release view "$TAG" >/dev/null 2>&1; then
-              gh release edit "$TAG" --title "tm-exclusions $TAG" --generate-notes
+              # Keep the published notes when the changelog has no new entry.
+              gh release edit "$TAG" --title "tm-exclusions $TAG"
             else
               gh release create "$TAG" --title "tm-exclusions $TAG" --generate-notes
             fi
