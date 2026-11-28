@@ -223,12 +223,12 @@ that `wait`, so cleanup runs immediately instead of after the user detaches
 detach (`Ctrl-b d`) is re-attached; losing the client while the run is still
 going stops it with `MSG_TMUX_ATTACH_LOST` and exit status 1 — never a second
 scan, because the fallback only exists before the inner run starts.
-The left pane is supervised from its creation: for the instant before the
-wrapper installed its traps, a signal can kill it silently, and the log pane
-would then keep the session (and this script) alive forever. The supervisor
-polls `#{pane_dead}` (the session uses `remain-on-exit`), publishes the pane's
-`#{pane_dead_status}` when `tmux.rc` is still empty, and closes the session; it
-is stopped and waited for by `tmux_cleanup`.
+The dedicated tmux server enables `remain-on-exit` before creating the left
+pane, so even a signal before the wrapper installs its traps leaves a readable
+pane status. The supervisor retries failed reads and closes the session only
+after confirming the pane died. When `tmux.rc` is empty, it publishes the
+pane's exit status or converts its signal to the shell convention (128 plus
+the signal number). `tmux_cleanup` stops and waits for the supervisor.
 
 A signal delivered to the pane (Ctrl-C in the left pane) reaches both the inner
 run and the wrapper: the wrapper has INT/TERM/HUP traps that close the session,

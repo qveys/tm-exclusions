@@ -134,8 +134,18 @@ cat > "$STUB_TMUX_DIR/tmux" <<'STUB'
 #!/bin/sh
 [ "$1" = -S ] || exit 1
 closed="$2.closed"
+socket="$2"
 shift 2
 sub="$1"
+if [ "$sub" = start-server ]; then
+    case "$*" in
+        *"set-option -gw remain-on-exit on ; new-session "*)
+            shift 7
+            sub="$1"
+            export retain_pane=1
+            ;;
+    esac
+fi
 printf 'SUB=%s ARGS=%s LOG=%s DEBUG_LOG=%s SOCK=%s\n' \
     "$sub" "$*" "${TM_EXCLUSIONS_TMUX_LOG:-}" "${TM_EXCLUSIONS_DEBUG_FIFO:-}" "${TM_EXCLUSIONS_TMUX_SOCK:-}" >> "$TMUX_CALLS"
 if [ "${TMUX_FAIL_NEW_SESSION:-0}" = 1 ] && [ "$sub" = new-session ]; then exit 1; fi
@@ -143,7 +153,19 @@ if [ "${TMUX_FAIL_SPLIT:-0}" = 1 ] && [ "$sub" = split-window ]; then exit 1; fi
 case "$sub" in
     display-message)
         # Left-pane supervisor: alive (default) or dead with a status.
+        if [ -n "${TMUX_FAIL_PANE_READ_ONCE:-}" ] && [ ! -e "$socket.failed" ]; then
+            case "$*" in
+                *pane_dead*) : > "$socket.failed"; exit 1 ;;
+            esac
+        fi
         case "$*" in
+            *'pane_dead}|#{pane_dead_status}|#{pane_dead_signal}'*)
+                if [ -n "${TMUX_PANE_DIES:-}" ]; then
+                    printf '1|%s|%s\n' "${TMUX_PANE_STATUS:-}" "${TMUX_PANE_SIGNAL:-}"
+                else
+                    printf '0||\n'
+                fi
+                ;;
             *pane_dead_status*) printf '%s\n' "${TMUX_PANE_STATUS:-}" ;;
             *) if [ -n "${TMUX_PANE_DIES:-}" ]; then printf '1\n'; else printf '0\n'; fi ;;
         esac
@@ -152,16 +174,25 @@ case "$sub" in
     set-option) exit 0 ;;
 esac
 case "$sub" in
+    has-session)
+        [ ! -e "$closed" ]
+        exit $?
+        ;;
     kill-session)
         : > "$closed"
         ;;
     new-session)
         # In this scenario the pane dies before the wrapper runs its traps.
+        case "$*" in *'#{pane_id}'*) printf '%%0\n' ;; esac
+        if [ -n "${TMUX_PANE_SIGNAL:-}" ] && [ -z "${retain_pane:-}" ]; then
+            : > "$closed"
+        fi
         [ -z "${TMUX_PANE_DIES:-}" ] || exit 0
         if [ -n "${TMUX_KEEP_WRAPPER:-}" ]; then cp "$TM_EXCLUSIONS_TMUX_WRAPPER" "$TMUX_KEEP_WRAPPER" 2>/dev/null; fi
         # stdin from /dev/null so the wrapper's "press Enter" read never blocks
         # this stub (the real tmux pane provides a TTY instead).
-        "${TM_EXCLUSIONS_TMUX_WRAPPER}" < /dev/null &
+        # Keep pane output on the test TTY, separate from new-session -P.
+        "${TM_EXCLUSIONS_TMUX_WRAPPER}" < /dev/null >&2 &
         ;;
     attach-session)
         i=0
@@ -315,6 +346,16 @@ else
     assert_eq 130 "$rc" "left pane died: the published pane status is returned"
     assert_true "left pane died: the session is closed by the supervisor" \
         grep -q '^SUB=kill-session' "$TMUX_CALLS"
+
+    for signal_case in int:130 term:143 hup:129; do
+        rc=0
+        run_pty "$WORK/out-pane-signal" \
+            env HOME="$B_HOME" PATH="$STUB_TMUX_DIR:$B_BIN:$PATH" TERM=xterm \
+                TM_EXCLUSIONS_DEFAULT_CONF="$CONF" TMUX_PANE_DIES=1 \
+                TMUX_PANE_SIGNAL="${signal_case%:*}" TMUX_FAIL_PANE_READ_ONCE=1 \
+                bash "$TM_EXCLUSIONS" --tmux --dry-run || rc=$?
+        assert_eq "${signal_case#*:}" "$rc" "early ${signal_case%:*}: status survives launch and a transient read failure"
+    done
 
     # --- no log pane at all with a run larger than any pipe buffer ---
     # The log target is a regular file, so neither a missing pane nor a closed

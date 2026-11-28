@@ -130,7 +130,8 @@ run ends.
 - The log pane never takes the keyboard, so a `sudo` password typed in the
   interface is only echoed in the left pane.
 - `Ctrl-C`/`SIGTERM` stop the run and clean up the dedicated server, session and
-  socket immediately, even while the client is attached.
+  socket immediately, even while the client is attached. If the left pane
+  dies from a signal during startup, the launcher returns its signal exit code.
 - The left pane runs the same script with the same arguments (minus `--tmux`),
   so the scan, exclusions and exit code are unchanged. The log pane is wired
   through the existing `TM_EXCLUSIONS_DEBUG_FIFO`/FD 5 mechanism, so a
