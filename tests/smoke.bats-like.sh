@@ -58,70 +58,55 @@ write_functions_file "$TM_FUNCS"
 echo "tm-exclusions smoke tests"
 echo "========================================"
 
+# Keep the status and the output of a single invocation together. Scenarios
+# with different flags, environment or fixtures still launch separate CLIs.
+assert_success_output() {
+    local file="$1" desc="$2" rc=0
+    shift 2
+    "$@" > "$file" 2>&1 || rc=$?
+    assert_eq 0 "$rc" "$desc"
+}
+
 # ---- Help ----
 echo ""
 echo "--- Help output ---"
 
-assert_exit_code 0 \
-    "--help exits 0" \
+assert_success_output "$TEST_HOME/help" "--help exits 0" \
     bash "$TM_EXCLUSIONS" --help
 
-assert_output_contains "Usage:" \
-    "--help shows usage line" \
-    bash "$TM_EXCLUSIONS" --help
+assert_file_contains "$TEST_HOME/help" "Usage:" "--help shows usage line"
 
 pushd -- "$ROOT/.." >/dev/null
 RELATIVE_CLI="${ROOT##*/}/tm_exclusions.sh"
 
-assert_exit_code 0 \
-    "relative --help with CDPATH exits 0" \
+assert_success_output "$TEST_HOME/relative-help" "relative --help with CDPATH exits 0" \
     env CDPATH="$PWD" "$BASH" -- "$RELATIVE_CLI" --help
 
-assert_output_contains "Usage:" \
-    "relative --help with CDPATH shows usage" \
-    env CDPATH="$PWD" "$BASH" -- "$RELATIVE_CLI" --help
+assert_file_contains "$TEST_HOME/relative-help" "Usage:" "relative --help with CDPATH shows usage"
 
-assert_exit_code 0 \
-    "relative --lang en --help with CDPATH exits 0" \
+assert_success_output "$TEST_HOME/relative-en-help" "relative --lang en --help with CDPATH exits 0" \
     env CDPATH="$PWD" "$BASH" -- "$RELATIVE_CLI" --lang en --help
 
-assert_output_contains "Usage:" \
-    "relative --lang en --help with CDPATH shows usage" \
-    env CDPATH="$PWD" "$BASH" -- "$RELATIVE_CLI" --lang en --help
+assert_file_contains "$TEST_HOME/relative-en-help" "Usage:" "relative --lang en --help with CDPATH shows usage"
 
 popd >/dev/null
 
-assert_exit_code 0 \
-    "-h exits 0 (alias for --help)" \
+assert_success_output "$TEST_HOME/short-help" "-h exits 0 (alias for --help)" \
     bash "$TM_EXCLUSIONS" -h
 
-assert_output_contains "Usage:" \
-    "-h shows usage line" \
-    bash "$TM_EXCLUSIONS" -h
+assert_file_contains "$TEST_HOME/short-help" "Usage:" "-h shows usage line"
 
-assert_output_contains "dry-run" \
-    "--help mentions dry-run" \
-    bash "$TM_EXCLUSIONS" --help
+assert_file_contains "$TEST_HOME/help" "dry-run" "--help mentions dry-run"
 
-assert_output_contains "report-only" \
-    "--help mentions report-only" \
-    bash "$TM_EXCLUSIONS" --help
+assert_file_contains "$TEST_HOME/help" "report-only" "--help mentions report-only"
 
-assert_output_contains "uninstall" \
-    "--help mentions uninstall" \
-    bash "$TM_EXCLUSIONS" --help
+assert_file_contains "$TEST_HOME/help" "uninstall" "--help mentions uninstall"
 
-assert_output_contains "config" \
-    "--help mentions config management" \
-    bash "$TM_EXCLUSIONS" --help
+assert_file_contains "$TEST_HOME/help" "config" "--help mentions config management"
 
-assert_output_contains "--force" \
-    "--help mentions --force" \
-    bash "$TM_EXCLUSIONS" --help
+assert_file_contains "$TEST_HOME/help" "--force" "--help mentions --force"
 
-assert_output_contains "--desktop-report" \
-    "--help mentions --desktop-report" \
-    bash "$TM_EXCLUSIONS" --help
+assert_file_contains "$TEST_HOME/help" "--desktop-report" "--help mentions --desktop-report"
 
 # ---- Version ----
 echo ""
@@ -134,17 +119,12 @@ if [ -z "$EXPECTED_VERSION" ]; then
     exit 1
 fi
 
-assert_exit_code 0 \
-    "--version exits 0" \
+assert_success_output "$TEST_HOME/version" "--version exits 0" \
     bash "$TM_EXCLUSIONS" --version
 
-assert_output_contains "tm-exclusions" \
-    "--version shows program name" \
-    bash "$TM_EXCLUSIONS" --version
+assert_file_contains "$TEST_HOME/version" "tm-exclusions" "--version shows program name"
 
-assert_output_contains "$EXPECTED_VERSION" \
-    "--version shows version number" \
-    bash "$TM_EXCLUSIONS" --version
+assert_file_contains "$TEST_HOME/version" "$EXPECTED_VERSION" "--version shows version number"
 
 # ---- Makefile version target (#43) ----
 echo ""
@@ -184,37 +164,25 @@ assert_output_contains "Unknown argument" \
 echo ""
 echo "--- Dry-run mode ---"
 
-assert_exit_code 0 \
-    "--dry-run exits 0" \
+assert_success_output "$TEST_HOME/dry-run" "--dry-run exits 0" \
     bash "$TM_EXCLUSIONS" --verbose --dry-run
 
-assert_output_contains "dry-run" \
-    "--dry-run output mentions dry-run in report" \
-    bash "$TM_EXCLUSIONS" --verbose --dry-run
+assert_file_contains "$TEST_HOME/dry-run" "dry-run" "--dry-run output mentions dry-run in report"
 
 # ---- Report-only mode ----
 echo ""
 echo "--- Report-only mode ---"
 
-assert_exit_code 0 \
-    "--report-only exits 0" \
+assert_success_output "$TEST_HOME/report-only" "--report-only exits 0" \
     bash "$TM_EXCLUSIONS" --verbose --report-only
 
-assert_output_contains "Report" \
-    "--report-only generates a report" \
-    bash "$TM_EXCLUSIONS" --verbose --report-only
+assert_file_contains "$TEST_HOME/report-only" "Report" "--report-only generates a report"
 
-assert_output_contains "Host:" \
-    "--report-only report includes host header" \
-    bash "$TM_EXCLUSIONS" --verbose --report-only
+assert_file_contains "$TEST_HOME/report-only" "Host:" "--report-only report includes host header"
 
-assert_output_contains "Inventory" \
-    "--report-only report includes inventory section" \
-    bash "$TM_EXCLUSIONS" --verbose --report-only
+assert_file_contains "$TEST_HOME/report-only" "Inventory" "--report-only report includes inventory section"
 
-assert_output_contains "Paths not yet excluded" \
-    "--report-only summary labels NEED paths correctly" \
-    bash "$TM_EXCLUSIONS" --verbose --report-only
+assert_file_contains "$TEST_HOME/report-only" "Paths not yet excluded" "--report-only summary labels NEED paths correctly"
 
 # ---- Report env (TM_EXCLUSIONS_REPORT*) ----
 echo ""
@@ -300,6 +268,21 @@ echo "--- Homebrew inventory (#48) ---"
 # Fake brew with known casks/formulae, shadowing the empty stub via PATH order.
 BREW_BIN="${TEST_HOME}/brew-bin"
 mkdir -p "${BREW_BIN}"
+# Homebrew integration enables the whole inventory. Redirect only the system
+# applications root so the real grouped du measures small fixture bundles.
+mkdir -p "$TEST_HOME/test-system-apps/System.app" "$TEST_HOME/Applications/Smoke.app"
+cat > "$BREW_BIN/find" <<'STUB'
+#!/bin/sh
+case "$1" in
+    /Applications|/Applications/)
+        shift; exec /usr/bin/find "$HOME/test-system-apps/" "$@" ;;
+    -L)
+        case "$2" in /Applications|/Applications/)
+            shift 2; exec /usr/bin/find -L "$HOME/test-system-apps/" "$@" ;;
+        esac ;;
+esac
+exec /usr/bin/find "$@"
+STUB
 cat > "${BREW_BIN}/tmutil" <<'STUB'
 #!/bin/sh
 if [ "$1" = isexcluded ]; then printf '[Included] %s\n' "$2"; fi
@@ -345,6 +328,8 @@ assert_file_contains "${BREW_OUT}" "a-deliberately-long-formula-name-for-wrap-te
 assert_file_contains "${BREW_OUT}" "firefox, visual-studio-code" \
     "brew present: cask names are wrapped on comma-separated lines"
 
+assert_file_contains "$BREW_REPORT" "$TEST_HOME/Applications/Smoke.app" \
+    "brew present: the same report includes the fixture application"
 assert_file_contains "${BREW_REPORT}" "Homebrew casks (9):" \
     "brew present: saved report contains the cask list header"
 assert_file_contains "${BREW_REPORT}" "firefox" \
@@ -365,6 +350,7 @@ fi
 # brew absent from PATH: friendly notice, no list, exit unchanged.
 NOBREW_BIN="${TEST_HOME}/nobrew-bin"
 mkdir -p "${NOBREW_BIN}"
+ln -s "$BREW_BIN/find" "$NOBREW_BIN/find"
 cat > "${NOBREW_BIN}/tmutil" <<'STUB'
 #!/bin/sh
 if [ "$1" = isexcluded ]; then printf '[Included] %s\n' "$2"; fi
@@ -1103,23 +1089,14 @@ cat > "${FAKE_DU_CONF}" << EOF
 path|${FAKE_DU_HOME}/restrictedparent|du stub test
 EOF
 
-assert_exit_code 0 \
-    "--dry-run exits 0 when du -sk returns non-zero (#55)" \
+assert_success_output "$FAKE_DU_HOME/output" "--dry-run exits 0 when du -sk returns non-zero (#55)" \
     env -u TM_EXCLUSIONS_SKIP_DU HOME="${FAKE_DU_HOME}" PATH="${FAKE_DU_BIN}:${PATH}" \
         TM_EXCLUSIONS_DEFAULT_CONF="${FAKE_DU_CONF}" \
         bash "$TM_EXCLUSIONS" --verbose --dry-run
 
-assert_output_contains "42K" \
-    "report keeps partial du size when du exits 1 (#55)" \
-    env -u TM_EXCLUSIONS_SKIP_DU HOME="${FAKE_DU_HOME}" PATH="${FAKE_DU_BIN}:${PATH}" \
-        TM_EXCLUSIONS_DEFAULT_CONF="${FAKE_DU_CONF}" \
-        bash "$TM_EXCLUSIONS" --verbose --dry-run
+assert_file_contains "$FAKE_DU_HOME/output" "42K" "report keeps partial du size when du exits 1 (#55)"
 
-assert_output_contains "Total (sum of du -sk, KiB): 42" \
-    "du total sums the partial KiB when du exits 1 (#55)" \
-    env -u TM_EXCLUSIONS_SKIP_DU HOME="${FAKE_DU_HOME}" PATH="${FAKE_DU_BIN}:${PATH}" \
-        TM_EXCLUSIONS_DEFAULT_CONF="${FAKE_DU_CONF}" \
-        bash "$TM_EXCLUSIONS" --verbose --dry-run
+assert_file_contains "$FAKE_DU_HOME/output" "Total (sum of du -sk, KiB): 42" "du total sums the partial KiB when du exits 1 (#55)"
 
 rm -rf "${FAKE_DU_BIN}" "${FAKE_DU_HOME}"
 
@@ -1970,13 +1947,11 @@ GLOB_OUT="$(env HOME="${GLOB_HOME}" \
 
 assert_output_contains "${GLOB_HOME}/Library/Application Support/FakeIDE/v1/plugins" \
     "path glob expands JetBrains-style */plugins (v1)" \
-    env HOME="${GLOB_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${GLOB_CONF}" \
-    bash "$TM_EXCLUSIONS" --verbose --dry-run
+    printf '%s\n' "$GLOB_OUT"
 
 assert_output_contains "${GLOB_HOME}/Library/Application Support/FakeIDE/v2/plugins" \
     "path glob expands JetBrains-style */plugins (v2)" \
-    env HOME="${GLOB_HOME}" TM_EXCLUSIONS_DEFAULT_CONF="${GLOB_CONF}" \
-    bash "$TM_EXCLUSIONS" --verbose --dry-run
+    printf '%s\n' "$GLOB_OUT"
 
 TESTS_RUN=$((TESTS_RUN + 1))
 if grep -Fq "WOULD ${GLOB_HOME}/Library/Application Support/FakeIDE/*/plugins" <<<"${GLOB_OUT}"; then
